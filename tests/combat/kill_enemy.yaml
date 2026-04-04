@@ -1,0 +1,9 @@
+scenario: kill_enemy
+description: Bot kills the enemy
+
+objectives:
+  - kill: enemy
+
+assertions:
+  - player.alive: true
+  - enemy.alive: false

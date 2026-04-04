@@ -1,0 +1,37 @@
+modules:
+  - name: level_data
+    responsibility: static map and spawn positions
+    depends_on: []
+
+  - name: player_state
+    responsibility: player position, direction, health if needed
+    depends_on: [level_data]
+
+  - name: input_controller
+    responsibility: translate input into player actions
+    depends_on: [player_state]
+
+  - name: weapon_system
+    responsibility: simple attack behavior
+    depends_on: [player_state]
+
+  - name: enemy_logic
+    responsibility: simple enemy update and chase behavior
+    depends_on: [level_data, player_state]
+
+  - name: presentation
+    responsibility: minimal rendering or textual visualization
+    depends_on: [player_state, enemy_logic]
+
+  - name: renderer
+    responsibility: low-level rendering helper
+    depends_on: [presentation]
+
+  - name: game_loop
+    responsibility: update and frame progression
+    depends_on:
+      - level_data
+      - player_state
+      - enemy_logic
+      - weapon_system
+      - input_controller

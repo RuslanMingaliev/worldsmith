@@ -1,0 +1,37 @@
+name: PR Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  specs-and-tooling:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip pyyaml
+
+      - name: Validate specs/IR/knowledge
+        run: python tooling/validate_specs.py --verbose
+
+      - name: Ensure generated/ is untouched
+        run: python tooling/check_generated_clean.py
+
+      - name: Check Rust formatting
+        run: cargo fmt -- --check
+        working-directory: generated/game
+
+      - name: Run autopilot tests
+        run: cargo test --package worldsmith-game -- --nocapture
+        working-directory: generated/game

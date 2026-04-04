@@ -1,0 +1,12 @@
+scenario: complete_level
+description: Bot completes the level by killing enemy and reaching exit
+
+objectives:
+  - kill: enemy
+  - reach: exit
+
+assertions:
+  - player.alive: true
+  - player.health: "> 0"
+  - enemy.alive: false
+  - game.won: true

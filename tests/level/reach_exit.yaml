@@ -1,0 +1,9 @@
+scenario: reach_exit
+description: Bot reaches exit without killing enemy
+
+objectives:
+  - reach: exit
+
+assertions:
+  - player.alive: true
+  - game.won: true

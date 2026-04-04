@@ -1,0 +1,68 @@
+# Agent System
+
+Multi-agent architecture for spec-driven game generation.
+
+## Agents
+
+| Agent | File | Responsibility |
+|-------|------|----------------|
+| **Orchestrator** | `orchestrator.md` | Coordination, delegation, escalation |
+| **Extractor** | `extractor.md` | Extract knowledge from reference |
+| **Architect** | `architect.md` | Design specs and IR |
+| **Coder** | `coder.md` | Generate code |
+| **Researcher** | `researcher.md` | Answer questions, explore |
+| **TestBuilder** | `test_builder.md` | Create test models |
+| **EvalWriter** | `eval_writer.md` | Write evaluation criteria |
+
+## Workflow
+
+```
+Reference ──► Extractor ──┬──► knowledge/ ──► Architect ──► Coder ──► Evals
+             (private)    │   (public)           │            │
+                          │                      ▼            ▼
+                          ▼                   specs/      generated/
+                   work/findings/               ir/
+                   (with source refs)
+```
+
+**Key:** Extractor produces two outputs:
+- `work/findings/` — private, with source references (gitignored)
+- `knowledge/` — public, sanitized (versioned)
+
+## Shared State (Filesystem)
+
+```
+specs/              # Specifications (Architect writes)
+ir/                 # Intermediate representation (Architect writes)
+generated/          # Generated code (Coder writes)
+knowledge/          # Public findings, no source refs (Extractor writes)
+tests/              # Test scenarios
+evals/              # EvalWriter output
+work/               # Private, gitignored
+├── findings/       # Private findings WITH source refs
+├── research/       # Researcher output
+├── test_models/    # TestBuilder output
+└── decisions.md    # Orchestrator records decisions
+reference/          # Read-only reference material (private)
+```
+
+## Quality Control
+
+1. **Automated:** Build, test, evals
+2. **Cross-agent:** Architect reviews Extractor, etc.
+3. **Human:** Architectural decisions, escalations
+
+## Usage
+
+Each agent prompt is a system instruction. Load the prompt and give the agent a specific task.
+
+Example:
+```
+[Load orchestrator.md as system prompt]
+
+User: Start extraction cycle for player movement.
+```
+
+## Decision Log
+
+See `work/decisions.md` — Decision 10 for architecture rationale.

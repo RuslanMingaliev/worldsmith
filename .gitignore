@@ -1,0 +1,21 @@
+# Work directory for iterative development discussions
+work/
+
+# Generated artifacts
+generated/
+artifacts/
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store

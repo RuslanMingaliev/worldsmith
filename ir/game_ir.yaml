@@ -1,0 +1,25 @@
+game_family: retro_shooter
+goal: minimal_playable_vertical_slice
+
+player:
+  movement: first_person
+  collision: walls_only
+
+combat:
+  weapon_count: 1
+  attack_type: simple_ranged
+
+enemy:
+  archetypes:
+    - simple_chaser
+
+level:
+  count: 1
+  type: static
+  exit_required: true
+
+rendering:
+  complexity: minimal
+
+generation:
+  mode: incremental_preferred
