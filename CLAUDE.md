@@ -41,6 +41,11 @@ reference/       # Research material (private)
 - `work/generation_process.md` — How generation works
 - `ir/module_plan.yaml` — Module structure
 
+## Current Priority
+
+Focus on specs, knowledge extraction, and gameplay depth — not generation automation.
+Generation is manual (human + Claude session). See `work/decisions.md` Decision 16.
+
 ## Conventions
 
 - Specs are the source of truth, generated code is disposable

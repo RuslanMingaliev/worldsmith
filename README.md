@@ -6,9 +6,9 @@ Experimental spec-driven development project for building a retro shooter genera
 
 The project explores whether a game similar in feel to classic retro FPS titles can be reproduced from a structured specification pack instead of being hand-written from scratch.
 
-The long-term target is not "one more generated prototype", but a reproducible pipeline:
+The long-term target is not "one more generated prototype", but a body of design knowledge sufficient to reproduce the game:
 
-reference -> extracted specs -> intermediate representation -> generated game -> evaluation -> repair
+reference -> extracted knowledge -> specs -> intermediate representation -> generated game -> evaluation
 
 ## Current Goal
 
@@ -44,7 +44,7 @@ These may become goals in later phases.
 - `generated/` — disposable generated implementation
 - `work/` — private notes, decisions (gitignored)
 - `reference/` — research material (private)
-- `ir/module_plan.yaml` defines every generated module, its responsibility, and now a `depends_on` list used by generators/CI to understand regeneration order.
+- `ir/module_plan.yaml` defines every generated module, its responsibility, and a `depends_on` list for understanding regeneration scope.
 
 ## License and Scope
 
@@ -58,12 +58,10 @@ Public contributors should treat everything outside these private directories as
 
 ## Release Artifacts and CI
 
-The long-term workflow includes:
-- Keeping generated vertical-slice builds in `generated/` for each tagged version as reproducible evidence of the specs.
-- Adding CI (e.g., GitHub Actions) that spins up from specs → IR → generation → evals so anyone can verify the pipeline without private data.
-- Publishing regeneration logs per release tag so contributors understand how to extend the flow.
-
-Until the CI scaffolding lands, regeneration remains a manual process driven by the agent prompts in `tooling/`. Contributions that add automation or per-tag reproducible artifacts are highly encouraged.
+- `generated/` contains the most recent generated game that passed evals, committed at each tagged release.
+- CI validates specs, IR, and knowledge on every PR (see `.github/workflows/pr.yml`).
+- Code generation is a manual process: the maintainer triggers generation in a Claude Code session, verifies results, and commits. See `tooling/agents/` for agent prompts.
+- Full regeneration from scratch is performed for tagged releases to prove spec self-sufficiency.
 
 ## Development Workflow
 

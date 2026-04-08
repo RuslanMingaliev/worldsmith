@@ -33,6 +33,8 @@ Add plugin/skill architecture for spec modifications:
 
 ## Generation Model
 
+Generation is human-driven: a maintainer triggers code generation in a Claude Code session using specs and IR as context, verifies results, and commits.
+
 ### Iterative Development
 
 During development, prefer efficiency:
@@ -48,6 +50,10 @@ Each tagged release must:
 - Prove that specs alone are sufficient
 
 The `generated/` folder is always disposable. A release proves reproducibility.
+
+### Automation
+
+Generation automation (LLM executor, CI-based regeneration) is not a current priority. The focus is on spec quality and knowledge depth. Automation becomes worthwhile when the project outgrows manual generation. See `work/decisions.md` Decision 16.
 
 ## Current Scope
 
