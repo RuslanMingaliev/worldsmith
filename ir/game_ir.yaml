@@ -1,4 +1,5 @@
 game_family: retro_shooter
+version: "2026.1"
 goal: minimal_playable_vertical_slice
 
 player:

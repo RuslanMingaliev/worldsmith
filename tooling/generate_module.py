@@ -69,6 +69,12 @@ MODULE_CONTEXT_FILES: Dict[str, List[Path]] = {
         REPO_ROOT / "specs" / "21_player_movement.md",
         REPO_ROOT / "tests" / "level" / "README.md",
     ],
+    "autopilot": [
+        REPO_ROOT / "specs" / "30_test_framework.md",
+        REPO_ROOT / "tests" / "README.md",
+        REPO_ROOT / "tests" / "level" / "complete_level.yaml",
+        REPO_ROOT / "tests" / "combat" / "kill_enemy.yaml",
+    ],
 }
 
 

@@ -10,7 +10,10 @@ Spec-driven game generation experiment. Generate a retro shooter from structured
 
 ```bash
 # Run evals (build + test)
-python tooling/run_evals.py
+.venv/bin/python3 tooling/run_evals.py
+
+# Validate specs/IR
+.venv/bin/python3 tooling/validate_specs.py --verbose
 
 # Run the game
 cargo run --manifest-path generated/game/Cargo.toml

@@ -35,3 +35,12 @@ modules:
       - enemy_logic
       - weapon_system
       - input_controller
+
+  - name: autopilot
+    responsibility: spec-driven test framework, interprets YAML scenarios with bot AI
+    depends_on:
+      - game_loop
+      - input_controller
+      - level_data
+      - player_state
+      - enemy_logic

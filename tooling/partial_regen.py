@@ -57,6 +57,10 @@ TRIGGER_CONFIG = {
         "presentation": [
             "specs/20_gameplay_model.md",
         ],
+        "autopilot": [
+            "specs/30_test_framework.md",
+            "tests/**",
+        ],
     },
 }
 
