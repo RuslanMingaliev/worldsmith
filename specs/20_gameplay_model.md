@@ -29,16 +29,82 @@ Movement uses a momentum-based physics model. See [21_player_movement.md](21_pla
 The player must not be able to walk through walls.
 
 ### Combat
-The player must have:
-- one basic ranged attack or one simple shooting mechanic
+
+The player has one ranged weapon (pistol). Combat uses hitscan (instant ray trace) -- there is no projectile travel time.
+
+**Firing:**
+- Player presses fire input
+- A ray is traced from the player's position in the player's facing direction
+- If the ray intersects an enemy within weapon range, that enemy takes damage
+- The weapon cannot fire again until the fire cycle time elapses (0.54 seconds)
+
+**Damage:**
+- Each shot produces one of a small set of discrete damage values (not a smooth range)
+- The specific values are defined in `25_game_tuning.md`
+- The discrete outcomes create "lucky hit" and "weak hit" moments
+
+**Accuracy (current):**
+- The first shot after a pause uses a tighter alignment check (more likely to hit)
+- Sustained fire uses a slightly looser alignment check
+- This is a simplification — see Target Accuracy below
+
+**Accuracy (target, from knowledge):**
+- First shot: perfectly accurate (zero angular spread)
+- Sustained fire: random angular offset +/- 5.6 degrees, triangular distribution
+- Triangular distribution = difference of two uniform random values (most shots near center, outliers rare)
+- Not yet implemented — current code approximates via dot-product threshold adjustment
+
+**Pain/Stagger:**
+- When an enemy takes damage, there is a chance it enters a pain state
+- During pain, the enemy's current action (moving, attacking) is interrupted
+- Pain chance is checked per hit and is defined per enemy type
+- High pain chance on basic enemies means sustained fire can interrupt their attacks
 
 ### Enemy
-At least one enemy archetype must exist.
 
-The enemy must:
-- update every frame or tick
-- react to the player in some simple way
-- threaten the player through movement, contact, or attack
+One enemy archetype exists: a basic ranged attacker ("former human" archetype).
+
+#### Current Implementation
+
+The enemy currently uses a simplified AI:
+- Detects player immediately (no line-of-sight check)
+- Waits a reaction delay (0.23s) before first attack
+- Moves toward player using smooth vector movement
+- Deals contact damage (3-15 random) when within melee range
+- Enters pain state on hit (78% chance, 0.17s duration)
+- Dies at 0 HP
+
+AI states: Idle → Chase → Pain → Death (no separate Attack state).
+
+#### Target Behavior (from knowledge)
+
+The full AI from knowledge/enemy_types.md is significantly more complex. The following are extracted behaviors that are **not yet implemented** but documented for future generation:
+
+**Hitscan ranged attack**: Enemy should fire hitscan shots at range (up to 2048 map units) with +/- 22 degree spread, not contact damage. Attack sequence takes 0.74 seconds (wind-up, fire, cooldown).
+
+**Distance-based fire probability**: At close range, almost always fires. At long range, probability drops (~22% at max distance). If just hit, always retaliates immediately. No double attack (must take at least one chase step between shots).
+
+**Line-of-sight detection**: Enemy should only react when it can see the player. No distance limit — if LOS exists, enemy reacts.
+
+**8-directional grid movement**: Prefers diagonal paths, tries cardinal directions if blocked. Random 0-15 steps before re-evaluating direction. Never voluntarily reverses.
+
+**Idle scanning**: 0.57s scan cycle before detection. 180-degree forward arc.
+
+**Chase timing**: 0.91s per animation cycle (8 frames). Active sound chance 1.2% per frame.
+
+**Target persistence**: 2.86s threshold of stubborn pursuit after acquiring target.
+
+**Death drops**: Ammo clip on death. Gib death below -20 HP.
+
+**Full state machine**:
+```
+Idle --[player detected]--> Chase
+Chase --[attack check passed]--> Attack
+Chase --[damaged, pain check passed]--> Pain
+Attack --[attack sequence complete]--> Chase
+Pain --[pain duration elapsed]--> Chase
+Any --[health <= 0]--> Death
+```
 
 ### Level
 The level must:
@@ -49,11 +115,23 @@ The level must:
 
 ## Deferred Features
 
-- multiple weapons
-- advanced enemy coordination
-- cutscenes
-- inventory UI
-- dialogue
-- stealth systems
-- multiplayer
-- procedural generation
+- Multiple weapons (shotgun, chaingun, fist, super shotgun)
+- Projectile-based enemy attacks (fireball with travel time, dodging)
+- Multiple enemy types (shotgun guy, chaingunner, imp, demon, spectre, cacodemon, lost soul, baron of hell, hell knight, revenant, mancubus, arachnotron, arch-vile, cyberdemon, spider mastermind)
+- Armor and damage reduction system
+- Ammo economy and pickups
+- Difficulty levels (damage scaling)
+- Auto-aim / vertical targeting
+- Advanced enemy coordination
+- Sound-based enemy alert propagation (sound propagates through connected sectors, blocked by closed doors)
+- Melee attacks for enemies (demon bite, imp claw)
+- Enemy infighting (enemies damaging each other, target switching)
+- Enemy resurrection (arch-vile reviving corpses)
+- Deaf/ambush enemy flag (sight-only detection, ignores sound)
+- Gib death prevention of resurrection
+- Cutscenes
+- Inventory UI
+- Dialogue
+- Stealth systems
+- Multiplayer
+- Procedural generation

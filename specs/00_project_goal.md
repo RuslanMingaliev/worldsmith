@@ -51,9 +51,13 @@ Each tagged release must:
 
 The `generated/` folder is always disposable. A release proves reproducibility.
 
+### Reconcile
+
+After generation, reconcile code with specs: capture invented constants into `specs/25_game_tuning.md`, mark unimplemented features as deferred, and document design decisions.
+
 ### Automation
 
-Generation automation (LLM executor, CI-based regeneration) is not a current priority. The focus is on spec quality and knowledge depth. Automation becomes worthwhile when the project outgrows manual generation. See `work/decisions.md` Decision 16.
+Generation automation (LLM executor, CI-based regeneration) is not a current priority. The focus is on spec quality and knowledge depth. Automation becomes worthwhile when the project outgrows manual generation.
 
 ## Current Scope
 

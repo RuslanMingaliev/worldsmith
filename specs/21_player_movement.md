@@ -226,16 +226,31 @@ This specification defines the player movement system for the retro shooter. Mov
 - Velocity components must never exceed MAX_SPEED
 - View height must be between MIN_VIEW_HEIGHT and VIEW_HEIGHT + MAX_BOB
 
-### Current Simplifications
-- No jumping (z-axis movement reserved for future)
-- No variable friction by floor type
-- No special movement states (teleport recovery, etc.)
-- View bob is optional enhancement
+### Implementation Status
+
+**Implemented:**
+- Forward/backward movement, strafing, turning
+- Wall collision with axis-aligned sliding
+- Basic position-based movement (direct, not momentum-based)
+
+**Infrastructure ready (code exists, not wired into game loop):**
+- Momentum-based thrust/friction system
+- Velocity field, friction decay, stop threshold
+- Speed clamping
+
+**Deferred:**
+- Momentum physics in game loop (currently uses direct movement for simplicity)
+- Gravity and falling (z-axis)
+- View bobbing
+- Step-up / auto-climb
+- Wall-angle projection sliding (currently axis-aligned only)
+- View height management
 
 ### Implementation Notes
 - Constants use normalized units, not fixed-point
-- Implementations may use fixed-point, float, or integer math as appropriate
-- Tick rate affects feel; constants assume ~35 ticks/second but should scale
+- Current game loop uses direct movement at 3.0 units/sec (see `specs/25_game_tuning.md`)
+- Momentum methods exist in player_state for future activation
+- Tick rate: 60 FPS with delta-time scaling
 
 ## Test Scenarios
 
