@@ -40,21 +40,30 @@ reference/       # Research material (private)
 
 - `specs/00_project_goal.md` — What we're building, success criteria
 - `specs/80_generation_rules.md` — Code generation constraints
-- `work/decisions.md` — All design decisions (ADR-style)
-- `work/generation_process.md` — How generation works
 - `ir/module_plan.yaml` — Module structure
 
 ## Current Priority
 
 Focus on specs, knowledge extraction, and gameplay depth — not generation automation.
-Generation is manual (human + Claude session). See `work/decisions.md` Decision 16.
+Generation is manual (human + Claude session).
+
+## Post-Generation Reconcile
+
+After any generation (full or partial), reconcile code with specs:
+
+1. **Constants invented by LLM?** → Add to `specs/25_game_tuning.md`
+2. **Spec feature not implemented?** → Mark as "deferred" in the spec
+3. **Code behavior differs from spec?** → Update spec or fix code
+4. **New design decision?** → Document in ADR format
+
+This prevents specs and code from drifting apart across regenerations.
 
 ## Conventions
 
 - Specs are the source of truth, generated code is disposable
 - Interactive generation (human + Claude conversation)
 - Run `python tooling/run_evals.py` after changes
-- Document decisions in `work/decisions.md`
+- Document decisions in ADR format
 - Rust: safe code only, no unsafe, minimal dependencies
 - Versions are git tags, not hardcoded in docs
 
@@ -62,7 +71,7 @@ Generation is manual (human + Claude session). See `work/decisions.md` Decision 
 
 When a decision is made during conversation, **automatically**:
 
-1. **Add to `work/decisions.md`** — Use ADR format (Decision N: Title, Date, Context, Decision, Consequences)
+1. **Record decision** — Use ADR format (Decision N: Title, Date, Context, Decision, Consequences)
 2. **Update agent prompts** — If workflow or process changes, update `tooling/agents/*.md`
 3. **Update README files** — If directory structure or conventions change
 
@@ -72,7 +81,7 @@ Don't wait for user to ask — document immediately when decisions are made.
 
 Agents in `tooling/agents/`:
 - **Orchestrator** — Coordinates work, delegates tasks
-- **Extractor** — Extracts knowledge from reference → `knowledge/` + `work/findings/`
+- **Extractor** — Extracts knowledge from reference → `knowledge/`
 - **Architect** — Formalizes knowledge into specs
 - **Coder** — Generates code from specs
 - **Researcher** — Answers questions, explores

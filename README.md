@@ -67,7 +67,7 @@ Public contributors should treat everything outside these private directories as
 
 - `generated/` always contains the most recent fully generated game that passed evals. Refresh only when cutting a new tag or after a maintainer-triggered regeneration.
 - Pull requests should change specs, IR, knowledge, tests, or tooling. Direct edits to `generated/` are discouraged.
-- For releases, the maintainer runs the full pipeline (specs → IR → generation → evals) to rebuild from scratch.
+- For releases, the maintainer runs the full pipeline (specs → IR → generation → evals → reconcile) to rebuild from scratch.
 
 ## Core Principles
 
@@ -75,4 +75,5 @@ Public contributors should treat everything outside these private directories as
 - Generated code is disposable.
 - Regeneration should be incremental by default.
 - Evaluation is mandatory.
+- Reconcile after generation: sync specs with what was actually produced.
 - Versions are git tags, not hardcoded in docs.

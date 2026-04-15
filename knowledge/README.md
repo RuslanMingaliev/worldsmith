@@ -23,17 +23,16 @@ This directory contains findings from reference analysis — the accumulated kno
 ## Relationship to Other Directories
 
 ```
-reference/     → Private source material (gitignored)
-work/findings/ → Private notes WITH source refs (gitignored)
-knowledge/     → Public findings WITHOUT source refs (versioned)
-specs/         → Formalized specifications (versioned)
+reference/ → Private source material (gitignored)
+knowledge/ → Public findings WITHOUT source refs (versioned)
+specs/     → Formalized specifications (versioned)
 ```
 
 ## Workflow
 
-1. **Extractor** reads `reference/`, writes to `work/findings/` (with source refs)
+1. **Extractor** reads `reference/`, produces findings (with source refs kept private)
 2. Findings are reviewed and sanitized
-3. Clean findings move to `knowledge/` (without source refs)
+3. Clean findings are saved to `knowledge/` (without source refs)
 4. **Architect** reads `knowledge/`, writes to `specs/`
 
 ## File Format

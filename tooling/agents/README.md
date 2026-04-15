@@ -13,21 +13,19 @@ Multi-agent architecture for spec-driven game generation.
 | **Researcher** | `researcher.md` | Answer questions, explore |
 | **TestBuilder** | `test_builder.md` | Create test models |
 | **EvalWriter** | `eval_writer.md` | Write evaluation criteria |
+| **Reconciler** | `reconciler.md` | Reconcile code with specs after generation |
 
 ## Workflow
 
 ```
-Reference ──► Extractor ──┬──► knowledge/ ──► Architect ──► Coder ──► Evals
-             (private)    │   (public)           │            │
-                          │                      ▼            ▼
-                          ▼                   specs/      generated/
-                   work/findings/               ir/
-                   (with source refs)
+Reference ──► Extractor ──► knowledge/ ──► Architect ──► Coder ──► Evals ──► Reconciler
+             (private)      (public)           │            │                    │
+                                               ▼            ▼                   ▼
+                                            specs/      generated/        specs updated
+                                              ir/                         (closes loop)
 ```
 
-**Key:** Extractor produces two outputs:
-- `work/findings/` — private, with source references (gitignored)
-- `knowledge/` — public, sanitized (versioned)
+**Key:** Extractor sanitizes findings before writing to `knowledge/` (source references are kept private).
 
 ## Shared State (Filesystem)
 
@@ -38,11 +36,6 @@ generated/          # Generated code (Coder writes)
 knowledge/          # Public findings, no source refs (Extractor writes)
 tests/              # Test scenarios
 evals/              # EvalWriter output
-work/               # Private, gitignored
-├── findings/       # Private findings WITH source refs
-├── research/       # Researcher output
-├── test_models/    # TestBuilder output
-└── decisions.md    # Orchestrator records decisions
 reference/          # Read-only reference material (private)
 ```
 
@@ -65,4 +58,4 @@ User: Start extraction cycle for player movement.
 
 ## Decision Log
 
-See `work/decisions.md` — Decision 10 for architecture rationale.
+Design decisions are recorded in ADR format in the project's private notes.

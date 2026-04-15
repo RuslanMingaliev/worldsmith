@@ -21,13 +21,11 @@ You receive:
 
 ## Output
 
-Produce TWO files:
+Produce:
 
-### 1. Private findings: `work/findings/[area].md`
-Contains source references (file:line) for internal use. This is gitignored.
-
-### 2. Public knowledge: `knowledge/[area].md`
-Same content but WITHOUT source references. This is versioned and public.
+### Public knowledge: `knowledge/[area].md`
+Sanitized findings WITHOUT source references. This is versioned and public.
+Keep source references (file:line) private — do not include them in knowledge files.
 
 Format for both:
 
@@ -95,7 +93,7 @@ Before submitting findings:
 ```
 TASK: Extract player movement mechanics
 INPUT: reference/src/p_user.c, reference/src/p_mobj.c
-OUTPUT: work/findings/player_movement.md
+OUTPUT: knowledge/player_movement.md
 FOCUS: How does movement feel? What are the rules for acceleration, friction, collision?
 ```
 
@@ -106,17 +104,12 @@ FOCUS: How does movement feel? What are the rules for acceleration, friction, co
 - Focus on mechanics, not assets or content
 - Note uncertainty explicitly
 
-## Public vs Private Output
+## Output Rules
 
-**Private (`work/findings/`):**
-- Include source references (file:line)
-- Can mention specific reference file names
-- Gitignored, for internal use only
-
-**Public (`knowledge/`):**
-- NO source references
+Knowledge files (`knowledge/`) must be sanitized:
+- NO source references (file:line)
 - NO reference file names or paths
 - Generic descriptions ("the reference game", "classic FPS")
 - This gets versioned and published
 
-Always produce BOTH files. The public version is derived from the private one with source refs removed.
+Ensure public knowledge files contain no source references or file paths from the reference material.

@@ -19,7 +19,7 @@ You receive:
 - Existing IR (`ir/`)
 - Specific design task from Orchestrator
 
-Note: Read from `knowledge/`, not `work/findings/`. The knowledge directory contains sanitized findings without source references.
+Note: Read from `knowledge/`, which contains sanitized findings without source references.
 
 ## Output
 
