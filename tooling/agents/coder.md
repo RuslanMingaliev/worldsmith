@@ -44,6 +44,7 @@ From `specs/80_generation_rules.md`:
 - **Architecture:** Simple structs + functions, no ECS
 - **Dependencies:** Minimal (minifb for graphics)
 - **Style:** Clear, explicit, algorithm-like
+- **No dead `pub` exports:** every `pub fn`, `pub struct field`, or `pub const` you emit must have at least one in-crate caller (or, for test-only inspection, be gated with `#[cfg(test)]`). If a spec value has no consumer yet, leave it as a private constant or add the consumer in the same generation pass — do not ship "API for future use".
 
 ## Module Template
 
@@ -102,9 +103,11 @@ When fixing issues:
 Before submitting:
 - [ ] `cargo check` passes
 - [ ] `cargo test` passes
+- [ ] `cargo build` produces no new `dead_code` warnings on symbols you introduced
 - [ ] Code follows generation rules
 - [ ] No unnecessary changes to other modules
 - [ ] Tests cover key behaviors
+- [ ] Every spec constant referenced in your target module is actually wired into runtime code (not just `pub const` on the side)
 
 ## Escalation
 

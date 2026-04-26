@@ -21,6 +21,16 @@ You receive:
 
 ## Process
 
+### Step 0: Build and parse compiler warnings
+
+Run `cargo build --manifest-path generated/game/Cargo.toml` and inspect the warning list. Treat the following as drift signals:
+
+- `dead_code` on a `const` whose name appears in any spec → either the Coder skipped wiring the constant (escalate) or the spec describes a deferred feature that needs to be marked as such.
+- `dead_code` on a `pub fn` / `pub struct field` → spec features are exposed but never consumed; either remove the export, change visibility, or wire it (escalate to Coder).
+- `unused_imports` referencing constants from `visual_effects`, `player_state`, etc. → the importing module gave up on a behavior the spec called for.
+
+Only proceed to Step 1 once warnings have been triaged into "spec drift" / "expected pre-existing noise" buckets and recorded in the report.
+
 ### Step 1: Scan code for constants
 
 Read each generated module. For every numeric constant, struct field default, or hardcoded value, check:
@@ -52,6 +62,9 @@ Produce a summary:
 ```
 ## Reconcile Report
 
+### Compiler warnings triaged
+- [warning]: [drift / pre-existing noise / fixed]
+
 ### Values captured
 - [constant]: [value] → added to specs/25_game_tuning.md
 
@@ -64,6 +77,8 @@ Produce a summary:
 ### No action needed
 - [list of modules that match specs]
 ```
+
+The report must also be appended to `work/pipeline_run_<tag>.md` (the run journal owned by the Orchestrator) so the next session can read it.
 
 ## Output
 

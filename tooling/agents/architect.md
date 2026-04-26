@@ -64,7 +64,18 @@ Produce or update:
 
 ## Constraints
 [Limitations, invariants]
+
+## Implementation Status
+
+**Implemented:**
+- [behavior 1]
+- [behavior 2]
+
+**Deferred:**
+- [behavior 3] — [reason if not obvious]
 ```
+
+The "Implementation Status" section is **mandatory**. It is what the Reconciler diff's against the generated code to detect drift; a spec without it cannot be mechanically reconciled. When a spec describes a behavior that is intentionally not built yet, it goes under **Deferred** explicitly — never silently omitted.
 
 ## IR Structure
 
@@ -94,6 +105,8 @@ Before submitting:
 - [ ] Consistent with existing specs
 - [ ] IR matches spec structure
 - [ ] Cross-references are valid
+- [ ] Every spec has an `Implementation Status` section with both Implemented and Deferred buckets populated
+- [ ] No dangling cross-references (e.g. "see ADR N" must point to an existing decision)
 
 ## Escalation
 

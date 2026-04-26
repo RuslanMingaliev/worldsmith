@@ -68,6 +68,18 @@ Before accepting agent output:
 2. Is it consistent with existing specs/IR?
 3. Does it follow project conventions?
 4. If code: do evals pass?
+5. Was the agent's contribution recorded in `work/pipeline_run_<tag>.md` (see "Pipeline run journal" below)?
+
+## Pipeline run journal
+
+For every multi-agent run (full regen, partial regen, or feature workflow), maintain a single `work/pipeline_run_<tag>.md` file. Each agent appends a section summarizing what it did:
+
+- **Extractor:** which areas were extracted; which knowledge files written.
+- **Architect:** which specs/IR files created or updated; what was deferred and why.
+- **Coder:** which modules generated; constants invented (if any); features explicitly skipped.
+- **Reconciler:** the full Reconcile Report including the compiler-warning triage.
+
+This file is **mandatory output** for every run — without it, the next session has no record of what was done or what is still pending. The journal is private (`work/` is gitignored); promote durable findings into ADRs in `work/decisions.md`.
 
 ## Escalation Format
 
