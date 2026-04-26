@@ -97,7 +97,7 @@ Source: [`knowledge/visual_feedback.md`](../knowledge/visual_feedback.md).
 - The corpse is purely visual: it does not collide, take damage, or interact with the player.
 - Gib (extreme death) animation is **deferred**: only the normal fade-and-corpse path exists.
 - The death visual must not block the existing Death state transition or any other game logic — it runs alongside, not instead of.
-- Implementation note: the corpse marker is spawned by `enemy.update()` rather than synchronously inside `take_damage()`. This is a borrow-graph simplification (the weapon system already holds `&mut VisualEffects` while calling `take_damage`); spawning is delayed to the tick on which the death-fade timer reaches zero. See [ADR 23 in `decisions.md`](decisions.md).
+- Implementation note: the corpse marker is spawned by `enemy.update()` rather than synchronously inside `take_damage()`. This is a borrow-graph simplification (the weapon system already holds `&mut VisualEffects` while calling `take_damage`); spawning is delayed to the tick on which the death-fade timer reaches zero.
 
 ### Effect Layering
 
