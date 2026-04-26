@@ -9,7 +9,7 @@ This spec captures all gameplay balance constants, visual parameters, and level 
 | Constant | Value | Source |
 |----------|-------|--------|
 | Health | 100 | knowledge/player_movement.md |
-| Move speed | 3.0 units/sec | Simplified from momentum model (see 21_player_movement.md) |
+| Movement model | thrust + friction | Constants (THRUST_FACTOR, FRICTION, MAX_SPEED, STOP_THRESHOLD) defined in `specs/21_player_movement.md` |
 | Turn speed | 2.0 rad/sec | Tuned for 60 FPS (original was 35 ticks/sec) |
 
 ## Enemy (Basic Ranged -- "Former Human" archetype)

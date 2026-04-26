@@ -59,7 +59,7 @@ This specification defines the player movement system for the retro shooter. Mov
 **Constants:**
 | Name | Value | Description |
 |------|-------|-------------|
-| THRUST_FACTOR | 2048 | Input-to-velocity conversion multiplier |
+| THRUST_FACTOR | 10 | Input-to-velocity conversion multiplier (per-frame thrust = input_strength * THRUST_FACTOR / 1000) |
 
 ### Friction (Deceleration)
 
@@ -95,7 +95,7 @@ This specification defines the player movement system for the retro shooter. Mov
 **Constants:**
 | Name | Value | Description |
 |------|-------|-------------|
-| MAX_SPEED | 30.0 | Maximum velocity per axis (units per tick) |
+| MAX_SPEED | 0.3 | Maximum velocity per axis, in tile units per frame (~18 tiles/sec at 60 FPS) |
 
 ### Turning
 
@@ -229,17 +229,13 @@ This specification defines the player movement system for the retro shooter. Mov
 ### Implementation Status
 
 **Implemented:**
-- Forward/backward movement, strafing, turning
+- Forward/backward movement and strafing via momentum (thrust + friction)
+- Per-axis velocity clamping
+- Stop threshold when no input is held
+- Turning (no momentum)
 - Wall collision with axis-aligned sliding
-- Basic position-based movement (direct, not momentum-based)
-
-**Infrastructure ready (code exists, not wired into game loop):**
-- Momentum-based thrust/friction system
-- Velocity field, friction decay, stop threshold
-- Speed clamping
 
 **Deferred:**
-- Momentum physics in game loop (currently uses direct movement for simplicity)
 - Gravity and falling (z-axis)
 - View bobbing
 - Step-up / auto-climb
@@ -247,10 +243,10 @@ This specification defines the player movement system for the retro shooter. Mov
 - View height management
 
 ### Implementation Notes
-- Constants use normalized units, not fixed-point
-- Current game loop uses direct movement at 3.0 units/sec (see `specs/25_game_tuning.md`)
-- Momentum methods exist in player_state for future activation
-- Tick rate: 60 FPS with delta-time scaling
+- Distance unit is one wall tile (`Tile::Wall` cells in `level_data`); the current level is approximately 20x20 tiles.
+- Tick rate: 60 FPS; THRUST_FACTOR and FRICTION are applied per frame (not scaled by delta-time).
+- Steady-state forward speed under continuous input is approximately 0.1 tiles/frame (~6 tiles/sec). MAX_SPEED leaves ~3x headroom above steady state.
+- Earlier extracted values (THRUST_FACTOR=2048, MAX_SPEED=30) assumed a 35 Hz tick rate and fixed-point units; they were rescaled for tile units at 60 FPS — see Decision 20.
 
 ## Test Scenarios
 
