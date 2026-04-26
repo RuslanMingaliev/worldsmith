@@ -58,16 +58,17 @@ Public contributors should treat everything outside these private directories as
 
 ## Release Artifacts and CI
 
-- `generated/` contains the most recent generated game that passed evals, committed at each tagged release.
+- `generated/` is gitignored. The generated game is shipped as a release asset (archive) attached to the corresponding tag, not committed to the repository.
+- Releases are tagged using the `yyyy.vv` scheme (e.g. `2026.01` for the first release of 2026, `2026.02` for the second).
 - CI validates specs, IR, and knowledge on every PR (see `.github/workflows/pr.yml`).
-- Code generation is a manual process: the maintainer triggers generation in a Claude Code session, verifies results, and commits. See `tooling/agents/` for agent prompts.
+- Code generation is a manual process: the maintainer triggers generation in a Claude Code session, verifies results, and packages the artifact. See `tooling/agents/` for agent prompts.
 - Full regeneration from scratch is performed for tagged releases to prove spec self-sufficiency.
 
 ## Development Workflow
 
-- `generated/` always contains the most recent fully generated game that passed evals. Refresh only when cutting a new tag or after a maintainer-triggered regeneration.
-- Pull requests should change specs, IR, knowledge, tests, or tooling. Direct edits to `generated/` are discouraged.
-- For releases, the maintainer runs the full pipeline (specs → IR → generation → evals → reconcile) to rebuild from scratch.
+- `generated/` lives only locally during development; it is rebuilt from specs by the maintainer and never tracked in git.
+- Pull requests should change specs, IR, knowledge, tests, or tooling. Direct edits to `generated/` are discouraged (they are erased on regeneration).
+- For releases, the maintainer runs the full pipeline (specs → IR → generation → evals → reconcile) to rebuild from scratch, then packages `generated/game/` as a release asset attached to the tag.
 
 ## Core Principles
 
@@ -76,4 +77,4 @@ Public contributors should treat everything outside these private directories as
 - Regeneration should be incremental by default.
 - Evaluation is mandatory.
 - Reconcile after generation: sync specs with what was actually produced.
-- Versions are git tags, not hardcoded in docs.
+- Versions are git tags following the `yyyy.vv` scheme, not hardcoded in docs.

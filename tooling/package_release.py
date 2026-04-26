@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Package the current generated game into a zipped release artifact.
+Package the current generated game source into a release archive.
+
+Produces a platform-independent source archive that users can build with
+`cargo build --release`. Includes Cargo.lock for reproducibility
+(see Decision 18 in work/decisions.md).
 
 Example:
-    python tooling/package_release.py --version v0.2
+    python tooling/package_release.py --version 2026.01
 """
 
 from __future__ import annotations
 
 import argparse
-import platform
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 
@@ -20,75 +20,70 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GAME_DIR = REPO_ROOT / "generated" / "game"
 ARTIFACTS_DIR = REPO_ROOT / "artifacts"
 
-
-def run_cargo_build() -> None:
-    result = subprocess.run(
-        ["cargo", "build", "--release"],
-        cwd=GAME_DIR,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(result.stdout)
-        print(result.stderr, file=sys.stderr)
-        raise SystemExit("cargo build --release failed.")
+EXCLUDED_DIRS = {"target", ".git", "__pycache__"}
+EXCLUDED_FILES = {".DS_Store", ".gitkeep"}
 
 
-def resolve_binary() -> Path:
-    bin_name = "worldsmith-game.exe" if platform.system() == "Windows" else "worldsmith-game"
-    path = GAME_DIR / "target" / "release" / bin_name
-    if not path.exists():
-        raise SystemExit(f"Expected binary not found: {path}")
-    return path
+def collect_game_sources() -> list[Path]:
+    if not GAME_DIR.is_dir():
+        raise SystemExit(f"Generated game directory not found: {GAME_DIR}")
+
+    paths: list[Path] = []
+    for path in sorted(GAME_DIR.rglob("*")):
+        if not path.is_file():
+            continue
+        if any(part in EXCLUDED_DIRS for part in path.relative_to(GAME_DIR).parts):
+            continue
+        if path.name in EXCLUDED_FILES:
+            continue
+        paths.append(path)
+    return paths
 
 
-def package(version: str, include: list[Path]) -> Path:
+def package(version: str, extras: list[Path]) -> Path:
     ARTIFACTS_DIR.mkdir(exist_ok=True)
-    platform_tag = platform.system().lower()
-    zip_name = f"worldsmith-game-{version}-{platform_tag}.zip"
+    zip_name = f"worldsmith-game-{version}-src.zip"
     zip_path = ARTIFACTS_DIR / zip_name
 
     if zip_path.exists():
         zip_path.unlink()
 
+    arc_root = f"worldsmith-game-{version}"
+
     with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as archive:
-        binary = resolve_binary()
-        archive.write(binary, arcname=binary.name)
-        for extra in include:
-            if extra.exists():
-                archive.write(extra, arcname=extra.relative_to(REPO_ROOT))
+        for source in collect_game_sources():
+            arcname = f"{arc_root}/{source.relative_to(GAME_DIR)}"
+            archive.write(source, arcname=arcname)
+        archive.write(REPO_ROOT / "LICENSE", arcname=f"{arc_root}/LICENSE")
+        for extra in extras:
+            if not extra.exists():
+                raise SystemExit(f"Extra include not found: {extra}")
+            arcname = f"{arc_root}/{extra.relative_to(REPO_ROOT)}"
+            archive.write(extra, arcname=arcname)
 
     return zip_path
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Package worldsmith release artifact.")
-    parser.add_argument("--version", required=True, help="Version/tag name (e.g., v0.2).")
+    parser = argparse.ArgumentParser(description="Package worldsmith source release artifact.")
+    parser.add_argument(
+        "--version",
+        required=True,
+        help="Tag name following the yyyy.vv scheme (e.g., 2026.01).",
+    )
     parser.add_argument(
         "--include",
         nargs="*",
         default=[],
-        help="Additional files to include (paths relative to repo root).",
+        help="Additional files to include, relative to the repo root.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-
-    include_paths = [
-        GAME_DIR / "README.md",
-        REPO_ROOT / "LICENSE",
-        REPO_ROOT / "README.md",
-        REPO_ROOT / "work" / f"generation_report_{args.version}.md",
-        REPO_ROOT / "work" / f"pipeline_run_{args.version}.md",
-    ]
-    include_paths.extend(REPO_ROOT / rel for rel in args.include)
-
-    run_cargo_build()
-    zip_path = package(args.version, include_paths)
-
+    extras = [REPO_ROOT / rel for rel in args.include]
+    zip_path = package(args.version, extras)
     print(f"Release artifact created: {zip_path}")
 
 

@@ -95,3 +95,5 @@ Reference material informs spec creation but is not the operational source of tr
 ## Versioning
 
 Versions are git tags, not document sections. The docs describe current state; git history shows evolution.
+
+Tag naming follows the `yyyy.vv` scheme: `yyyy` is the calendar year of the release, `vv` is a zero-padded sequence number within that year (e.g. `2026.01` for the first release of 2026, `2026.02` for the second). Sequence numbers do not reset across years on the same date — they reset only when the year changes.
