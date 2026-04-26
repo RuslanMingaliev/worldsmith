@@ -119,6 +119,86 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 | Direction line | 20px length | #FFFF00 yellow |
 | Game over border | 10px | green tint (win) / red tint (lose) |
 
+### Visual Feedback
+
+Behavior spec: [`40_visual_feedback.md`](40_visual_feedback.md).
+Source: `knowledge/visual_feedback.md`. Reference durations were given in 35-tick/sec ticks; values below are converted to seconds and rounded to two decimals.
+
+#### Muzzle Flash
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| MUZZLE_FLASH_DURATION | 0.10 s | — | Adapted from pistol flash 7 tics (~0.20 s); halved for crisper top-down feel |
+| MUZZLE_FLASH_COLOR | — | #FFFF80 pale yellow | Bright "full-bright" muzzle color |
+| MUZZLE_FLASH_RADIUS | 6 px | — | Small filled disc at muzzle |
+| MUZZLE_OFFSET | 0.5 tile (16 px at 32 px/tile) | — | Offset from player center along facing direction; expressed in world (tile) units to match weapon-system math |
+
+#### Hit-Scan Tracer
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| TRACER_DURATION | 0.06 s | — | Short single-frame line; 2D substitute for impact spark |
+| TRACER_COLOR | — | #FFFFC0 near-white | Distinct from muzzle flash, brighter |
+| TRACER_THICKNESS | 1 px | — | Single-pixel line |
+
+#### Impact: Wall Puff
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| PUFF_DURATION | 0.30 s | — | Adapted from 16 tics (~0.46 s); shortened for top-down |
+| PUFF_COLOR | — | #B0B0B0 light gray | Distinct from blood, similar to wall material |
+| PUFF_RADIUS | 4 px | — | Small particle |
+
+#### Impact: Blood Splat
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| BLOOD_DURATION | 0.50 s | — | Adapted from 24 tics (~0.69 s); shortened for top-down |
+| BLOOD_COLOR | — | #C00000 deep red | Visibly different hue from enemy body color |
+| BLOOD_RADIUS | 6 px | — | Larger than puff, single tier (damage-tiered blood deferred) |
+
+#### Enemy Pain Flash
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| ENEMY_PAIN_FLASH_DURATION | 0.10 s | — | Adapted from 6 tics (~0.17 s); slightly shorter than full pain duration |
+| ENEMY_PAIN_FLASH_COLOR | — | #FFFFFF white | Bright tint replacing normal enemy red while flashing |
+
+#### Player Damage Tint
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| DAMAGE_TINT_CAP | 100 | — | Mirrors reference cap (max ~100 tics @ 35 tics/sec) |
+| DAMAGE_TINT_DECAY_PER_SEC | 35 units/sec | — | Linear; reference uses 1 unit/tic at 35 tics/sec |
+| DAMAGE_TINT_LEVELS | 8 | — | Discrete alpha levels (0 = no overlay) |
+| DAMAGE_TINT_COLOR | — | #FF0000 red | Overlay hue; alpha varies by level |
+| DAMAGE_TINT_MAX_ALPHA | ~50% | — | Alpha at level 8; intermediate levels interpolate down to 0 |
+
+Mapping: `level = ceil(damage_count * DAMAGE_TINT_LEVELS / DAMAGE_TINT_CAP)`, clamped to `[0, DAMAGE_TINT_LEVELS]`.
+
+#### Enemy Death Visual
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| ENEMY_DEATH_FADE_DURATION | 0.40 s | — | Adapted from 25 tics (~0.71 s); shortened for snappier feel |
+| ENEMY_CORPSE_COLOR | — | #602020 dark red-brown | Faded version of enemy color |
+| ENEMY_CORPSE_RADIUS | 8 px | — | Smaller than live enemy (12 px); ~2/3 size, mirrors "height collapses to 1/4" intent |
+| CORPSE_PERSISTENCE | until level reset | — | Permanent within a run; reference uses -1 frame duration |
+
+#### Effect List
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| EFFECT_LIST_INITIAL_CAPACITY | 16 | Pre-allocation hint; not a hard cap |
+| EFFECT_LIST_MAX | (none) | Effect-count culling deferred |
+| PERSISTENT_LIFETIME | `f32::INFINITY` | Sentinel `lifetime_remaining` value used by corpses to mean "never expire on age"; lifetime ticking skips non-finite values |
+
+#### Wall Hit Trace
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| TRACE_STEP | 0.1 tile | Ray-march step size used by `weapon_system::fire` to find a wall impact when the trace doesn't hit an enemy. Sub-tile resolution puts the puff close to the wall surface; a smaller step trades CPU for accuracy. Closed-form line-vs-grid intersection deferred (see ADR 22). |
+
 ## Frame Rate
 
 | Property | Value |

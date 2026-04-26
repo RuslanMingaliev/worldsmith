@@ -11,30 +11,39 @@ modules:
     responsibility: translate input into player actions
     depends_on: [player_state]
 
+  - name: visual_effects
+    responsibility: |
+      transient combat feedback entities — muzzle flashes, tracers, wall puffs,
+      blood splats, enemy pain flashes, player damage tint, enemy death fade and
+      persistent corpse markers. Owns spawn API and per-frame lifetime tick;
+      drawing is delegated to renderer. See specs/40_visual_feedback.md.
+    depends_on: [level_data, player_state]
+
   - name: weapon_system
-    responsibility: simple attack behavior
-    depends_on: [player_state]
+    responsibility: simple attack behavior; spawns muzzle flash, tracer, and impact effect on each shot
+    depends_on: [player_state, visual_effects]
 
   - name: enemy_logic
-    responsibility: simple enemy update and chase behavior
-    depends_on: [level_data, player_state]
+    responsibility: simple enemy update and chase behavior; raises pain-flash and death visuals on state transitions
+    depends_on: [level_data, player_state, visual_effects]
 
   - name: presentation
     responsibility: minimal rendering or textual visualization
     depends_on: [player_state, enemy_logic]
 
   - name: renderer
-    responsibility: low-level rendering helper
-    depends_on: [presentation]
+    responsibility: low-level rendering helper; reads visual_effects to draw transient effects, corpses, and damage tint overlay
+    depends_on: [presentation, visual_effects]
 
   - name: game_loop
-    responsibility: update and frame progression
+    responsibility: update and frame progression; owns visual_effects list and ticks lifetimes each frame
     depends_on:
       - level_data
       - player_state
       - enemy_logic
       - weapon_system
       - input_controller
+      - visual_effects
 
   - name: autopilot
     responsibility: spec-driven test framework, interprets YAML scenarios with bot AI

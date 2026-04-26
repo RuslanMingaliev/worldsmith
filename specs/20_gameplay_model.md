@@ -60,6 +60,12 @@ The player has one ranged weapon (pistol). Combat uses hitscan (instant ray trac
 - Pain chance is checked per hit and is defined per enemy type
 - High pain chance on basic enemies means sustained fire can interrupt their attacks
 
+**Visual Feedback:**
+
+Combat actions trigger short-lived visual effects (muzzle flash, hit-scan tracer, wall puff, blood splat, enemy pain flash, player damage tint, enemy death fade and corpse). Effects are layered on top of existing combat behavior and do not change combat outcomes. See [`40_visual_feedback.md`](40_visual_feedback.md) for behaviors and [`25_game_tuning.md`](25_game_tuning.md#visual-feedback) for constants.
+
+The existing console messages from `weapon_system.rs` ("Hit for X! ...") and `enemy_logic.rs` ("Enemy hit player for X! ...") are *supplemented* by visual feedback, not replaced. Their fate is a separate Coder decision once visual feedback ships.
+
 ### Enemy
 
 One enemy archetype exists: a basic ranged attacker ("former human" archetype).

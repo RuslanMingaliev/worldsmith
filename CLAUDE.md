@@ -99,6 +99,4 @@ Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ → C
 
 ## Known Issues
 
-- Player starts facing right (angle=0), W moves right initially
-- No visual feedback for shooting (only console output)
 - Top-down view, not raycasting
