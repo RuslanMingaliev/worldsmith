@@ -25,6 +25,7 @@ This spec captures all gameplay balance constants, visual parameters, and level 
 | Attack type | Contact damage | Target: hitscan at range |
 | Attack damage | 3, 6, 9, 12, or 15 per hit | Formula: `(random(0..4) + 1) * 3`, mean ~9 |
 | Attack cooldown | 0.54 seconds | Time between contact hits |
+| ENEMY_CONTACT_RANGE_TILES | 0.8125 tile (= 26 px) | Derived from player + enemy visual radii in `## Visual` (14 px + 12 px) divided by `TILE_SIZE`. Specs/20 says "contact damage when within melee range" without naming a value; this range fires the hit exactly when the two discs visually touch. Captured during reconcile of full regen 2026-04-26 (was inlined as derived constant in `enemy_logic.rs`). |
 | Pain chance | 78% (200/255) | Chance to enter pain/stagger state when hit |
 | Pain duration | 0.17 seconds | Duration of pain stagger animation |
 | AI states | Idle, Chase, Pain, Death | Target adds: Attack |
@@ -59,6 +60,7 @@ This spec captures all gameplay balance constants, visual parameters, and level 
 | Fire cycle | 0.54 seconds | ~1.84 shots/sec (knowledge/combat_balance.md) |
 | Hit detection | Hitscan (instant) | Line trace, no projectile travel time |
 | First-shot accuracy | Perfect (no spread) | First shot after pause has zero angular offset |
+| IDLE_THRESHOLD_SEC | 1.0 seconds | Generation default — promotes deliberate paused single-shot to first-shot accuracy. No reference value: holding fire at the 0.54s cycle never resets to perfect aim, but a deliberate pause does. Captured during reconcile of full regen 2026-04-26 (was inlined as `IDLE_THRESHOLD_SEC` in `weapon_system.rs`). |
 | Refire spread | +/- 5.6 degrees max | Triangular distribution centered on aim direction |
 | Melee range | 64 map units | Relevant for future melee weapons (deferred) |
 

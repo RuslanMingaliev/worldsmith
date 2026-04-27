@@ -23,13 +23,19 @@ You receive:
 
 ### Step 0: Build and parse compiler warnings
 
-Run `cargo build --manifest-path generated/game/Cargo.toml` and inspect the warning list. Treat the following as drift signals:
+Run BOTH:
+
+- `cargo build --manifest-path generated/game/Cargo.toml` — release-style: what end users compile. Warnings here flag symbols dead even at runtime.
+- `cargo build --tests --manifest-path generated/game/Cargo.toml` — test-aware: what cfg-test consumers (autopilot, integration tests) compile. A symbol that appears dead in the first command but live in the second is a *cfg-test-only consumer* — per spec/80 § API Surface, it must be `#[cfg(test)]`-gated, not shipped as `pub`.
+
+Triage the diff:
 
 - `dead_code` on a `const` whose name appears in any spec → either the Coder skipped wiring the constant (escalate) or the spec describes a deferred feature that needs to be marked as such.
-- `dead_code` on a `pub fn` / `pub struct field` → spec features are exposed but never consumed; either remove the export, change visibility, or wire it (escalate to Coder).
+- `dead_code` on a `pub fn` / `pub struct field` in `cargo build` non-test that becomes live under `cargo build --tests` → spec/80 § API Surface violation: the symbol is cfg-test-only and must be gated. **Cite spec/80 § API Surface, not coder.md, when reporting.**
+- `dead_code` on a `pub` symbol that is dead in BOTH builds → unconditional dead export. Spec/80 § API Surface violation.
 - `unused_imports` referencing constants from `visual_effects`, `player_state`, etc. → the importing module gave up on a behavior the spec called for.
 
-Only proceed to Step 1 once warnings have been triaged into "spec drift" / "expected pre-existing noise" buckets and recorded in the report.
+Only proceed to Step 1 once warnings have been triaged into "spec drift" / "cfg-test-only / needs gate" / "expected wave-cascade noise" buckets and recorded in the report.
 
 ### Step 1: Scan code for constants
 

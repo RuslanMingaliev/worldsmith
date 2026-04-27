@@ -178,3 +178,11 @@ fn update_enemy(enemy: &mut Enemy, player_pos: Vec2) {
     }
 }
 ```
+
+### API Surface
+
+**No dead `pub` exports.** Every `pub fn`, `pub struct` field, or `pub const` a module emits must have at least one in-crate caller. If the only consumers are `#[cfg(test)]` (autopilot, integration tests, test-only inspection), gate the export itself with `#[cfg(test)]` rather than leaving it public-and-dead in release builds. If a spec value has no consumer yet, leave it as a private constant or add the consumer in the same generation pass — do not ship "API for future use".
+
+**Exception — wave-cascade dead-code during partial regen:** when a Coder generates module A whose public symbols will be consumed by module B in a later wave of the same run, the symbols may be temporarily dead at the end of wave A. They must become live by the end of the run; otherwise the rule above applies.
+
+**No cross-cutting `&mut <ServiceType>` in trait or non-orchestration methods.** A trait method or a non-orchestration module's public method must NOT take `&mut` on a global service type (`VisualEffects`, future `AudioMixer`, future `EventBus`). If the action requires emitting into such a service, return data describing the emission and let the orchestration layer (`game_loop`) emit. Exceptions: `update`-style methods that already take the full per-frame borrow-graph (e.g. `Enemy::update(&mut self, &mut Player, &Level, &mut VisualEffects, dt)`) — those are *defined* as the orchestration hook and may take service references directly.

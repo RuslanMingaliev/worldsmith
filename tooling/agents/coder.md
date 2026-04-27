@@ -44,7 +44,7 @@ From `specs/80_generation_rules.md`:
 - **Architecture:** Simple structs + functions, no ECS
 - **Dependencies:** Minimal (minifb for graphics)
 - **Style:** Clear, explicit, algorithm-like
-- **No dead `pub` exports:** every `pub fn`, `pub struct field`, or `pub const` you emit must have at least one in-crate caller (or, for test-only inspection, be gated with `#[cfg(test)]`). If a spec value has no consumer yet, leave it as a private constant or add the consumer in the same generation pass — do not ship "API for future use".
+- **API surface (no dead pub exports, no cross-cutting `&mut <ServiceType>` in traits):** see `specs/80_generation_rules.md` § "API Surface". The rule lives in spec/80 with the other code constraints — when Reconciler flags a violation, the citation is spec/80, not this file.
 
 ## Module Template
 
@@ -104,6 +104,8 @@ Before submitting:
 - [ ] `cargo check` passes
 - [ ] `cargo test` passes
 - [ ] `cargo build` produces no new `dead_code` warnings on symbols you introduced
+- [ ] If your module ships a `pub fn` / `pub struct field` / `pub const` whose ONLY callers are `#[cfg(test)]` (autopilot, integration tests, test fixtures), gate the export itself with `#[cfg(test)]` rather than leaving it public-and-dead in release builds. The "wave-cascade dead-code" exception in spec/80 § API Surface applies only when a *non-test* later wave will consume the symbol — if no non-test wave will consume it, gate it now.
+- [ ] No public method or trait method takes `&mut <ServiceType>` (VisualEffects, etc.) outside of `update`-style per-frame hooks — see spec/80 § API Surface.
 - [ ] Code follows generation rules
 - [ ] No unnecessary changes to other modules
 - [ ] Tests cover key behaviors

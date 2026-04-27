@@ -20,6 +20,7 @@ You are the Orchestrator — the coordinator of a multi-agent system that builds
 | Architect | Design specs, IR, make structural decisions |
 | Coder | Generate code from specs |
 | Reconciler | Reconcile code with specs after generation |
+| PostMortem | Audit the run *as a process*; propose changes to agent prompts / tooling / ADRs |
 | Researcher | Answer questions, find information |
 | TestBuilder | Create test models and invariants |
 | EvalWriter | Write evaluation criteria |
@@ -52,6 +53,24 @@ INPUT: [what files/context to read]
 OUTPUT: [what to produce, where to save]
 CONSTRAINTS: [any limitations]
 ```
+
+## Model Selection for Delegation
+
+When dispatching subagents, pick the model by *cost of an error in that role × number of calls*:
+
+| Role | Model | Why |
+|------|-------|-----|
+| Coder | **Sonnet** | Many calls per run (one per module). Work is "follow a clear contract → emit Rust → cargo check". With explicit specs and an Architect-produced contracts file, Sonnet is sufficient and 5× cheaper than Opus. |
+| Architect | **Opus** | One call upstream of all Coders. A bad contract cascades to N Coder reworks; the model spend is small relative to the leverage. |
+| Reconciler | **Opus** | One call after generation. Synthesises code ↔ specs ↔ journal — a missed drift becomes spec rot. Opus pays for itself. |
+| PostMortem | **Opus** | One call per run. Reads the journal, existing ADRs, and current agent prompts; finds non-obvious process patterns. A missed pattern persists across runs as wasted tokens. |
+| Extractor / TestBuilder / EvalWriter | Sonnet (default) | Bounded text-extraction or template-filling tasks. |
+| Researcher | Opus when the question is open-ended; Sonnet when it's a lookup. |
+| Orchestrator (this role) | Opus | Long-context coordination across waves; not delegated. |
+
+Pass the model explicitly when spawning, e.g. `Agent(... model: "sonnet")`. Default inheritance from the parent (Opus) is the wrong choice for Coder — it silently 5×s the bill.
+
+If a Sonnet Coder fails `cargo check` twice in a row on the same module, retry once on Opus before escalating. In practice this fallback should be rare when the Architect contracts step is run first.
 
 ## Decision Protocol
 
@@ -154,18 +173,49 @@ Step 3: Reconciler
 Delete all generated code, regenerate from scratch.
 
 ```
+Step 0: Carry-forward previous-run follow-ups
+  READ:   most recent work/pipeline_run_*.md "Follow-ups" section
+  ACTION: copy any still-relevant items into THIS run's journal stub
+          under a "Carried-over follow-ups" subsection. Items addressed here
+          must be checked off in the new journal; items deferred again must
+          be re-justified or escalated to the human. No silent aging.
+
 Step 1: Delete generated/game/src/*.rs
 
+Step 1.5: Architect (contracts pass)
+  INPUT:  specs/, ir/module_plan.yaml, knowledge/
+  OUTPUT: ir/module_contracts.yaml — for each module being regenerated:
+          - exact public type signatures (struct names + field types)
+          - exact public method signatures (name + full argument list,
+            including any `&mut OtherModuleType` parameter)
+          - any method that emits into a global service (VisualEffects, etc.)
+            MUST be listed with the service `&mut` parameter pinned, OR
+            flagged as "returns description, orchestrator emits" per
+            spec/80 § API Surface.
+  CHECK:  every module in module_plan.yaml has a contract entry; every
+          cross-module `&mut` parameter is named.
+  REQUIRED: when ≥2 modules will be generated in any single Coder wave
+          (i.e. parallel waves) OR when shared types cross module boundaries.
+          Skipping the contracts pass forces Coders back to Opus per
+          Decision 27's fallback rule.
+
 Step 2: Coder (all modules, in dependency order from ir/module_plan.yaml)
-  INPUT:  specs/, ir/, knowledge/
+  INPUT:  specs/, ir/ (incl. module_contracts.yaml), knowledge/
   OUTPUT: all modules + main.rs
-  CHECK:  cargo check, cargo test pass
+  CHECK:  cargo check, cargo test pass; if Coder needs to deviate from a
+          signature in module_contracts.yaml, escalate to Orchestrator —
+          do NOT silently change the signature.
 
 Step 3: Reconciler
   INPUT:  all generated code, all specs
   OUTPUT: updated specs, reconcile report
 
-Step 4: Human verification
+Step 4: PostMortem
+  INPUT:  pipeline_run journal (incl. Reconciler section), work/decisions.md, tooling/agents/*.md, previous run journal if any
+  OUTPUT: PostMortem section appended to the journal — process recommendations + ADR drafts
+  CHECK:  human reviews ADR drafts and accepts/rejects before next run
+
+Step 5: Human verification
   RUN:   cargo run — play the game
 ```
 

@@ -14,15 +14,16 @@ Multi-agent architecture for spec-driven game generation.
 | **TestBuilder** | `test_builder.md` | Create test models |
 | **EvalWriter** | `eval_writer.md` | Write evaluation criteria |
 | **Reconciler** | `reconciler.md` | Reconcile code with specs after generation |
+| **PostMortem** | `postmortem.md` | Audit the run as a process; propose changes to agent prompts / tooling / ADRs |
 
 ## Workflow
 
 ```
-Reference ──► Extractor ──► knowledge/ ──► Architect ──► Coder ──► Evals ──► Reconciler
-             (private)      (public)           │            │                    │
-                                               ▼            ▼                   ▼
-                                            specs/      generated/        specs updated
-                                              ir/                         (closes loop)
+Reference ──► Extractor ──► knowledge/ ──► Architect ──► Coder ──► Evals ──► Reconciler ──► PostMortem
+             (private)      (public)           │            │                    │              │
+                                               ▼            ▼                   ▼              ▼
+                                            specs/      generated/        specs updated   process recs
+                                              ir/                         (closes loop)   (closes meta-loop)
 ```
 
 **Key:** Extractor sanitizes findings before writing to `knowledge/` (source references are kept private).
