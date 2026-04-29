@@ -19,3 +19,6 @@ __pycache__/
 .idea/
 *.swp
 .DS_Store
+
+# Claude Code local state (settings, hooks output, transcripts)
+.claude/

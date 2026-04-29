@@ -15,7 +15,7 @@ reference -> extracted knowledge -> specs -> intermediate representation -> gene
 Build a minimal playable vertical slice from specs.
 
 The generated game must include:
-- first-person movement
+- player movement (currently top-down 2D; raycasted first-person is a future goal)
 - wall collision
 - one weapon
 - one enemy type
