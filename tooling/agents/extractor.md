@@ -92,7 +92,7 @@ Before submitting findings:
 
 ```
 TASK: Extract player movement mechanics
-INPUT: reference/src/p_user.c, reference/src/p_mobj.c
+INPUT: reference/src/movement.c, reference/src/entity.c
 OUTPUT: knowledge/player_movement.md
 FOCUS: How does movement feel? What are the rules for acceleration, friction, collision?
 ```

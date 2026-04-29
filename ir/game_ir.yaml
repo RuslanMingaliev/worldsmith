@@ -25,7 +25,7 @@ combat:
 enemy:
   archetypes:
     - type: basic_ranged
-      name: former_human
+      name: basic_trooper
       health: 20
       speed_units_per_sec: 2.0
       detection: line_of_sight

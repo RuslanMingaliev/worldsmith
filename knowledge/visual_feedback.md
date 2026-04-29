@@ -8,7 +8,7 @@ Classic FPS reference games layer visual feedback on top of every combat action:
 
 ### Muzzle Flash (Weapon Firing Confirmation)
 
-- **Behavior**: The instant the player fires, a separate "flash" sprite layer is overlaid on top of the weapon sprite for a few tics. The flash uses a full-bright color so it visually pops against the dimmer weapon sprite. After the flash sprite expires, the layer goes blank again.
+- **Behavior**: The instant the player fires, a separate "flash" sprite layer is overlaid on top of the weapon sprite for a few ticks (the reference engine runs at 35 ticks/sec). The flash uses a full-bright color so it visually pops against the dimmer weapon sprite. After the flash sprite expires, the layer goes blank again.
 - **Rules**:
   - The flash is rendered on its own sprite layer, independent of the weapon animation. The two layers share screen position but have independent state machines.
   - When a weapon's fire action runs, it directly sets the flash layer's state to a weapon-specific flash frame; the weapon and flash animations then play simultaneously.
@@ -17,12 +17,12 @@ Classic FPS reference games layer visual feedback on top of every combat action:
   - For rapid-fire weapons (chaingun-style), the flash state used is randomized between two equivalent variants per shot, so consecutive frames don't look identical.
   - When a weapon is being fired multiple times via a refire action, each shot triggers a fresh flash.
 - **Constants** (at 35 ticks/sec):
-  - Pistol flash: single frame, 7 tics (~0.20 s)
-  - Single-barrel shotgun flash: 4 tics + 3 tics = 7 tics total (~0.20 s)
-  - Double-barrel shotgun flash: 5 tics + 4 tics = 9 tics total (~0.26 s)
-  - Chaingun flash: 5 tics per frame (~0.14 s), randomly picks one of two variants per shot
-  - Rocket launcher flash: 3 + 4 + 4 + 4 = 15 tics (~0.43 s, longer because of the launch plume)
-  - Plasma flash: 4 tics, randomly picks one of two variants (~0.11 s)
+  - Pistol flash: single frame, 7 ticks (~0.20 s)
+  - Single-barrel shotgun flash: 4 ticks + 3 ticks = 7 ticks total (~0.20 s)
+  - Double-barrel shotgun flash: 5 ticks + 4 ticks = 9 ticks total (~0.26 s)
+  - Chaingun flash: 5 ticks per frame (~0.14 s), randomly picks one of two variants per shot
+  - Rocket launcher flash: 3 + 4 + 4 + 4 = 15 ticks (~0.43 s, longer because of the launch plume)
+  - Plasma flash: 4 ticks, randomly picks one of two variants (~0.11 s)
   - Extra-light levels: 0 = none, 1 = bright (start of flash), 2 = brighter (mid flash for longer flashes)
 - **Feel**: The flash is short — typically under a quarter second — but unmistakable. Because it's a separate layer, the weapon sprite continues its recoil/recovery animation independently, which makes the firing animation feel layered and lively. The brief world brightening implies that the muzzle is actually illuminating the room, even though it's just a global tint.
 
@@ -44,12 +44,12 @@ Classic FPS reference games layer visual feedback on top of every combat action:
     - Damage 9-12: medium spatter
     - Damage < 9: small drip
 - **Constants** (at 35 ticks/sec):
-  - Puff: 4 frames, 4 tics each = 16 tics total (~0.46 s)
+  - Puff: 4 frames, 4 ticks each = 16 ticks total (~0.46 s)
   - Puff first frame is "full bright" so it stands out
-  - Puff upward velocity: 1 unit per tic (slow rise)
-  - Blood: 3 frames, 8 tics each = 24 tics total (~0.69 s)
-  - Blood upward velocity: 2 units per tic (rises faster than puff)
-  - Random duration jitter on first frame: subtract 0-3 tics
+  - Puff upward velocity: 1 unit per tick (slow rise)
+  - Blood: 3 frames, 8 ticks each = 24 ticks total (~0.69 s)
+  - Blood upward velocity: 2 units per tick (rises faster than puff)
+  - Random duration jitter on first frame: subtract 0-3 ticks
   - Vertical jitter on spawn position: about +/- a few units (random dispersion)
   - Position offset from impact: ~4 units back for walls, ~10 units back for things
 - **Feel**: The puff/blood discrimination is essential information. With sound alone, the player would not know whether a shot landed. The visual distinction tells the player "you hit the wall" vs. "you hit the enemy" instantly, even before damage numbers or enemy reactions appear. The damage-tiered blood makes powerful weapons feel more impactful than weak ones at the moment of impact.
@@ -68,9 +68,9 @@ Classic FPS reference games layer visual feedback on top of every combat action:
   - The pain check is triggered every time the enemy takes damage, not just once per encounter, so rapid-fire weapons can chain pain animations on weak enemies.
   - Some enemies (skull-like flying chargers) have a 100% pain chance — they always flinch, but compensate with aggressive movement.
 - **Constants** (at 35 ticks/sec):
-  - Basic humanoid enemies (former human, shotgun guy): 2 frames at 3 tics each = 6 tics total (~0.17 s)
-  - Imp / small demon: 2 frames at 2 tics each = 4 tics total (~0.11 s)
-  - Larger floating creature: 3 frames at 3-6 tics = 12 tics total (~0.34 s)
+  - Basic humanoid enemies (basic hitscan trooper / shotgun trooper): 2 frames at 3 ticks each = 6 ticks total (~0.17 s)
+  - Ranged-melee hybrid / small melee enemy: 2 frames at 2 ticks each = 4 ticks total (~0.11 s)
+  - Larger floating creature: 3 frames at 3-6 ticks = 12 ticks total (~0.34 s)
   - Pain sound plays on second frame (mid-flinch)
 - **Feel**: Pain animations are deliberately short. Long pain animations would make enemies feel "stunned" rather than "hurt." The 0.1-0.2 second flinch is just enough to read as "I hit it" without being a tactical pause. Combined with high pain chances on weak enemies, sustained fire visibly stun-locks them, which is a satisfying expression of damage.
 
@@ -89,8 +89,8 @@ Classic FPS reference games layer visual feedback on top of every combat action:
   - A small "tactile feedback" pulse is also triggered (force feedback / rumble), proportional to the damage.
   - A separate counter controls a brief golden-yellow tint for picking up items (positive feedback). This shares the screen-tint mechanism but uses a different palette ramp.
 - **Constants** (at 35 ticks/sec):
-  - Damage count cap: 100 (so the strongest possible flash lasts about 100 tics ~= 2.86 s before fully fading)
-  - Decay rate: 1 unit per tic (linear)
+  - Damage count cap: 100 (so the strongest possible flash lasts about 100 ticks ~= 2.86 s before fully fading)
+  - Decay rate: 1 unit per tick (linear)
   - Number of red-tint levels: 8
   - Mapping: tint level = floor((damage_count + 7) / 8), clamped to 8 levels
   - Pickup-tint accumulation: +6 per pickup
@@ -103,21 +103,21 @@ Classic FPS reference games layer visual feedback on top of every combat action:
 
 - **Behavior**: When an enemy reaches zero health, it transitions to a multi-frame death animation that ends with a "corpse" frame that persists indefinitely. If the killing blow was a major overkill (damage exceeded the enemy's spawn health, so health goes deeply negative), it uses a more dramatic "extreme death" / gib animation instead.
 - **Rules**:
-  - Normal death: 5-frame animation, 5 tics per frame, ends with a corpse frame that has -1 duration (persists forever).
-  - Extreme death (gib): 9-frame animation, 5 tics per frame, ends with a different corpse frame. Triggered when health drops below the negative of the enemy's max health.
+  - Normal death: 5-frame animation, 5 ticks per frame, ends with a corpse frame that has -1 duration (persists forever).
+  - Extreme death (gib): 9-frame animation, 5 ticks per frame, ends with a different corpse frame. Triggered when health drops below the negative of the enemy's max health.
   - On entering death, the enemy's height collapses to a quarter of original (so the corpse is small and walkable over).
   - Partway through the death animation (typically frame 3), the enemy loses its "solid" flag and becomes walk-through.
   - On the second frame of death, a death sound plays (scream/groan). The extreme death plays a different "splat" sound on its second frame.
-  - On the first frame, a small random reduction (0-3 tics) is subtracted from the duration so simultaneous deaths don't all sync up.
+  - On the first frame, a small random reduction (0-3 ticks) is subtracted from the duration so simultaneous deaths don't all sync up.
   - Some enemy types drop pickup items at the moment of death (the basic hitscan grunt drops an ammo clip, the shotgun grunt drops a shotgun pickup). The drop spawns at the death location.
   - Gibbed enemies cannot be resurrected by certain enemy types — the gib death has no "raise" path. This makes gibbing tactically distinct from normal kills.
 - **Constants** (at 35 ticks/sec):
-  - Normal death: 5 frames * 5 tics = 25 tics (~0.71 s) + permanent corpse
-  - Extreme death: 9 frames * 5 tics = 45 tics (~1.29 s) + permanent corpse
+  - Normal death: 5 frames * 5 ticks = 25 ticks (~0.71 s) + permanent corpse
+  - Extreme death: 9 frames * 5 ticks = 45 ticks (~1.29 s) + permanent corpse
   - Solid-loss frame: typically the third frame (~0.29 s into the animation)
   - Height collapse: original height / 4
   - Gib threshold: damage exceeding spawn_health (e.g., 20 HP enemy gibs at -20 or worse)
-  - Random first-frame jitter: subtract 0-3 tics
+  - Random first-frame jitter: subtract 0-3 ticks
 - **Feel**: Death animations are paced to feel weighty. Three-quarters of a second of falling/twitching before settling tells the player "you killed it" with finality. The gib animation rewards powerful weapons or critical hits with a more dramatic visual, reinforcing the feel of overkill. Persistent corpses serve as visible records of recent combat — they tell the player at a glance "I came through here and cleared it."
 
 **Top-down 2D adaptation**: A simple 3-5 frame fade-out / slump animation on the enemy sprite, transitioning to a static "corpse" sprite that remains. For gibs, a brief particle burst plus a different corpse sprite (or none, if gibbed enemies should fully vanish).
@@ -127,7 +127,7 @@ Classic FPS reference games layer visual feedback on top of every combat action:
 - **Behavior**: Multiple feedback channels stack simultaneously without conflict. A single fired-and-hit shot produces, in order: (1) muzzle flash on the player's view, (2) world brightness pulse, (3) puff or blood at impact point, (4) pain animation on the enemy, (5) pain sound, (6) hit sound (from the puff/blood spawn).
 - **Rules**:
   - Each effect runs on its own state machine and timer, so they don't interfere.
-  - The flash, puff/blood, and pain animation all start in the same tic that the hit is registered.
+  - The flash, puff/blood, and pain animation all start in the same tick that the hit is registered.
   - All effects auto-clean-up after their duration expires (no manual reset needed).
   - The screen damage tint is the only effect that is *cumulative* — each hit adds to the existing tint instead of replacing it.
 - **Feel**: The simultaneous layering creates a strong "moment of impact" feel. A single well-aimed shot rewards the player with a small fireworks display: the gun flashes, the room briefly lights up, a small splatter appears at the target, the target flinches, sounds play. Even though each individual effect is short, the combination feels meaty.
@@ -146,7 +146,7 @@ Classic FPS reference games layer visual feedback on top of every combat action:
 
 6. **Effects use the same state-machine framework as enemies.** Puffs, blood, muzzle flashes, and corpses all are state machines with sprite/duration/next-state entries. The same engine that runs enemy AI runs visual effects. This is a very efficient design: if you have a state machine, you have a particle system.
 
-7. **Random duration jitter prevents "marching" effects.** Subtracting 0-3 random tics from the first frame of effects spawned simultaneously prevents them from animating in lockstep. The cost is one random number per spawn; the benefit is that crowds of effects look organic.
+7. **Random duration jitter prevents "marching" effects.** Subtracting 0-3 random ticks from the first frame of effects spawned simultaneously prevents them from animating in lockstep. The cost is one random number per spawn; the benefit is that crowds of effects look organic.
 
 8. **Decoupled flash and weapon layers preserve animation independence.** The muzzle flash being on its own sprite layer means the weapon recoil/recovery animation doesn't have to be re-authored to include flash frames. Each can be tuned independently.
 
@@ -163,15 +163,15 @@ Classic FPS reference games layer visual feedback on top of every combat action:
 | Blood (heavy hit, dmg >= 13) | Frame 1 sprite | Largest splatter |
 | Blood (medium hit, dmg 9-12) | Frame 2 sprite | Medium spatter |
 | Blood (light hit, dmg < 9) | Frame 3 sprite | Small drip |
-| Enemy pain (small enemy) | ~0.11 s | Imp-tier |
+| Enemy pain (small enemy) | ~0.11 s | Ranged-melee hybrid-tier |
 | Enemy pain (basic humanoid) | ~0.17 s | Trooper-tier |
 | Enemy pain (larger creature) | ~0.34 s | Floating creature |
 | Player damage tint cap | 100 (~2.86 s max fade) | Cumulative, linear decay |
 | Player damage tint levels | 8 | Discrete red palette ramp |
 | Pickup tint cap | ~6 per pickup, 4 levels | Yellow ramp |
-| Normal death animation | ~0.71 s + permanent corpse | 5 frames * 5 tics |
-| Gib death animation | ~1.29 s + permanent corpse | 9 frames * 5 tics |
-| Death first-frame jitter | -0 to -3 tics (random) | Anti-lockstep |
+| Normal death animation | ~0.71 s + permanent corpse | 5 frames * 5 ticks |
+| Gib death animation | ~1.29 s + permanent corpse | 9 frames * 5 ticks |
+| Death first-frame jitter | -0 to -3 ticks (random) | Anti-lockstep |
 | Solid-loss point in death | ~0.29 s in (frame 3) | Becomes walk-through |
 | Corpse height | original / 4 | Walkable obstacle |
 

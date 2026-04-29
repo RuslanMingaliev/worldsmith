@@ -68,7 +68,7 @@ The existing console messages from `weapon_system.rs` ("Hit for X! ...") and `en
 
 ### Enemy
 
-One enemy archetype exists: a basic ranged attacker ("former human" archetype).
+One enemy archetype exists: a basic hitscan trooper (low HP, single hitscan attack, high pain chance).
 
 #### Current Implementation
 
@@ -123,16 +123,16 @@ The level must:
 
 - Multiple weapons (shotgun, chaingun, fist, super shotgun)
 - Projectile-based enemy attacks (fireball with travel time, dodging)
-- Multiple enemy types (shotgun guy, chaingunner, imp, demon, spectre, cacodemon, lost soul, baron of hell, hell knight, revenant, mancubus, arachnotron, arch-vile, cyberdemon, spider mastermind)
+- Multiple enemy types (shotgun trooper, rapid-hitscan trooper, ranged-melee hybrid, melee-only beast, invisible melee-only beast, floating projectile mid-tier, kamikaze flyer, mid-tier melee+projectile boss, heavy melee+projectile boss, homing-missile boss, triple-projectile boss, rapid-plasma boss, area-attack boss with corpse-resurrect, rocket-launcher mega-boss, super-chaingun mega-boss)
 - Armor and damage reduction system
 - Ammo economy and pickups
 - Difficulty levels (damage scaling)
 - Auto-aim / vertical targeting
 - Advanced enemy coordination
 - Sound-based enemy alert propagation (sound propagates through connected sectors, blocked by closed doors)
-- Melee attacks for enemies (demon bite, imp claw)
+- Melee attacks for enemies (beast bite, hybrid claw)
 - Enemy infighting (enemies damaging each other, target switching)
-- Enemy resurrection (arch-vile reviving corpses)
+- Enemy resurrection (area-attack boss reviving corpses)
 - Deaf/ambush enemy flag (sight-only detection, ignores sound)
 - Gib death prevention of resurrection
 - Cutscenes

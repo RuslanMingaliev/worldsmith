@@ -12,7 +12,7 @@ This spec captures all gameplay balance constants, visual parameters, and level 
 | Movement model | thrust + friction | Constants (THRUST_FACTOR, FRICTION, MAX_SPEED, STOP_THRESHOLD) defined in `specs/21_player_movement.md` |
 | Turn speed | 2.0 rad/sec | Tuned for 60 FPS (original was 35 ticks/sec) |
 
-## Enemy (Basic Ranged -- "Former Human" archetype)
+## Enemy (Basic Hitscan Trooper)
 
 ### Implemented
 
@@ -249,15 +249,15 @@ The game's rendering frame rate (60 FPS) does not affect gameplay timing because
 The following are documented in knowledge but out of current scope (one weapon, one enemy type):
 
 - Multiple weapons (shotgun, chaingun, fist, super shotgun)
-- Projectile-based attacks (imp fireball, travel time, dodging)
+- Projectile-based attacks (hybrid fireball, travel time, dodging)
 - Multiple enemy types -- see knowledge/enemy_types.md for full roster:
-  - Shotgun Guy (30 HP, hitscan x3, 66% pain chance)
-  - Chaingunner (70 HP, rapid hitscan, 66% pain chance)
-  - Imp (60 HP, melee + projectile, 78% pain chance)
-  - Demon (150 HP, melee only, 70% pain chance)
-  - Cacodemon (400 HP, projectile, 50% pain chance)
-  - Baron of Hell (1000 HP, melee + projectile, 20% pain chance)
-  - Cyberdemon (4000 HP, rockets, 8% pain chance)
+  - Shotgun trooper (30 HP, hitscan x3, 66% pain chance)
+  - Rapid-hitscan trooper (70 HP, rapid hitscan, 66% pain chance)
+  - Ranged-melee hybrid (60 HP, melee + projectile, 78% pain chance)
+  - Melee-only beast (150 HP, melee only, 70% pain chance)
+  - Floating projectile mid-tier (400 HP, projectile, 50% pain chance)
+  - Heavy melee+projectile boss (1000 HP, melee + projectile, 20% pain chance)
+  - Rocket-launcher mega-boss (4000 HP, rockets, 8% pain chance)
   - And others (see knowledge/enemy_types.md)
 - Armor system (green 33% absorption, blue 50% absorption)
 - Ammo economy (ammo types, pickups, scarcity pressure)
