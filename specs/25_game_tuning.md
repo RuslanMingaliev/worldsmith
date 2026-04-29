@@ -57,6 +57,7 @@ This spec captures all gameplay balance constants, visual parameters, and level 
 |----------|-------|--------|
 | Damage | 5, 10, or 15 per shot | Formula: `5 * (random(0..2) + 1)`, mean ~10 |
 | Range | 2048 map units | Effectively unlimited indoors |
+| PISTOL_RANGE_TILES | 64.0 tiles | Derived from `Range` (2048 map units) at 32 px/tile (`TILE_SIZE`). The reference engine uses 32 px per tile, so 2048 / 32 = 64 tiles. Captured during reconcile of full regen 2026-04-29 (was inlined as `PISTOL_RANGE_TILES` in `weapon_system.rs`); mirrors the existing `ENEMY_CONTACT_RANGE_TILES` derivation note. |
 | Fire cycle | 0.54 seconds | ~1.84 shots/sec (knowledge/combat_balance.md) |
 | Hit detection | Hitscan (instant) | Line trace, no projectile travel time |
 | First-shot accuracy | Perfect (no spread) | First shot after pause has zero angular offset |
@@ -200,6 +201,21 @@ Mapping: `level = ceil(damage_count * DAMAGE_TINT_LEVELS / DAMAGE_TINT_CAP)`, cl
 | Constant | Value | Source |
 |----------|-------|--------|
 | TRACE_STEP | 0.1 tile | Ray-march step size used by `weapon_system::fire` to find a wall impact when the trace doesn't hit an enemy. Sub-tile resolution puts the puff close to the wall surface; a smaller step trades CPU for accuracy. Closed-form line-vs-grid intersection deferred (see ADR 22). |
+
+## Autopilot (Bot Tuning)
+
+The autopilot bot in `src/autopilot.rs` is `#[cfg(test)]`-only. Behavior is described in `specs/30_test_framework.md` § Bot Behavior; the constants below are the bot's tuning knobs.
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| BOT_FRAME_TIME | 1/60 s | specs/30 § Execution Rules (60 FPS) |
+| BOT_MAX_FRAMES | 3600 | specs/30 § Execution Rules (60 sec max) |
+| BOT_REACH_DISTANCE | 1.0 tile | specs/30 § Objectives (`reach: distance < 1.0`) |
+| BOT_APPROACH_DISTANCE | 8.0 tiles | specs/30 § Objectives (`approach: distance < 8.0`) |
+| BOT_STUCK_FRAMES | 30 | specs/30 § Stuck Detection |
+| BOT_REVERSE_STRAFE_FRAMES | 60 | specs/30 § Stuck Detection |
+| BOT_FACING_THRESHOLD | 0.3 rad | Generation default — captured during reconcile of full regen 2026-04-29 (was inlined as `BOT_FACING_THRESHOLD` in `autopilot.rs`). Defines "roughly facing" the target (specs/30 § Bot Behavior point 2): if `\|delta_angle\| < BOT_FACING_THRESHOLD`, the bot moves forward. ~17 degrees keeps the bot from swerving while still firing only when meaningfully aligned. |
+| BOT_TURN_THRESHOLD | 0.05 rad | Generation default — captured during reconcile of full regen 2026-04-29 (was inlined as `BOT_TURN_THRESHOLD` in `autopilot.rs`). Below this angular delta the bot emits `turn = 0`, preventing oscillation around the target heading at high turn speed. ~3 degrees is one-frame-of-overshoot at `PLAYER_TURN_SPEED = 2.0 rad/sec` and 60 FPS. |
 
 ## Frame Rate
 

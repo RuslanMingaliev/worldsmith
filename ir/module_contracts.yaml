@@ -1,0 +1,877 @@
+version: "2026-04-29.1"
+generated_for_run: pipeline_run_2026-04-29
+
+# -----------------------------------------------------------------------------
+# Shared low-level types
+# -----------------------------------------------------------------------------
+# Defined ONCE in their home module. All other modules `use crate::<home>::<T>`.
+# Coders MUST NOT redefine these in other modules.
+shared_types:
+  - name: Vec2
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug, Default, PartialEq)]
+      pub struct Vec2 {
+          pub x: f32,
+          pub y: f32,
+      }
+    public_methods: |
+      pub fn new(x: f32, y: f32) -> Self
+      pub fn length(self) -> f32
+      pub fn normalize(self) -> Vec2
+      pub fn dot(self, other: Vec2) -> f32
+      pub fn distance_to(self, other: Vec2) -> f32
+    notes: |
+      Coordinates are in tile units (one Tile::Wall cell = 1.0). See
+      specs/21 § Implementation Notes. normalize() of a near-zero vector
+      returns Vec2::default() (no NaN). distance_to is (a - b).length().
+
+  - name: Tile
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+      pub enum Tile {
+          Floor,
+          Wall,
+      }
+    notes: |
+      Two-state enum is sufficient for the current static level
+      (specs/25 § Level Layout). Door / pickup tiles are deferred.
+
+  - name: InputState
+    home_module: input_controller
+    definition: |
+      #[derive(Clone, Copy, Debug, Default)]
+      pub struct InputState {
+          pub forward: f32,   // -1.0 .. 1.0 (W/S)
+          pub strafe: f32,    // -1.0 .. 1.0 (A/D)
+          pub turn: f32,      // -1.0 .. 1.0 (Left/Right arrow)
+          pub fire: bool,     // Space
+          pub quit: bool,     // ESC
+      }
+    notes: |
+      InputState is value-typed and trivially Copy so the autopilot bot
+      can build one per frame without managing lifetimes. Movement axes
+      use float magnitude per specs/21 § Thrust ("proportional to input
+      strength"); the keyboard implementation in input_controller emits
+      -1.0/0.0/+1.0. The bot in autopilot may emit any value in [-1, 1].
+
+# -----------------------------------------------------------------------------
+# Module contracts (in dependency order from ir/module_plan.yaml)
+# -----------------------------------------------------------------------------
+modules:
+
+  # ---------------------------------------------------------------------------
+  - name: level_data
+    file: src/level_data.rs
+    depends_on: []
+    public_types:
+      - name: Vec2
+        note: "Defined here; see shared_types.Vec2."
+      - name: Tile
+        note: "Defined here; see shared_types.Tile."
+      - name: Level
+        definition: |
+          pub struct Level {
+              pub width: usize,                 // GRID_WIDTH (20)
+              pub height: usize,                // GRID_HEIGHT (15)
+              pub tiles: Vec<Vec<Tile>>,        // tiles[y][x]
+              pub player_spawn: Vec2,           // tile coords (specs/25 § Level Layout)
+              pub enemy_spawns: Vec<Vec2>,      // single entry today
+              pub exit: Vec2,                   // tile coords
+          }
+    public_constants:
+      - { name: TILE_SIZE,    type: f32,   value: "32.0", source: "specs/25 § Visual" }
+      - { name: GRID_WIDTH,   type: usize, value: "20",   source: "specs/25 § Level Layout" }
+      - { name: GRID_HEIGHT,  type: usize, value: "15",   source: "specs/25 § Level Layout" }
+      - { name: EXIT_RADIUS,  type: f32,   value: "1.0",  source: "specs/25 § Win/Lose" }
+    public_methods:
+      - signature: "pub fn build_default() -> Level"
+        notes: |
+          Hardcoded layout from specs/25 § Level Layout: 20x15, all-edge wall
+          border, vertical interior wall x=10 y=3..8, horizontal interior wall
+          y=7 x=4..9. Player spawn (2.5, 2.5), enemy spawn (17.5, 12.5),
+          exit (17.5, 2.5). No I/O.
+      - signature: "pub fn is_wall(level: &Level, tile_x: i32, tile_y: i32) -> bool"
+        notes: |
+          Boundary-safe. Out-of-bounds (negative or >= width/height) returns
+          true (treats outside the grid as solid wall). Used by player
+          collision (player_state) and weapon ray-march (weapon_system).
+    cross_module_borrows: []
+    notes: |
+      Owner of Vec2 and Tile shared types. No deps; first to generate.
+      EXIT_RADIUS lives here because game_loop's win check is `player.pos
+      .distance_to(level.exit) < EXIT_RADIUS` -- the level owns the exit
+      geometry, not the loop.
+
+  # ---------------------------------------------------------------------------
+  - name: player_state
+    file: src/player_state.rs
+    depends_on: [level_data]
+    public_types:
+      - name: Player
+        definition: |
+          pub struct Player {
+              pub pos: Vec2,
+              pub vel: Vec2,
+              pub facing: f32,             // radians, wraps at 2*PI
+              pub health: i32,
+              pub alive: bool,
+              pub damage_count: f32,       // accumulator for player damage tint (specs/40)
+              pub time_since_fire: f32,    // seconds since last shot; tracked here so
+                                           // weapon_system can read & reset it for
+                                           // first-shot accuracy + IDLE_THRESHOLD_SEC
+                                           // (specs/25 § Weapon).
+          }
+    public_constants:
+      - { name: PLAYER_MAX_HEALTH, type: i32, value: "100",   source: "specs/25 § Player" }
+      - { name: PLAYER_TURN_SPEED, type: f32, value: "2.0",   source: "specs/25 § Player (rad/sec @ 60FPS)" }
+      - { name: THRUST_FACTOR,     type: f32, value: "10.0",  source: "specs/21 § Thrust" }
+      - { name: FRICTION,          type: f32, value: "0.906", source: "specs/21 § Friction" }
+      - { name: STOP_THRESHOLD,    type: f32, value: "0.0625",source: "specs/21 § Friction" }
+      - { name: MAX_SPEED,         type: f32, value: "0.3",   source: "specs/21 § Speed Limiting" }
+      - { name: PLAYER_RADIUS_TILES, type: f32, value: "0.4375", source: "specs/25 § Visual (14 px / 32 px) — used for circle-vs-wall collision" }
+    public_methods:
+      - signature: "pub fn new(spawn: Vec2) -> Player"
+        notes: |
+          health = PLAYER_MAX_HEALTH, alive = true, vel = (0,0), facing = 0.0,
+          damage_count = 0.0, time_since_fire = f32::INFINITY (so the first
+          shot of the game gets first-shot accuracy).
+      - signature: "pub fn apply_input(player: &mut Player, input: &InputState, level: &Level, dt: f32)"
+        notes: |
+          Per-frame movement update from specs/21:
+            1. facing += input.turn * PLAYER_TURN_SPEED * dt (wraps at 2*PI).
+            2. forward thrust = input.forward * THRUST_FACTOR / 1000 (per
+               specs/21 § Thrust).
+            3. strafe thrust = input.strafe * THRUST_FACTOR / 1000 perpendicular
+               to facing.
+            4. vel += forward_vec + strafe_vec.
+            5. vel.x *= FRICTION; vel.y *= FRICTION.
+            6. Clamp vel.x and vel.y independently to +/- MAX_SPEED.
+            7. If |vel| < STOP_THRESHOLD * MAX_SPEED and no movement input,
+               set vel = (0,0) per specs/21 § Friction.
+            8. Attempt move: try (pos.x + vel.x * dt * 60, pos.y + vel.y * dt * 60).
+               Use axis-aligned slide on collision (specs/21 § Implementation
+               Status notes "wall collision with axis-aligned sliding").
+               Collision uses PLAYER_RADIUS_TILES against level::is_wall on
+               the four overlapping tile cells.
+            9. Increment player.time_since_fire by dt (weapon_system resets it
+               when the player fires).
+          Free function form (not `&mut self`) so this stays one-call from
+          game_loop and matches the orchestration style used elsewhere.
+      - signature: "pub fn take_damage(player: &mut Player, amount: i32)"
+        notes: |
+          Used by enemy_logic::update on contact damage. Mutates only the
+          player struct (no &mut VisualEffects param -- spec/80 § API
+          Surface forbids it on non-orchestration methods). Behavior:
+            health -= amount;
+            damage_count = (damage_count + amount as f32).min(DAMAGE_TINT_CAP);
+            if health <= 0 { alive = false; health = 0; }
+          Caller (enemy_logic) is responsible for any console message and any
+          direct pain-flash side effect on its own enemy. The damage tint is
+          DERIVED at draw time by renderer from player.damage_count; no
+          spawn into VisualEffects is required for it.
+      - signature: "pub fn decay_damage_tint(player: &mut Player, dt: f32)"
+        notes: |
+          Called once per frame by game_loop AFTER take_damage may have run
+          this tick. Implementation:
+            player.damage_count = (player.damage_count - DAMAGE_TINT_DECAY_PER_SEC * dt).max(0.0);
+          DAMAGE_TINT_DECAY_PER_SEC and DAMAGE_TINT_CAP live in
+          visual_effects (their other consumer is the renderer). Player
+          imports them via `use crate::visual_effects::{DAMAGE_TINT_CAP,
+          DAMAGE_TINT_DECAY_PER_SEC};`. This is the spec/80 acceptable
+          cross-module constant import: a player-side accumulator using a
+          visual-effects-defined cap.
+    cross_module_borrows:
+      - "&Level (immutable read in apply_input for collision)"
+      - "&InputState (immutable read in apply_input)"
+    notes: |
+      Per spec/40 line 130, the damage_count accumulator may live in player
+      OR in visual_effects -- chosen to live in player here so take_damage
+      can update it in-place without grabbing &mut VisualEffects.
+      `time_since_fire` lives here for the same borrow-graph reason (the
+      weapon system needs to read it from the player it just fired with).
+
+  # ---------------------------------------------------------------------------
+  - name: input_controller
+    file: src/input_controller.rs
+    depends_on: [player_state]
+    public_types:
+      - name: InputState
+        note: "Defined here; see shared_types.InputState."
+    public_methods:
+      - signature: "pub fn poll(window: &minifb::Window) -> InputState"
+        notes: |
+          Read the current keyboard state from the live window:
+            forward = (W ? 1.0 : 0.0) + (S ? -1.0 : 0.0)
+            strafe  = (D ? 1.0 : 0.0) + (A ? -1.0 : 0.0)
+            turn    = (Right ? 1.0 : 0.0) + (Left ? -1.0 : 0.0)
+            fire    = window.is_key_down(Key::Space)
+            quit    = window.is_key_down(Key::Escape)
+          Per CLAUDE.md § Controls. No persistent state -- caller invokes
+          once per frame.
+    cross_module_borrows:
+      - "&minifb::Window (immutable read in poll)"
+    notes: |
+      depends_on: [player_state] from module_plan reflects historical
+      "input that drives the player" framing; functionally this module
+      only needs minifb to read the window. It does NOT use any
+      player_state symbol. Coder for input_controller MUST NOT add
+      `use crate::player_state::*` -- the dependency edge is there for
+      regen ordering, not for symbols.
+
+  # ---------------------------------------------------------------------------
+  - name: visual_effects
+    file: src/visual_effects.rs
+    depends_on: [level_data, player_state]
+    public_types:
+      - name: EffectKind
+        definition: |
+          #[derive(Clone, Copy, Debug, PartialEq)]
+          pub enum EffectKind {
+              MuzzleFlash,
+              Tracer,        // uses (start, end) line; renderer reads end_pos
+              WallPuff,
+              BloodSplat,
+              EnemyDeathFade,
+              EnemyCorpse,
+          }
+      - name: Effect
+        definition: |
+          pub struct Effect {
+              pub kind: EffectKind,
+              pub pos: Vec2,                 // primary world position
+              pub end_pos: Vec2,             // tracer endpoint; ignored for non-tracer kinds
+              pub lifetime_remaining: f32,   // seconds; PERSISTENT_LIFETIME (f32::INFINITY) for corpses
+              pub initial_lifetime: f32,     // for fade interpolation in renderer
+          }
+      - name: VisualEffects
+        definition: |
+          pub struct VisualEffects {
+              pub effects: Vec<Effect>,
+          }
+    public_constants:
+      # Muzzle flash
+      - { name: MUZZLE_FLASH_DURATION, type: f32, value: "0.10", source: "specs/25 § Visual Feedback / Muzzle Flash" }
+      - { name: MUZZLE_FLASH_RADIUS,   type: f32, value: "6.0",  source: "specs/25 § Visual Feedback / Muzzle Flash (px)" }
+      - { name: MUZZLE_OFFSET,         type: f32, value: "0.5",  source: "specs/25 § Visual Feedback / Muzzle Flash (tile units)" }
+      # Tracer
+      - { name: TRACER_DURATION,  type: f32, value: "0.06", source: "specs/25 § Visual Feedback / Hit-Scan Tracer" }
+      - { name: TRACER_THICKNESS, type: f32, value: "1.0",  source: "specs/25 § Visual Feedback / Hit-Scan Tracer (px)" }
+      # Puff
+      - { name: PUFF_DURATION, type: f32, value: "0.30", source: "specs/25 § Visual Feedback / Wall Puff" }
+      - { name: PUFF_RADIUS,   type: f32, value: "4.0",  source: "specs/25 § Visual Feedback / Wall Puff (px)" }
+      # Blood
+      - { name: BLOOD_DURATION, type: f32, value: "0.50", source: "specs/25 § Visual Feedback / Blood Splat" }
+      - { name: BLOOD_RADIUS,   type: f32, value: "6.0",  source: "specs/25 § Visual Feedback / Blood Splat (px)" }
+      # Enemy pain flash (timer lives on Enemy; duration constant homed here)
+      - { name: ENEMY_PAIN_FLASH_DURATION, type: f32, value: "0.10", source: "specs/25 § Visual Feedback / Enemy Pain Flash" }
+      # Player damage tint
+      - { name: DAMAGE_TINT_CAP,           type: f32,   value: "100.0", source: "specs/25 § Visual Feedback / Player Damage Tint" }
+      - { name: DAMAGE_TINT_DECAY_PER_SEC, type: f32,   value: "35.0",  source: "specs/25 § Visual Feedback / Player Damage Tint" }
+      - { name: DAMAGE_TINT_LEVELS,        type: u32,   value: "8",     source: "specs/25 § Visual Feedback / Player Damage Tint" }
+      # Enemy death visual
+      - { name: ENEMY_DEATH_FADE_DURATION, type: f32, value: "0.40", source: "specs/25 § Visual Feedback / Enemy Death Visual" }
+      - { name: ENEMY_CORPSE_RADIUS,       type: f32, value: "8.0",  source: "specs/25 § Visual Feedback / Enemy Death Visual (px)" }
+      # Effect-list housekeeping
+      - { name: EFFECT_LIST_INITIAL_CAPACITY, type: usize, value: "16", source: "specs/25 § Effect List" }
+      - { name: PERSISTENT_LIFETIME, type: f32, value: "f32::INFINITY", source: "specs/25 § Effect List" }
+    public_methods:
+      - signature: "pub fn new() -> VisualEffects"
+        notes: "Empty list, Vec::with_capacity(EFFECT_LIST_INITIAL_CAPACITY)."
+      - signature: "pub fn spawn_muzzle_flash(fx: &mut VisualEffects, muzzle_pos: Vec2)"
+        notes: "Pushes Effect { kind: MuzzleFlash, pos: muzzle_pos, end_pos: Vec2::default(), lifetime_remaining: MUZZLE_FLASH_DURATION, initial_lifetime: MUZZLE_FLASH_DURATION }."
+      - signature: "pub fn spawn_tracer(fx: &mut VisualEffects, start: Vec2, end: Vec2)"
+        notes: "Effect.pos = start, Effect.end_pos = end, lifetime = TRACER_DURATION."
+      - signature: "pub fn spawn_wall_puff(fx: &mut VisualEffects, pos: Vec2)"
+        notes: "lifetime = PUFF_DURATION."
+      - signature: "pub fn spawn_blood_splat(fx: &mut VisualEffects, pos: Vec2)"
+        notes: "lifetime = BLOOD_DURATION."
+      - signature: "pub fn spawn_enemy_death_fade(fx: &mut VisualEffects, pos: Vec2)"
+        notes: "lifetime = ENEMY_DEATH_FADE_DURATION. The corpse marker is spawned later by enemy.update once the fade timer expires (per spec/40 line 100)."
+      - signature: "pub fn spawn_enemy_corpse(fx: &mut VisualEffects, pos: Vec2)"
+        notes: "lifetime_remaining = PERSISTENT_LIFETIME; tick() never decreases non-finite values."
+      - signature: "pub fn tick(fx: &mut VisualEffects, dt: f32)"
+        notes: |
+          For each effect: if lifetime_remaining.is_finite() then
+          lifetime_remaining -= dt. Then retain effects with
+          (!lifetime_remaining.is_finite() || lifetime_remaining > 0.0).
+          Called once per frame from game_loop.
+    cross_module_borrows:
+      - "Reads Vec2 (level_data) by value; no &mut other-module-types."
+    notes: |
+      `depends_on: [level_data, player_state]` from module_plan -- this
+      module references Vec2 from level_data. It does NOT import any
+      Player symbol; the player_state edge is regen-ordering metadata
+      from the original IR. Coder MUST NOT `use crate::player_state::*`
+      here. The damage_tint accumulator lives on Player (see
+      player_state); only the constants for it live here.
+
+  # ---------------------------------------------------------------------------
+  - name: weapon_system
+    file: src/weapon_system.rs
+    depends_on: [player_state, visual_effects]
+    public_types: []
+    public_constants:
+      - { name: PISTOL_FIRE_CYCLE,    type: f32, value: "0.54", source: "specs/25 § Weapon (Pistol)" }
+      - { name: PISTOL_RANGE_TILES,   type: f32, value: "64.0", source: "specs/25 § Weapon (range 2048 map units / 32 px per tile = 64 tiles)" }
+      - { name: PISTOL_REFIRE_SPREAD_RAD, type: f32, value: "0.0977", source: "specs/25 § Weapon (5.6 deg in radians)" }
+      - { name: IDLE_THRESHOLD_SEC,   type: f32, value: "1.0",  source: "specs/25 § Weapon (Pistol) IDLE_THRESHOLD_SEC" }
+      - { name: TRACE_STEP,           type: f32, value: "0.1",  source: "specs/25 § Wall Hit Trace" }
+    public_methods:
+      - signature: |
+          pub fn fire(
+              player: &mut Player,
+              enemies: &mut [Enemy],
+              level: &Level,
+              fx: &mut VisualEffects,
+          )
+        notes: |
+          Called by game_loop *once per frame* if (input.fire &&
+          player.time_since_fire >= PISTOL_FIRE_CYCLE) -- the cooldown
+          gate is checked in fire() itself so callers don't need a
+          separate flag. After firing:
+            1. Compute aim_angle:
+                 - If player.time_since_fire >= IDLE_THRESHOLD_SEC:
+                     aim_angle = player.facing  (perfect first-shot)
+                 - Else:
+                     aim_angle = player.facing + triangular_spread()
+                       where triangular_spread = (rand_f32() - rand_f32())
+                       * PISTOL_REFIRE_SPREAD_RAD
+            2. Reset player.time_since_fire = 0.0.
+            3. Compute muzzle_pos = player.pos + facing_unit_vector
+               * MUZZLE_OFFSET (uses MUZZLE_OFFSET from visual_effects).
+            4. Spawn muzzle_flash at muzzle_pos.
+            5. Ray-march from muzzle_pos along aim_angle in TRACE_STEP
+               increments up to PISTOL_RANGE_TILES:
+                 - If step hits an enemy.alive within enemy radius
+                   (ENEMY_RADIUS_TILES from enemy_logic): apply random
+                   damage 5/10/15 to that enemy via enemy.take_damage,
+                   spawn tracer (muzzle_pos -> hit_pos), spawn blood at
+                   hit_pos, return.
+                 - If is_wall(level, ...) at this step: spawn tracer
+                   (muzzle_pos -> step_pos), spawn wall_puff at step_pos,
+                   return.
+                 - If range exceeded: spawn tracer (muzzle_pos ->
+                   range_endpoint), no impact effect (per spec/40 § Impact
+                   Effect Rules: "trace that hits nothing produces no
+                   impact effect"), return.
+          fire() is the per-frame combat hook -- spec/80 § API Surface
+          permits direct &mut VisualEffects here (resolution A).
+      - signature: "pub fn pistol_damage_roll() -> i32"
+        notes: |
+          Returns one of {5, 10, 15} uniformly at random per the
+          formula 5 * (rand(0..3) + 1) (specs/25 § Damage Randomization).
+          Public so unit tests in the same module can verify the
+          distribution; if no caller outside the module exists at
+          end-of-run, Reconciler should flag and Coder may downgrade
+          to private.
+    cross_module_borrows:
+      - "&mut Player (write health via take_damage path; reset time_since_fire)"
+      - "&mut [Enemy] (apply damage)"
+      - "&Level (immutable read for is_wall during ray-march)"
+      - "&mut VisualEffects (spawn flash/tracer/puff/blood) -- spec/80 exception A"
+    notes: |
+      Damage formula is 5 * (random(0..3) + 1) -> {5, 10, 15} per
+      specs/25. Use std::collections::hash_map::DefaultHasher or a small
+      explicit linear congruential generator for randomness; std lacks
+      a public RNG. Picking a tiny LCG keeps the dep list clean (no
+      `rand` crate). Coder owns this internal choice.
+
+  # ---------------------------------------------------------------------------
+  - name: enemy_logic
+    file: src/enemy_logic.rs
+    depends_on: [level_data, player_state, visual_effects]
+    public_types:
+      - name: EnemyState
+        definition: |
+          #[derive(Clone, Copy, Debug, PartialEq)]
+          pub enum EnemyState {
+              Idle,    // pre-reaction-delay
+              Chase,   // moving toward player
+              Pain,    // briefly stunned
+              Dead,    // health <= 0; corpse fade in progress or done
+          }
+      - name: Enemy
+        definition: |
+          pub struct Enemy {
+              pub pos: Vec2,
+              pub health: i32,
+              pub alive: bool,
+              pub state: EnemyState,
+              pub time_in_state: f32,    // seconds since entering current state
+              pub pain_flash_remaining: f32,  // 0.0 = no flash; counts down each tick
+              pub time_since_attack: f32,     // seconds since last contact hit (cooldown gate)
+              pub death_fade_remaining: f32,  // > 0 while in death fade; 0 when corpse should spawn
+              pub corpse_spawned: bool,       // true once spawn_enemy_corpse has fired
+          }
+    public_constants:
+      - { name: ENEMY_MAX_HEALTH,         type: i32, value: "20",     source: "specs/25 § Enemy" }
+      - { name: ENEMY_SPEED_TILES_PER_SEC,type: f32, value: "2.0",    source: "specs/25 § Enemy" }
+      - { name: ENEMY_RADIUS_TILES,       type: f32, value: "0.375",  source: "specs/25 § Visual (12 px / 32 px) -- used for hit detection by weapon_system" }
+      - { name: ENEMY_REACTION_DELAY,     type: f32, value: "0.23",   source: "specs/25 § Enemy" }
+      - { name: ENEMY_ATTACK_COOLDOWN,    type: f32, value: "0.54",   source: "specs/25 § Enemy" }
+      - { name: ENEMY_PAIN_DURATION,      type: f32, value: "0.17",   source: "specs/25 § Enemy" }
+      - { name: ENEMY_PAIN_CHANCE,        type: f32, value: "0.78",   source: "specs/25 § Enemy (200/255)" }
+      - { name: ENEMY_CONTACT_RANGE_TILES,type: f32, value: "0.8125", source: "specs/25 § Enemy (player 14 + enemy 12 px = 26 px / 32 px)" }
+      - { name: ENEMY_ATTACK_DAMAGE_VALUES, type: "[i32; 5]", value: "[3, 6, 9, 12, 15]", source: "specs/25 § Enemy (formula (rand(0..4)+1)*3)" }
+    public_methods:
+      - signature: "pub fn new(spawn: Vec2) -> Enemy"
+        notes: |
+          health = ENEMY_MAX_HEALTH, alive = true, state = Idle,
+          time_in_state = 0.0, pain_flash_remaining = 0.0,
+          time_since_attack = ENEMY_ATTACK_COOLDOWN (so the *first*
+          attack can fire immediately after the reaction delay),
+          death_fade_remaining = 0.0, corpse_spawned = false.
+      - signature: |
+          pub fn update(
+              enemy: &mut Enemy,
+              player: &mut Player,
+              level: &Level,
+              fx: &mut VisualEffects,
+              dt: f32,
+          )
+        notes: |
+          Per-frame AI tick. Order:
+            1. enemy.time_in_state += dt; enemy.time_since_attack += dt;
+               enemy.pain_flash_remaining = (pain_flash_remaining - dt)
+                                            .max(0.0).
+            2. Match on enemy.state:
+                 Idle:
+                   - if time_in_state >= ENEMY_REACTION_DELAY:
+                       transition to Chase (reset time_in_state = 0).
+                 Chase:
+                   - if !player.alive: do nothing.
+                   - dx = player.pos - enemy.pos; dist = dx.length().
+                   - if dist <= ENEMY_CONTACT_RANGE_TILES and
+                     time_since_attack >= ENEMY_ATTACK_COOLDOWN:
+                       dmg = ENEMY_ATTACK_DAMAGE_VALUES[rand_idx];
+                       player_state::take_damage(player, dmg);
+                       time_since_attack = 0.0;
+                       (no console message required; specs/20 mentions
+                        existing stdout messages but flagging their fate
+                        is a Coder decision per specs/40 line 156).
+                   - else: move toward player at
+                       ENEMY_SPEED_TILES_PER_SEC * dt, blocked by
+                       level::is_wall (use axis-aligned slide identical
+                       to player_state::apply_input).
+                 Pain:
+                   - if time_in_state >= ENEMY_PAIN_DURATION:
+                       transition to Chase (reset time_in_state = 0).
+                 Dead:
+                   - if !corpse_spawned and death_fade_remaining > 0:
+                       death_fade_remaining = (death_fade_remaining
+                                               - dt).max(0.0).
+                   - if !corpse_spawned and death_fade_remaining == 0:
+                       fx.spawn_enemy_corpse(enemy.pos);
+                       corpse_spawned = true;
+                   - return early (do not chase/attack while dead).
+          take_damage is a SEPARATE method below; update() does not
+          call it. update() is the per-frame AI hook, so spec/80 §
+          API Surface permits direct &mut Player and &mut VisualEffects
+          (resolution A).
+      - signature: |
+          pub fn take_damage(
+              enemy: &mut Enemy,
+              amount: i32,
+              fx: &mut VisualEffects,
+          )
+        notes: |
+          Called by weapon_system::fire when the ray-march hits this
+          enemy. Behavior:
+            1. if !enemy.alive: return (already dead).
+            2. enemy.health -= amount.
+            3. if enemy.health <= 0:
+                 enemy.alive = false;
+                 enemy.state = EnemyState::Dead;
+                 enemy.time_in_state = 0.0;
+                 enemy.death_fade_remaining = ENEMY_DEATH_FADE_DURATION;
+                 fx.spawn_enemy_death_fade(enemy.pos);
+                 // corpse spawns later in update() per spec/40 line 100.
+            4. else if rand_f32() < ENEMY_PAIN_CHANCE:
+                 enemy.state = EnemyState::Pain;
+                 enemy.time_in_state = 0.0;
+                 enemy.pain_flash_remaining = ENEMY_PAIN_FLASH_DURATION;
+                 // spec/40 § Enemy Pain Flash: re-arm flash on every
+                 // *successful* pain check, not on every hit.
+          take_damage is invoked from inside weapon_system::fire which
+          is itself the combat per-frame hook; the &mut VisualEffects
+          is therefore part of the combat tick borrow graph.
+          Spec/80 exception A applies transitively.
+    cross_module_borrows:
+      - "&mut Player (apply contact damage in update)"
+      - "&Level (immutable read in update for collision)"
+      - "&mut VisualEffects (spawn pain flash, death fade, corpse) -- spec/80 exception A"
+    notes: |
+      ENEMY_PAIN_FLASH_DURATION is imported from visual_effects (it is
+      a visual constant; the enemy struct just holds the current
+      remaining timer). Random helper -- enemy may use a tiny LCG;
+      Coder can share a module-private RNG with weapon_system or
+      duplicate. Coder degree of freedom.
+
+  # ---------------------------------------------------------------------------
+  - name: presentation
+    file: src/presentation.rs
+    depends_on: [player_state, enemy_logic]
+    public_types: []
+    public_constants:
+      - { name: WINDOW_WIDTH,  type: usize, value: "640", source: "specs/25 § Visual" }
+      - { name: WINDOW_HEIGHT, type: usize, value: "480", source: "specs/25 § Visual" }
+      - { name: TARGET_FPS,    type: u64,   value: "60",  source: "specs/25 § Frame Rate" }
+      - { name: DELTA_TIME_CAP, type: f32,  value: "0.1", source: "specs/25 § Frame Rate" }
+    public_methods: []
+    cross_module_borrows: []
+    notes: |
+      With the renderer module sitting downstream of presentation in the
+      module_plan, this module now collapses to "window-and-frame
+      constants only". It deliberately ships NO functions: window
+      creation lives in main.rs (close to its `?` propagation), and the
+      framebuffer drawing lives in renderer.rs. Coder for presentation
+      only emits the four public_constants above.
+      `depends_on: [player_state, enemy_logic]` from module_plan is
+      regen-ordering metadata; presentation does not import either.
+
+  # ---------------------------------------------------------------------------
+  - name: renderer
+    file: src/renderer.rs
+    depends_on: [presentation, visual_effects]
+    public_types: []
+    public_constants:
+      # RGB packed 0xRRGGBB; the renderer is the only consumer of these.
+      - { name: COLOR_WALL,                type: u32, value: "0x404040", source: "specs/25 § Visual" }
+      - { name: COLOR_FLOOR,               type: u32, value: "0x808080", source: "specs/25 § Visual" }
+      - { name: COLOR_PLAYER,              type: u32, value: "0x00FF00", source: "specs/25 § Visual" }
+      - { name: COLOR_ENEMY,               type: u32, value: "0xFF0000", source: "specs/25 § Visual" }
+      - { name: COLOR_EXIT,                type: u32, value: "0x00FFFF", source: "specs/25 § Visual" }
+      - { name: COLOR_DIRECTION_LINE,      type: u32, value: "0xFFFF00", source: "specs/25 § Visual" }
+      - { name: COLOR_MUZZLE_FLASH,        type: u32, value: "0xFFFF80", source: "specs/25 § Visual Feedback" }
+      - { name: COLOR_TRACER,              type: u32, value: "0xFFFFC0", source: "specs/25 § Visual Feedback" }
+      - { name: COLOR_PUFF,                type: u32, value: "0xB0B0B0", source: "specs/25 § Visual Feedback" }
+      - { name: COLOR_BLOOD,               type: u32, value: "0xC00000", source: "specs/25 § Visual Feedback" }
+      - { name: COLOR_PAIN_FLASH,          type: u32, value: "0xFFFFFF", source: "specs/25 § Visual Feedback" }
+      - { name: COLOR_CORPSE,              type: u32, value: "0x602020", source: "specs/25 § Visual Feedback" }
+      - { name: COLOR_DAMAGE_TINT,         type: u32, value: "0xFF0000", source: "specs/25 § Visual Feedback" }
+      - { name: PLAYER_RADIUS_PX,          type: i32, value: "14",  source: "specs/25 § Visual" }
+      - { name: ENEMY_RADIUS_PX,           type: i32, value: "12",  source: "specs/25 § Visual" }
+      - { name: EXIT_MARKER_SIZE_PX,       type: i32, value: "20",  source: "specs/25 § Visual" }
+      - { name: DIRECTION_LINE_LEN_PX,     type: i32, value: "20",  source: "specs/25 § Visual" }
+      - { name: GAME_OVER_BORDER_PX,       type: i32, value: "10",  source: "specs/25 § Visual" }
+      - { name: DAMAGE_TINT_MAX_ALPHA_PCT, type: u32, value: "50",  source: "specs/25 § Visual Feedback (~50%)" }
+    public_methods:
+      - signature: |
+          pub fn draw(
+              framebuffer: &mut Vec<u32>,
+              level: &Level,
+              player: &Player,
+              enemies: &[Enemy],
+              fx: &VisualEffects,
+              game_over: Option<bool>,  // None = playing, Some(true) = won, Some(false) = lost
+          )
+        notes: |
+          Single render entry point invoked once per frame by game_loop.
+          Layer order (back to front, per spec/40 § Effect Layering):
+            1. Floor + walls (level tiles).
+            2. Exit marker (cyan X) and corpses.
+            3. Blood splats and wall puffs.
+            4. Tracer lines.
+            5. Muzzle flashes.
+            6. Live enemies (pain-flashed body color when
+               enemy.pain_flash_remaining > 0, else COLOR_ENEMY).
+            7. Player disc + direction line.
+            8. Player damage tint overlay if level > 0:
+                 level = ((player.damage_count * DAMAGE_TINT_LEVELS as f32)
+                          / DAMAGE_TINT_CAP).ceil() as u32;
+                 level = level.min(DAMAGE_TINT_LEVELS);
+                 alpha_pct = (DAMAGE_TINT_MAX_ALPHA_PCT * level)
+                              / DAMAGE_TINT_LEVELS;
+                 software-blend COLOR_DAMAGE_TINT into framebuffer at
+                 alpha_pct.
+            9. Game-over border if game_over.is_some()
+               (green tint for win, red for lose; thickness
+               GAME_OVER_BORDER_PX).
+          The renderer reads visual_effects, player.damage_count,
+          enemy.pain_flash_remaining, enemy.death_fade_remaining (for
+          fade interpolation), and enemy.alive (corpse vs. live). It
+          does NOT mutate any other module's state.
+      - signature: "pub fn make_framebuffer() -> Vec<u32>"
+        notes: |
+          Allocates Vec::from_iter([0u32; WINDOW_WIDTH * WINDOW_HEIGHT]).
+          Helper so main.rs doesn't need to import WINDOW_WIDTH etc.
+          itself.
+    cross_module_borrows:
+      - "&mut Vec<u32> (the framebuffer is owned by main.rs/game_loop)"
+      - "&Level, &Player, &[Enemy], &VisualEffects (all read-only)"
+    notes: |
+      Renderer owns the COLOR_* table to keep specs/25 § Visual values
+      from being duplicated (per intentionally_unspecified note below).
+      All RGB constants are declared local because the renderer is the
+      single consumer.
+
+  # ---------------------------------------------------------------------------
+  - name: game_loop
+    file: src/game_loop.rs
+    depends_on:
+      - level_data
+      - player_state
+      - enemy_logic
+      - weapon_system
+      - input_controller
+      - visual_effects
+    public_types:
+      - name: GameState
+        definition: |
+          pub struct GameState {
+              pub level: Level,
+              pub player: Player,
+              pub enemies: Vec<Enemy>,
+              pub fx: VisualEffects,
+              pub running: bool,           // false -> main loop exits
+              pub won: bool,               // true once player reaches exit
+              #[cfg(test)]
+              pub frames: u64,             // tick counter; only autopilot reads this
+          }
+    public_constants: []
+    public_methods:
+      - signature: "pub fn new() -> GameState"
+        notes: |
+          Constructs GameState from Level::build_default():
+            level = level_data::build_default()
+            player = Player::new(level.player_spawn)
+            enemies = level.enemy_spawns.iter()
+                          .map(|&s| Enemy::new(s)).collect()
+            fx = VisualEffects::new()
+            running = true; won = false; (#[cfg(test)] frames = 0)
+      - signature: "pub fn update(state: &mut GameState, input: &InputState, dt: f32)"
+        notes: |
+          ONE per-frame tick. Order is pinned by frame_update_order
+          below. Both main.rs and autopilot call update(...). Caller
+          (main.rs) handles minifb redraw and per-frame timing; caller
+          (autopilot) drives a fixed dt = 1.0/60.0.
+    cross_module_borrows:
+      - "Owns Level, Player, Enemies, VisualEffects -- all by value."
+      - "Borrows &InputState for the duration of update()."
+    notes: |
+      The `frames` field is `#[cfg(test)]` because the only consumer is
+      autopilot's `game.frames` assertion (specs/30). Per spec/80 §
+      API Surface "no dead pub exports", a release-build symbol with
+      no consumer must not be public.
+
+  # ---------------------------------------------------------------------------
+  - name: autopilot
+    file: src/autopilot.rs
+    cfg_test_only_module: true
+    depends_on:
+      - game_loop
+      - input_controller
+      - level_data
+      - player_state
+      - enemy_logic
+    public_types:
+      - name: Scenario
+        definition: |
+          #[derive(Debug, serde::Deserialize)]
+          pub struct Scenario {
+              pub scenario: String,
+              pub description: String,
+              pub objectives: Vec<Objective>,
+              pub assertions: Vec<Assertion>,
+          }
+        cfg_test_only: true
+      - name: Objective
+        definition: |
+          #[derive(Debug, serde::Deserialize)]
+          #[serde(rename_all = "lowercase")]
+          pub enum Objective {
+              Kill { kill: String },
+              Reach { reach: String },
+              Approach { approach: String },
+              Wait { wait: u32 },
+          }
+        cfg_test_only: true
+        notes: |
+          Implementation choice deferred to Coder: the YAML files in
+          tests/ use a single-key-mapping form
+          ("- kill: enemy"); the Coder may use serde_yaml::Value
+          inspection or a custom Deserialize impl. The public *shape*
+          (kill/reach/approach/wait) is what must be stable.
+      - name: Assertion
+        definition: |
+          #[derive(Debug)]
+          pub struct Assertion {
+              pub field: String,    // "player.alive", "game.won", ...
+              pub op: AssertOp,     // Eq | Gt | Lt | Gte | Lte
+              pub value: AssertValue,
+          }
+        cfg_test_only: true
+      - name: AssertOp
+        definition: |
+          #[derive(Debug, Clone, Copy, PartialEq)]
+          pub enum AssertOp { Eq, Gt, Lt, Gte, Lte }
+        cfg_test_only: true
+      - name: AssertValue
+        definition: |
+          #[derive(Debug)]
+          pub enum AssertValue { Bool(bool), Number(f32) }
+        cfg_test_only: true
+    public_constants:
+      - { name: BOT_FRAME_RATE,         type: f32, value: "60.0",   source: "specs/30 § Execution Rules", cfg_test_only: true }
+      - { name: BOT_FRAME_TIME,         type: f32, value: "0.01666667", source: "specs/30 § Execution Rules (1/60)", cfg_test_only: true }
+      - { name: BOT_MAX_FRAMES,         type: u32, value: "3600",   source: "specs/30 § Execution Rules (60 sec)", cfg_test_only: true }
+      - { name: BOT_REACH_DISTANCE,     type: f32, value: "1.0",    source: "specs/30 § Objectives (reach)", cfg_test_only: true }
+      - { name: BOT_APPROACH_DISTANCE,  type: f32, value: "8.0",    source: "specs/30 § Objectives (approach)", cfg_test_only: true }
+      - { name: BOT_STUCK_FRAMES,       type: u32, value: "30",     source: "specs/30 § Stuck Detection", cfg_test_only: true }
+      - { name: BOT_REVERSE_STRAFE_FRAMES, type: u32, value: "60",  source: "specs/30 § Stuck Detection", cfg_test_only: true }
+      - { name: BOT_ALIGNMENT_RAD,      type: f32, value: "0.2",    source: "Coder generation default -- 'roughly facing' threshold; Reconciler should capture if not in spec/25", cfg_test_only: true }
+    public_methods:
+      - signature: "pub fn parse_scenario(yaml: &str) -> Scenario"
+        notes: "serde_yaml::from_str(yaml).expect('valid scenario YAML')."
+        cfg_test_only: true
+      - signature: "pub fn run_scenario(scenario: &Scenario) -> ScenarioResult"
+        notes: |
+          1. state = GameState::new();
+          2. for frame in 0..BOT_MAX_FRAMES:
+               input = bot_step(&state, &scenario.objectives, ...);
+               game_loop::update(&mut state, &input, BOT_FRAME_TIME);
+               if all objectives complete or !state.running: break;
+          3. for assertion in &scenario.assertions:
+               check_assertion(&state, assertion);
+          4. return ScenarioResult { passed, failures }.
+        cfg_test_only: true
+      - signature: "pub struct ScenarioResult { pub passed: bool, pub failures: Vec<String> }"
+        cfg_test_only: true
+      - signature: |
+          #[test]
+          fn run_all_scenarios()
+        notes: |
+          Iterates `tests/**/*.yaml`, parses each scenario, runs it,
+          asserts ScenarioResult.passed == true, panics with the first
+          failure message otherwise. This is the entry point cargo test
+          discovers.
+        cfg_test_only: true
+    cross_module_borrows:
+      - "&mut GameState (drives update each frame)"
+      - "Constructs InputState by value each frame"
+    notes: |
+      ENTIRE module is `#[cfg(test)]`-gated by main.rs (`#[cfg(test)] mod
+      autopilot;`). The Coder for autopilot does NOT need to add
+      individual `#[cfg(test)]` attributes inside the module -- the
+      module gate already excludes everything from release builds.
+      `cfg_test_only: true` on each public_constants entry above is a
+      DOCUMENTATION marker for Reconciler diffing, not a Rust attribute
+      to add inside the file.
+
+# -----------------------------------------------------------------------------
+# Per-frame orchestration order
+# -----------------------------------------------------------------------------
+# game_loop::update(state, input, dt) calls these in this exact sequence.
+# Pinned so (a) the Coder for game_loop has a canonical sequence, and
+# (b) Coders for each module know who calls them, when, with what borrow.
+frame_update_order:
+  - "if input.quit { state.running = false; return; }"
+  - "player_state::apply_input(&mut state.player, input, &state.level, dt)"
+  - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)"
+  - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire"
+  - "player_state::decay_damage_tint(&mut state.player, dt)"
+  - "visual_effects::tick(&mut state.fx, dt)"
+  - "if !state.player.alive: state.running = false  // game over (lose)"
+  - "if state.player.pos.distance_to(state.level.exit) < EXIT_RADIUS: state.won = true; state.running = false  // game over (win)"
+  - "#[cfg(test)] state.frames += 1"
+
+# -----------------------------------------------------------------------------
+# Service-emit policy (spec/80 § API Surface)
+# -----------------------------------------------------------------------------
+# Per call-site decision: A = method takes &mut <Service> directly because it
+# is itself a per-frame orchestration hook; B = method returns a description
+# and game_loop emits.
+service_emit_decisions:
+  - call_site: "weapon_system::fire"
+    resolution: A
+    rationale: |
+      fire() is invoked from game_loop::update once per frame as the
+      combat tick. Spec/80 § API Surface explicitly carves out
+      `update`-style methods that take the full per-frame borrow graph.
+
+  - call_site: "enemy_logic::update"
+    resolution: A
+    rationale: |
+      Per-frame AI hook. Spec/40 § Implementation note line 100 even
+      pins the signature: "the corpse marker is spawned by
+      enemy.update()" -- exactly so update() owns the &mut VisualEffects
+      borrow rather than take_damage() pulling it transitively.
+
+  - call_site: "enemy_logic::take_damage"
+    resolution: A
+    rationale: |
+      take_damage is called from inside weapon_system::fire (which is
+      itself a per-frame hook). The &mut VisualEffects parameter is
+      simply forwarded along the existing combat-tick borrow chain --
+      no new "service borrow" introduced. Spawning the death-fade
+      effect synchronously avoids losing it if the Enemy is deallocated
+      before the next update tick (which can't happen today but is a
+      cheap correctness margin).
+
+  - call_site: "player_state::take_damage"
+    resolution: B
+    rationale: |
+      take_damage is NOT a per-frame hook. The damage tint is derived
+      in renderer from player.damage_count (which take_damage updates
+      directly on Player). No &mut VisualEffects parameter is needed
+      because the tint is an overlay, not a spawned effect. Keeps
+      player_state independent of visual_effects symbol-wise EXCEPT for
+      the two constants DAMAGE_TINT_CAP and DAMAGE_TINT_DECAY_PER_SEC
+      (constant import is fine; struct import is not).
+
+  - call_site: "renderer::draw"
+    resolution: B
+    rationale: |
+      Render is read-only. It reads VisualEffects and player.damage_count
+      and emits pixels into the framebuffer. No spawn API needed.
+
+# -----------------------------------------------------------------------------
+# Coder degrees of freedom (intentionally unpinned)
+# -----------------------------------------------------------------------------
+coder_degrees_of_freedom:
+  - "Internal helper functions inside any module (private fn body)."
+  - "Choice of small RNG implementation (simple LCG vs. xorshift) for damage rolls and pain checks; module-private."
+  - "Whether weapon_system and enemy_logic share an RNG seed via a small private helper module or each carry their own."
+  - "Internal struct ordering / field layout details that do not change the public API."
+  - "Bot pathfinding internals in autopilot (turn-toward, stuck-detect, strafe heuristic). The public Scenario / Objective shape is pinned; the bot logic is not."
+  - "Choice of slide algorithm in player_state and enemy_logic (axis-aligned per spec/21; the per-axis order and the integer-vs-float of the radius check are Coder-internal)."
+  - "Whether VisualEffect lifetime decay uses retain() or a manual swap_remove loop -- both meet the spec."
+
+# -----------------------------------------------------------------------------
+# Things intentionally NOT pinned (and flagged so Reconciler doesn't double-look)
+# -----------------------------------------------------------------------------
+intentionally_unspecified:
+  - "Renderer color values are listed in `renderer.public_constants` (the renderer is their single consumer). Specs/25 § Visual is the source; do NOT duplicate the same constants in any other module's contract."
+  - "Specific stuck-detection strafe heuristic in autopilot: spec/30 § Stuck Detection only specifies the trigger frames (30/60), not the strafe direction selection algorithm."
+  - "console-message fate from the prior generation (specs/20 line 67 calls these `Hit for X! ...` lines a separate Coder decision). Coders MAY emit them, MAY suppress them. Reconciler will capture whichever choice is made."
+
+# -----------------------------------------------------------------------------
+# Conflicts between spec sources (resolved here so Coders never have to)
+# -----------------------------------------------------------------------------
+spec_conflicts_resolved:
+  - issue: |
+      ir/game_ir.yaml lists enemy attack_damage_values as [3, 6, 9, 12, 15]
+      AND specs/25 § Enemy says "Attack damage 3, 6, 9, 12, or 15 per hit"
+      with formula "(random(0..4) + 1) * 3". Both agree. No conflict.
+    resolution: "Use the explicit array [3, 6, 9, 12, 15]."
+  - issue: |
+      Pistol damage: ir/game_ir.yaml says [5, 10, 15] mean 10. Specs/25
+      § Weapon agrees ("5, 10, or 15 per shot, formula 5 * (random(0..2) + 1)").
+      No conflict.
+    resolution: "Use formula 5 * (random(0..3) + 1) -> {5, 10, 15}."
+  - issue: |
+      ir/game_ir.yaml describes simplifications ("enemy_detection_is_immediate
+      _no_los", "weapon_spread_approximated_not_triangular"). Spec/25
+      describes the implemented (simplified) constants AND the target
+      (deferred) constants. Spec/25 takes precedence per CLAUDE.md
+      "Specs are the source of truth".
+    resolution: |
+      Coders implement the "Implemented" rows of specs/25 only. The
+      "Target (from knowledge, not yet implemented)" rows are carried
+      in spec/25 explicitly so they remain Reconciler-visible without
+      being implemented this run. Triangular spread IS implemented
+      (rand-rand) per the contract for weapon_system::fire above --
+      this is a partial uplift from the pre-existing approximation
+      and is consistent with specs/25 first-shot accuracy semantics.
