@@ -1,4 +1,4 @@
-# worldsmith
+# Worldsmith
 
 Experimental spec-driven development project for building a retro shooter generation pipeline.
 
