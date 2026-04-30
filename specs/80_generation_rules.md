@@ -17,6 +17,7 @@ The generated project should separate:
 - enemy behavior
 - level data
 - rendering or presentation logic
+- frame recording (specs/35) — small, isolated module; only consumed by `main.rs` when `--record-frames` is passed
 
 ## Regeneration Rules
 
@@ -142,7 +143,12 @@ fn update_enemy(enemy: &mut Enemy) {
 - Prefer standard library when possible
 - For graphics/windowing:
   - `minifb` for window, input, and framebuffer rendering
+- For scenario-driven autopilot and demo recording (specs/30, specs/35):
+  - `serde`, `serde_yaml` as runtime dependencies (NOT just `[dev-dependencies]`).
+    Released because `main.rs` in `--autopilot` mode parses scenario YAML at runtime.
 - Avoid adding dependencies for one-time operations
+- Frame recording (specs/35) MUST use raw `std::fs::File` writes — do NOT add `png`, `image`, or any encoder crate. The recording is raw BGRA, decoded by ffmpeg downstream.
+- CLI argument parsing (specs/35) MUST use `std::env::args` — do NOT add `clap`, `argh`, or similar.
 
 ### Code Style
 
@@ -181,7 +187,9 @@ fn update_enemy(enemy: &mut Enemy, player_pos: Vec2) {
 
 ### API Surface
 
-**No dead `pub` exports.** Every `pub fn`, `pub struct` field, or `pub const` a module emits must have at least one in-crate caller. If the only consumers are `#[cfg(test)]` (autopilot, integration tests, test-only inspection), gate the export itself with `#[cfg(test)]` rather than leaving it public-and-dead in release builds. If a spec value has no consumer yet, leave it as a private constant or add the consumer in the same generation pass — do not ship "API for future use".
+**No dead `pub` exports.** Every `pub fn`, `pub struct` field, or `pub const` a module emits must have at least one in-crate caller. If the only consumers are `#[cfg(test)]` (autopilot test runner, integration tests, test-only inspection), gate the export itself with `#[cfg(test)]` rather than leaving it public-and-dead in release builds. If a spec value has no consumer yet, leave it as a private constant or add the consumer in the same generation pass — do not ship "API for future use".
+
+**Exception — autopilot per-frame primitives.** `parse_scenario`, `bot_step`, `BotState`, `BotProgress`, `Scenario`, and `Objective` from the autopilot module ARE released (not `#[cfg(test)]`-gated) because `main.rs` consumes them in `--autopilot` mode (specs/35). The autopilot module's batch driver (`run_scenario`, `ScenarioResult`, `#[test] run_all_scenarios`) remains `#[cfg(test)]`-gated. See `ir/module_contracts.yaml` § autopilot for the exact split.
 
 **Exception — wave-cascade dead-code during partial regen:** when a Coder generates module A whose public symbols will be consumed by module B in a later wave of the same run, the symbols may be temporarily dead at the end of wave A. They must become live by the end of the run; otherwise the rule above applies.
 

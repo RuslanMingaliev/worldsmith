@@ -755,7 +755,7 @@ modules:
   # ---------------------------------------------------------------------------
   - name: autopilot
     file: src/autopilot.rs
-    cfg_test_only_module: true
+    cfg_test_only_module: false
     depends_on:
       - game_loop
       - input_controller
@@ -763,6 +763,7 @@ modules:
       - player_state
       - enemy_logic
     public_types:
+      # ---- Always compiled (released; consumed by main.rs in --autopilot mode)
       - name: Scenario
         definition: |
           #[derive(Debug, serde::Deserialize)]
@@ -770,26 +771,51 @@ modules:
               pub scenario: String,
               pub description: String,
               pub objectives: Vec<Objective>,
+              #[serde(default)]
               pub assertions: Vec<Assertion>,
           }
-        cfg_test_only: true
+        cfg_test_only: false
       - name: Objective
         definition: |
           #[derive(Debug, serde::Deserialize)]
-          #[serde(rename_all = "lowercase")]
           pub enum Objective {
-              Kill { kill: String },
-              Reach { reach: String },
-              Approach { approach: String },
-              Wait { wait: u32 },
+              Kill(String),
+              Reach(String),
+              Approach(String),
+              Wait(u32),
           }
-        cfg_test_only: true
+        cfg_test_only: false
         notes: |
           Implementation choice deferred to Coder: the YAML files in
           tests/ use a single-key-mapping form
           ("- kill: enemy"); the Coder may use serde_yaml::Value
           inspection or a custom Deserialize impl. The public *shape*
           (kill/reach/approach/wait) is what must be stable.
+      - name: BotState
+        definition: |
+          // Opaque per-bot working state (objective index, stuck counter,
+          // strafe direction, RNG seed for the bot's own randomness).
+          // Construct once per scenario via BotState::new() and pass &mut
+          // to bot_step each frame. Coder owns the field layout; only
+          // the constructor is contracted.
+          pub struct BotState { /* ... */ }
+        cfg_test_only: false
+      - name: BotProgress
+        definition: |
+          #[derive(Debug, Clone)]
+          pub enum BotProgress {
+              Running,
+              AllObjectivesComplete,
+              Failed(String),
+          }
+        cfg_test_only: false
+        notes: |
+          Returned alongside InputState from bot_step each frame.
+          main.rs (--autopilot mode) breaks out of its loop when this
+          is anything other than Running. The test runner uses the
+          same signal.
+
+      # ---- #[cfg(test)] only (offline batch driver)
       - name: Assertion
         definition: |
           #[derive(Debug)]
@@ -799,6 +825,20 @@ modules:
               pub value: AssertValue,
           }
         cfg_test_only: true
+        notes: |
+          Assertion is #[cfg(test)]-gated even though it appears as
+          Scenario::assertions; the Scenario type is always-compiled
+          but the assertions field is `#[serde(default)] Vec<Assertion>`
+          and Assertion's body lives behind cfg(test). Release builds
+          deserialize an empty Vec and never inspect it. This keeps the
+          released surface minimal while letting the same Scenario type
+          serve both paths.
+
+          Coder implementation note: define Assertion as a plain struct
+          with cfg(test) gating; for release-build deserialization of
+          the `assertions:` YAML key, either (a) use #[serde(default,
+          skip_deserializing)] in release builds, or (b) define an
+          empty stub Assertion in release. (a) is simpler.
       - name: AssertOp
         definition: |
           #[derive(Debug, Clone, Copy, PartialEq)]
@@ -809,31 +849,78 @@ modules:
           #[derive(Debug)]
           pub enum AssertValue { Bool(bool), Number(f32) }
         cfg_test_only: true
-    public_constants:
-      - { name: BOT_FRAME_RATE,         type: f32, value: "60.0",   source: "specs/30 § Execution Rules", cfg_test_only: true }
-      - { name: BOT_FRAME_TIME,         type: f32, value: "0.01666667", source: "specs/30 § Execution Rules (1/60)", cfg_test_only: true }
-      - { name: BOT_MAX_FRAMES,         type: u32, value: "3600",   source: "specs/30 § Execution Rules (60 sec)", cfg_test_only: true }
-      - { name: BOT_REACH_DISTANCE,     type: f32, value: "1.0",    source: "specs/30 § Objectives (reach)", cfg_test_only: true }
-      - { name: BOT_APPROACH_DISTANCE,  type: f32, value: "8.0",    source: "specs/30 § Objectives (approach)", cfg_test_only: true }
-      - { name: BOT_STUCK_FRAMES,       type: u32, value: "30",     source: "specs/30 § Stuck Detection", cfg_test_only: true }
-      - { name: BOT_REVERSE_STRAFE_FRAMES, type: u32, value: "60",  source: "specs/30 § Stuck Detection", cfg_test_only: true }
-      - { name: BOT_ALIGNMENT_RAD,      type: f32, value: "0.2",    source: "Coder generation default -- 'roughly facing' threshold; Reconciler should capture if not in spec/25", cfg_test_only: true }
-    public_methods:
-      - signature: "pub fn parse_scenario(yaml: &str) -> Scenario"
-        notes: "serde_yaml::from_str(yaml).expect('valid scenario YAML')."
+      - name: ScenarioResult
+        definition: |
+          pub struct ScenarioResult {
+              pub passed: bool,
+              pub failures: Vec<String>,
+          }
         cfg_test_only: true
+    public_constants:
+      # Always-compiled bot tunables (consumed by bot_step in both paths)
+      - { name: BOT_FRAME_RATE,         type: f32, value: "60.0",   source: "specs/30 § Execution Rules", cfg_test_only: false }
+      - { name: BOT_FRAME_TIME,         type: f32, value: "0.01666667", source: "specs/30 § Execution Rules (1/60)", cfg_test_only: false }
+      - { name: BOT_MAX_FRAMES,         type: u32, value: "3600",   source: "specs/30 § Execution Rules (60 sec)", cfg_test_only: false }
+      - { name: BOT_REACH_DISTANCE,     type: f32, value: "1.0",    source: "specs/30 § Objectives (reach)", cfg_test_only: false }
+      - { name: BOT_APPROACH_DISTANCE,  type: f32, value: "8.0",    source: "specs/30 § Objectives (approach)", cfg_test_only: false }
+      - { name: BOT_STUCK_FRAMES,       type: u32, value: "30",     source: "specs/30 § Stuck Detection", cfg_test_only: false }
+      - { name: BOT_REVERSE_STRAFE_FRAMES, type: u32, value: "60",  source: "specs/30 § Stuck Detection", cfg_test_only: false }
+      - { name: BOT_ALIGNMENT_RAD,      type: f32, value: "0.2",    source: "Coder generation default -- 'roughly facing' threshold; Reconciler should capture if not in spec/25", cfg_test_only: false }
+      - { name: BOT_RNG_SEED,           type: u64, value: "0xC0FFEE", source: "specs/35 § Determinism (Generation default — Coder may pick any fixed constant; record in work/decisions.md)", cfg_test_only: false }
+    public_methods:
+      # ---- Always compiled
+      - signature: "pub fn parse_scenario(yaml: &str) -> Scenario"
+        notes: |
+          serde_yaml::from_str(yaml).expect('valid scenario YAML').
+          Used by main.rs (--autopilot) and by run_all_scenarios test.
+        cfg_test_only: false
+      - signature: |
+          impl BotState {
+              pub fn new() -> Self;
+          }
+        notes: |
+          Initial bot state: current objective index = 0, stuck counter = 0,
+          strafe direction = +1, RNG seeded from BOT_RNG_SEED.
+        cfg_test_only: false
+      - signature: |
+          pub fn bot_step(
+              game: &GameState,
+              scenario: &Scenario,
+              bot: &mut BotState,
+          ) -> (InputState, BotProgress)
+        notes: |
+          Per-frame primitive. Decides the bot's next InputState given the
+          current GameState and the active objective from the Scenario.
+          Returns (input, progress). Progress transitions:
+            - Running while there is still an unmet objective and
+              bot.frame_count < BOT_MAX_FRAMES and game.player.alive.
+            - AllObjectivesComplete when the last objective's success
+              condition is met.
+            - Failed("timeout") when frame_count exceeds BOT_MAX_FRAMES.
+            - Failed("player_died") when !game.player.alive (relevant for
+              scenarios that don't expect death).
+          Bot RNG (used for stuck-detection strafe direction picks etc.)
+          is module-private and seeded from BOT_RNG_SEED in BotState::new(),
+          so two runs against the same Scenario + same GameState seed
+          produce identical (input, progress) sequences. This is the
+          determinism guarantee specs/35 § Determinism relies on.
+        cfg_test_only: false
+
+      # ---- #[cfg(test)] only
       - signature: "pub fn run_scenario(scenario: &Scenario) -> ScenarioResult"
         notes: |
-          1. state = GameState::new();
-          2. for frame in 0..BOT_MAX_FRAMES:
-               input = bot_step(&state, &scenario.objectives, ...);
-               game_loop::update(&mut state, &input, BOT_FRAME_TIME);
-               if all objectives complete or !state.running: break;
-          3. for assertion in &scenario.assertions:
-               check_assertion(&state, assertion);
-          4. return ScenarioResult { passed, failures }.
-        cfg_test_only: true
-      - signature: "pub struct ScenarioResult { pub passed: bool, pub failures: Vec<String> }"
+          Test-only batch driver. Pseudocode:
+            1. state = GameState::new();
+            2. bot = BotState::new();
+            3. loop:
+                 (input, progress) = bot_step(&state, scenario, &mut bot);
+                 game_loop::update(&mut state, &input, BOT_FRAME_TIME);
+                 if !matches!(progress, BotProgress::Running): break;
+            4. for assertion in &scenario.assertions:
+                 check_assertion(&state, assertion);
+            5. return ScenarioResult { passed, failures }.
+          Implemented in terms of bot_step so the test path and the
+          --autopilot path share the same bot logic.
         cfg_test_only: true
       - signature: |
           #[test]
@@ -845,16 +932,163 @@ modules:
           discovers.
         cfg_test_only: true
     cross_module_borrows:
-      - "&mut GameState (drives update each frame)"
+      - "&GameState (read-only in bot_step; &mut in run_scenario)"
       - "Constructs InputState by value each frame"
     notes: |
-      ENTIRE module is `#[cfg(test)]`-gated by main.rs (`#[cfg(test)] mod
-      autopilot;`). The Coder for autopilot does NOT need to add
-      individual `#[cfg(test)]` attributes inside the module -- the
-      module gate already excludes everything from release builds.
-      `cfg_test_only: true` on each public_constants entry above is a
-      DOCUMENTATION marker for Reconciler diffing, not a Rust attribute
-      to add inside the file.
+      Module-level `#[cfg(test)]` gate is REMOVED (was previously
+      `#[cfg(test)] mod autopilot;` in main.rs). The autopilot module
+      is now always compiled; individual symbols inside use per-symbol
+      `#[cfg(test)]` gates per the cfg_test_only field on each entry
+      above. `mod autopilot;` in main.rs has no cfg attribute.
+
+      Consumers:
+        - main.rs: parse_scenario, BotState, BotProgress, bot_step
+        - run_all_scenarios test: parse_scenario, run_scenario,
+          ScenarioResult, all assertion types
+
+      Dependency on serde/serde_yaml moves from [dev-dependencies] to
+      [dependencies] (specs/80 § Dependencies). game_ir.yaml /
+      Cargo.toml carry the manifest change.
+
+  # ---------------------------------------------------------------------------
+  - name: frame_recorder
+    file: src/frame_recorder.rs
+    cfg_test_only_module: false
+    depends_on: [presentation]
+    public_types:
+      - name: FrameRecorder
+        definition: |
+          pub struct FrameRecorder {
+              file: std::fs::File,
+              frames_written: u64,
+          }
+        notes: |
+          Owns a buffered writer over a target file. `frames_written` is
+          public so main.rs can log "recorded N frames to <path>" on exit
+          without re-stat-ing the file. Coder may add a private
+          BufWriter wrapper internally.
+    public_constants: []
+    public_methods:
+      - signature: "pub fn open(path: &str) -> std::io::Result<FrameRecorder>"
+        notes: |
+          Opens `path` for write (truncate-create). Wraps in a
+          BufWriter::with_capacity(WINDOW_WIDTH * WINDOW_HEIGHT * 4)
+          so each frame is at most one syscall.
+      - signature: "pub fn write_frame(rec: &mut FrameRecorder, framebuffer: &[u32]) -> std::io::Result<()>"
+        notes: |
+          Writes the framebuffer as raw bytes (native endian) to the file.
+          Length is checked: framebuffer.len() must equal
+          WINDOW_WIDTH * WINDOW_HEIGHT, panic with a clear message
+          otherwise (this is a programming error, not a runtime failure).
+          Increments rec.frames_written by 1 on success.
+          Implementation: `rec.file.write_all(unsafe-free reinterpret
+          via bytemuck-not-allowed)` — use the safe form
+          `for px in framebuffer { rec.file.write_all(&px.to_ne_bytes())?; }`
+          OR build a `&[u8]` slice via `framebuffer.as_ptr() as *const u8`
+          inside `unsafe { std::slice::from_raw_parts(...) }` -- the
+          latter is forbidden (specs/80 § Safety: no unsafe). Use the
+          per-pixel write_all loop; the BufWriter coalesces.
+      - signature: "pub fn close(rec: FrameRecorder) -> std::io::Result<()>"
+        notes: |
+          Explicit close so main.rs can surface flush errors instead of
+          swallowing them in Drop. Calls flush, returns the result.
+          Drop is also implemented (default — File flushes on drop) but
+          callers should prefer explicit close in --record-frames mode.
+    cross_module_borrows:
+      - "&[u32] framebuffer (read-only); &mut self for write_frame"
+    notes: |
+      Consumed only by main.rs when --record-frames is passed. No other
+      module references frame_recorder.
+
+      The Vec<u32> framebuffer this writes is the same object renderer::draw
+      filled. Order in main.rs: draw -> window.update_with_buffer ->
+      frame_recorder::write_frame. Capturing AFTER the window update means
+      we record what the user sees, not an off-by-one frame.
+
+# -----------------------------------------------------------------------------
+# main.rs CLI contract (specs/35 § CLI)
+# -----------------------------------------------------------------------------
+# main.rs is not a "module" in module_plan.yaml -- it's the binary entry point.
+# Its content was previously implicit ("just wire it up"); with --autopilot and
+# --record-frames it is now contracted explicitly.
+main_cli:
+  argv_parser:
+    notes: |
+      Use std::env::args (specs/80). No clap, no argh. Three positional/flag
+      states -- order does not matter, both flags can appear together:
+        --autopilot <path>      bot mode; reads scenario YAML at <path>
+        --record-frames <path>  raw BGRA dump to <path>
+      Unknown flag => print usage to stderr, exit code 2.
+      Missing argument to a flag => same.
+
+  modes:
+    interactive:
+      trigger: "no flags passed"
+      behavior: |
+        Existing behavior. minifb window opened, input_controller::poll
+        each frame, dt from Instant::now() deltas, RNGs seeded as today.
+        No frame_recorder used.
+    autopilot_only:
+      trigger: "--autopilot <path>"
+      behavior: |
+        1. yaml = std::fs::read_to_string(path).expect("scenario file readable")
+        2. scenario = autopilot::parse_scenario(&yaml)
+        3. bot = autopilot::BotState::new()
+        4. game = game_loop::new()
+        5. each frame:
+             (input, progress) = autopilot::bot_step(&game, &scenario, &mut bot);
+             game_loop::update(&mut game, &input, BOT_FRAME_TIME);  // fixed dt!
+             draw(&mut framebuffer, ..., &game, ...);
+             window.update_with_buffer(...);
+             match progress {
+                 BotProgress::Running => continue,
+                 BotProgress::AllObjectivesComplete => game.running = false,
+                 BotProgress::Failed(msg) => { eprintln!("autopilot failed: {msg}"); game.running = false; }
+             }
+        6. The window is still opened and updated -- the user sees the bot
+           play. ESC still quits (poll the window for the Escape key in
+           addition to the bot's input; OR is the running flag).
+        7. Determinism: dt is BOT_FRAME_TIME (fixed 1/60), NOT Instant
+           deltas. This is the critical difference from interactive mode.
+           specs/35 § Determinism.
+    record_only:
+      trigger: "--record-frames <path>  (without --autopilot)"
+      behavior: |
+        Interactive play, but every frame after window.update_with_buffer
+        also calls frame_recorder::write_frame. dt is Instant-based as in
+        interactive mode -- this mode is NOT deterministic; it captures
+        whatever the human plays. (Useful for ad-hoc captures, not for
+        release demos.)
+    autopilot_and_record:
+      trigger: "--autopilot <path> --record-frames <out>"
+      behavior: |
+        Combined: bot drives input, dt fixed at BOT_FRAME_TIME, every frame
+        dumped via frame_recorder::write_frame. THIS is the canonical
+        release-demo invocation. Two runs produce byte-identical files
+        (specs/35 § Acceptance Criteria).
+
+  rng_seeding:
+    notes: |
+      When --autopilot is set, ALL module-private RNGs (weapon_system,
+      enemy_logic, autopilot bot) MUST initialize from fixed seeds.
+      Coder degrees of freedom: where the seed constants live and the
+      RNG choice (LCG/xorshift). The constraint is: same scenario =>
+      same byte-for-byte recording. Without --autopilot, RNGs may seed
+      from time as before. specs/35 § Determinism.
+
+      Implementation hint: a small `pub(crate) fn rng_mode() -> RngMode`
+      helper in main.rs that returns either Deterministic(seed) or
+      WallClock, set once during arg parsing, consumed by each module's
+      RNG init. Coder may pick a different mechanism; the contract is
+      the *behavior*, not the plumbing.
+
+  exit_handling:
+    notes: |
+      When --record-frames was passed, on loop exit call
+      frame_recorder::close(rec) and surface any io::Error to stderr.
+      Print one line: "recorded N frames to <path>" using
+      rec.frames_written. This makes the recording script's life easier
+      (no need to query file size).
 
 # -----------------------------------------------------------------------------
 # Per-frame orchestration order

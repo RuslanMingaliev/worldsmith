@@ -218,6 +218,15 @@ Step 4: PostMortem
 
 Step 5: Human verification
   RUN:   cargo run — play the game
+
+Step 6: Record release demo GIF (specs/35)
+  RUN:   tooling/record_autopilot.sh tests/combat/kill_enemy.yaml release/demo.gif
+  CHECK: GIF is non-empty, plays back, shows the bot completing the scenario.
+         Two consecutive runs of the same command produce byte-identical raw
+         streams (specs/35 § Acceptance Criteria § Determinism). If they
+         differ, an RNG somewhere in the regenerated code is still
+         time-seeding under --autopilot — file a Reconciler follow-up.
+  OUTPUT: release/demo.gif (committed as part of the release tag).
 ```
 
 ### Repair (fix failing test or eval)

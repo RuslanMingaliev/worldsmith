@@ -46,10 +46,24 @@ modules:
       - visual_effects
 
   - name: autopilot
-    responsibility: spec-driven test framework, interprets YAML scenarios with bot AI
+    responsibility: |
+      Spec-driven scenario interpreter with bot AI. Per-frame primitives
+      (parse_scenario, bot_step, BotState, BotProgress, Scenario, Objective)
+      are always compiled and consumed by main.rs in --autopilot mode
+      (specs/35). The batch test runner (run_scenario, run_all_scenarios)
+      is #[cfg(test)]-gated.
     depends_on:
       - game_loop
       - input_controller
       - level_data
       - player_state
       - enemy_logic
+
+  - name: frame_recorder
+    responsibility: |
+      Optional raw-framebuffer recorder used only when main.rs is invoked
+      with --record-frames <path> (specs/35). Opens a file, appends each
+      framebuffer (BGRA u32s, native endian) per frame. No encoding —
+      ffmpeg consumes the raw stream downstream.
+    depends_on:
+      - presentation

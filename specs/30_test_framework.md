@@ -11,7 +11,16 @@ This enables:
 
 ## Architecture
 
-The autopilot module runs inside the game binary as a test harness. It reuses the same `GameState` and `InputState` as the real game loop, but replaces human input with bot decisions.
+The autopilot module runs inside the game binary. Its primary role is a test harness: scenario-driven `cargo test` runs that drive `GameState` headlessly and check assertions. A secondary role — defined in `specs/35_demo_mode.md` — reuses the same scenario parser and bot-decision logic to drive the live render loop for release demo recording.
+
+The split is:
+
+| API | Available in | Purpose |
+|-----|--------------|---------|
+| `parse_scenario`, `Scenario`, `Objective`, `BotState`, `BotProgress`, `bot_step` | Always (release + test) | Per-frame primitives; consumed by `main.rs` in `--autopilot` mode and by the test runner. |
+| `run_scenario`, `ScenarioResult`, `#[test] run_all_scenarios` | `#[cfg(test)]` only | Batch test-runner that iterates `tests/**/*.yaml` and asserts. |
+
+Both code paths reuse the same `GameState` and `InputState` as the real game loop and replace human input with bot decisions.
 
 ```
 YAML scenario → Parser → Objectives + Assertions
@@ -55,9 +64,13 @@ Objectives are executed sequentially. Each must complete before the next begins.
 
 | Name | Resolves to |
 |------|-------------|
-| `enemy` | Current enemy position |
+| `enemy` | First alive enemy position; falls back to first enemy's last position, then to `exit`, if no enemies are alive. |
 | `exit` | Level exit position |
 | `spawn` | Player spawn position |
+| `pickup_health` | First active health pickup position (specs/60). Falls back to player's current position when no active health pickup remains, so a `reach: pickup_health` objective trivially completes once all health pickups are consumed. |
+| `pickup_ammo` | First active ammo pickup position (specs/60). Same fallback rule as `pickup_health`. |
+
+The fallback semantics for pickup targets are deliberate: a scavenge-style scenario like `reach: pickup_health → reach: pickup_ammo → reach: exit` should not stall when a pickup is missing or already consumed — it should treat that objective as already satisfied and move on.
 
 ## Assertions
 
@@ -115,4 +128,8 @@ If the bot's position hasn't changed for 30 frames, it begins strafing. After 60
 - `player_state` (Player)
 - `enemy_logic` (Enemy)
 - `weapon_system` (Weapon, indirectly via GameState)
-- `serde`, `serde_yaml` (dev-dependencies, for YAML parsing)
+- `serde`, `serde_yaml` — runtime dependencies (used by `main.rs` in `--autopilot` mode per specs/35); also used by the `#[cfg(test)]` test runner. Promoted from `[dev-dependencies]` to `[dependencies]` when demo mode shipped (specs/80 § Dependencies carries the rationale).
+
+## Related
+
+- `specs/35_demo_mode.md` — headed-autopilot CLI mode and frame recording for release demos.

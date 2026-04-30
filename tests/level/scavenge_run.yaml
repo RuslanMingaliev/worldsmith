@@ -1,0 +1,17 @@
+scenario: scavenge_run
+description: Bot kills the enemy, doubles back to grab the ammo pickup, then reaches exit
+
+# Order matters: the bot has no pathfinding, so each objective is taken from
+# the bot's current position. Killing the enemy first puts the bot in the
+# bottom-right; pickup_ammo at (15.5, 7.5) is NW from there with no walls
+# between; then exit at (17.5, 2.5) is straight north along the east edge.
+
+objectives:
+  - kill: enemy
+  - reach: pickup_ammo
+  - reach: exit
+
+assertions:
+  - player.alive: true
+  - enemy.alive: false
+  - game.won: true

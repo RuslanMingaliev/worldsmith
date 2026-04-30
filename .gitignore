@@ -4,6 +4,7 @@ work/
 # Generated artifacts
 generated/
 artifacts/
+release/
 
 # Rust build artifacts
 target/
