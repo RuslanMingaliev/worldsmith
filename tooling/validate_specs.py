@@ -258,6 +258,79 @@ def validate_reference_knowledge_integrity() -> List[ValidationIssue]:
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Sanitization gate (delegates to tooling/check_sanitization.py)
+# ---------------------------------------------------------------------------
+#
+# Forbidden-token detection lives in `tooling/check_sanitization.py` (the
+# single source of truth). This validator wraps it with a "soft" rule for
+# committed knowledge files (warn-but-allow — these are pre-existing tech
+# debt from before the gate existed, slated for cleanup) and a "hard" rule
+# for new or modified knowledge files (fail — every new extraction must
+# pass the gate clean).
+
+CHECK_SANITIZATION_SCRIPT = REPO_ROOT / "tooling" / "check_sanitization.py"
+
+
+def _run_sanitization(paths: Sequence[Path]) -> int:
+    """Invoke the script against `paths`. Returns its exit code."""
+    if not paths:
+        return 0
+    cmd = [sys.executable, str(CHECK_SANITIZATION_SCRIPT)] + [str(p) for p in paths]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    return result.returncode
+
+
+def validate_knowledge_sanitization() -> List[ValidationIssue]:
+    """Run the sanitization gate over knowledge/.
+
+    - Committed knowledge files: soft (warn-only). Pre-existing leaks are tech
+      debt and don't break the build.
+    - Uncommitted (modified or new) knowledge files: hard (fail). Every new
+      extraction must pass the gate.
+    """
+    if not CHECK_SANITIZATION_SCRIPT.exists():
+        return []
+
+    all_files = sorted(p for p in KNOWLEDGE_DIR.glob("*.md") if p.name != "README.md")
+    if not all_files:
+        return []
+
+    dirty_paths = set(knowledge_has_uncommitted_changes())
+    dirty_files = [p for p in all_files if str(p.relative_to(REPO_ROOT)) in dirty_paths]
+    committed_files = [p for p in all_files if str(p.relative_to(REPO_ROOT)) not in dirty_paths]
+
+    # Soft pass over committed files — warn-only.
+    if committed_files:
+        soft_rc = _run_sanitization(committed_files)
+        if soft_rc != 0:
+            print(
+                "\nNOTE: pre-existing sanitization leaks in COMMITTED knowledge files "
+                "above are warnings only (parking-lot for cleanup, not blocking).\n",
+                file=sys.stderr,
+            )
+
+    # Hard pass over uncommitted files — fail on any leak.
+    if dirty_files:
+        hard_rc = _run_sanitization(dirty_files)
+        if hard_rc != 0:
+            issues = [
+                ValidationIssue(
+                    KNOWLEDGE_DIR,
+                    "uncommitted knowledge files have sanitization leaks — see "
+                    "tooling/check_sanitization.py output above. New extractions "
+                    "must pass the gate clean.",
+                )
+            ]
+            for p in dirty_files:
+                issues.append(ValidationIssue(p, "uncommitted file with sanitization leak"))
+            return issues
+
+    return []
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Validate specs, knowledge, and IR files."
@@ -279,6 +352,7 @@ def main() -> None:
     issues.extend(validate_game_ir(REPO_ROOT / "ir" / "game_ir.yaml"))
     issues.extend(validate_module_plan(REPO_ROOT / "ir" / "module_plan.yaml"))
     issues.extend(validate_reference_knowledge_integrity())
+    issues.extend(validate_knowledge_sanitization())
 
     if issues:
         print("Validation failed:", file=sys.stderr)

@@ -119,6 +119,27 @@ The level must:
 - contain at least one enemy
 - contain at least one clear objective or exit
 
+### HUD
+
+A persistent heads-up display reports the player's current health (numeric value + proportional bar) and ammo (icon + digits) in the top-left corner. The HUD is read-only — it draws on top of the gameplay layers but does not change combat outcomes. See [`50_hud.md`](50_hud.md) for behaviors, [`25_game_tuning.md`](25_game_tuning.md#hud) for constants, and [`knowledge/hud.md`](../knowledge/hud.md) for the knowledge basis (numeric widget rules) and the prototype's deviations from it (top-left layout, proportional bar, per-band coloring, color-distinguished ammo pane in lieu of distinct fonts).
+
+### Pickups and Ammo
+
+Two pickup types exist in the level: health and ammo. Walking the player onto a pickup tile consumes it once, applies its effect (clamped to caps), and deactivates the pickup. The pickup is **refused** (left active for later) if the player is already at cap. The pistol consumes ammo per shot — when ammo reaches zero, the trigger is a no-op (no muzzle flash, no tracer, no shot) until ammo is replenished. Pickups are placed statically in `level_data::build_default`. See [`60_pickups.md`](60_pickups.md) for behaviors, [`25_game_tuning.md`](25_game_tuning.md#pickups) for constants, and [`knowledge/pickups.md`](../knowledge/pickups.md) for the knowledge basis (touch detection, refused-at-cap rule, ammo-gating-firing) and the prototype's scope reductions (single ammo category, no over-cap heals, no skill multiplier, no enemy drops).
+
+### Game Over Flow
+
+When the player either reaches the exit (`won = true`) or dies (`alive = false`), the engine MUST continue to render for at least `GAME_OVER_HOLD_SEC` seconds before exiting the main loop. The game-over colored border (green for win, red for lose; spec/50 § Render Order Update) and the HUD remain visible during the hold. The implementation MUST NOT exit on the same tick that the win/lose state is detected — that produces a zero-frame render of the game-over overlay and the player never sees the outcome.
+
+Concretely, this requires the loop-exit *decision* and the loop-exit *action* to be separated:
+- The decision (game over reached) flips a "game_over since" timestamp in the game state.
+- The main loop continues to render frames until the elapsed time since the timestamp exceeds `GAME_OVER_HOLD_SEC`.
+- After the hold elapses, the loop exits.
+
+`GAME_OVER_HOLD_SEC` is defined in [`25_game_tuning.md`](25_game_tuning.md#visual). After the hold elapses the loop may exit immediately or wait for player input — the latter is **deferred**.
+
+(Rationale: an earlier generated game flipped `running = false` on the same tick that the win/lose flag was set, then the `while window.is_open() && game.running` loop in `main.rs` exited before the next `draw()` call. The colored border rendered for zero frames. The fix is the decision/action separation described above.)
+
 ## Deferred Features
 
 - Multiple weapons (shotgun, chaingun, fist, super shotgun)

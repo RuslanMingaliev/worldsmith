@@ -36,30 +36,68 @@ TRIGGER_CONFIG = {
         "ir/module_plan.yaml",
     ],
     # Initial heuristics mapping files/globs to logical triggers.
+    #
+    # NOTE: `specs/20_gameplay_model.md` was previously listed under FOUR
+    # modules (level_data, weapon_system, enemy_logic, presentation),
+    # causing the heuristic to over-fire on every edit to that file.
+    # Dependency expansion then sucked in everything downstream. The file
+    # is too cross-cutting for module-level triggers — it is the
+    # gameplay-model umbrella spec, not a per-module spec. It now lives in
+    # `manual_scope` below, which prints the candidate-module list as INFO
+    # but does NOT add anything to the affected set unless the human
+    # passes `--target` explicitly. The Orchestrator's scope override
+    # remains the workflow.
     "file_triggers": {
-        "level_data": [
-            "specs/20_gameplay_model.md",
-            "tests/level/**",
-        ],
         "player_state": [
             "specs/21_player_movement.md",
             "knowledge/player_movement.md",
             "tests/player/**",
+            # specs/60 § Player Ammo: pickup workflow adds ammo + take_*_pickup.
+            "specs/60_pickups.md",
+            "knowledge/pickups.md",
         ],
         "weapon_system": [
-            "specs/20_gameplay_model.md",
             "tests/combat/**",
+            # specs/60 § Ammo-Gated Firing: ammo gate lives in fire().
+            "specs/60_pickups.md",
+            "knowledge/pickups.md",
         ],
         "enemy_logic": [
-            "specs/20_gameplay_model.md",
             "tests/enemy/**",
-        ],
-        "presentation": [
-            "specs/20_gameplay_model.md",
         ],
         "autopilot": [
             "specs/30_test_framework.md",
             "tests/**",
+        ],
+        "level_data": [
+            # specs/60 § Pickup Entity: Pickup type + pickups field live here.
+            "specs/60_pickups.md",
+            "knowledge/pickups.md",
+        ],
+        "game_loop": [
+            # specs/60 § Per-Frame Pickup Check: Step 2.5 lives in game_loop::update.
+            "specs/60_pickups.md",
+            "knowledge/pickups.md",
+        ],
+        "renderer": [
+            # specs/50 § HUD: draw routine + bitmap font are renderer-private.
+            "specs/50_hud.md",
+            "knowledge/hud.md",
+            # Pickup sprite layer + HUD ammo pane also live in renderer.
+            "specs/60_pickups.md",
+            "knowledge/pickups.md",
+        ],
+    },
+    # Files that are too cross-cutting for the per-module heuristic. When one
+    # of these changes, partial_regen.py prints the candidate-module list
+    # (gathered from human-curated comments below) but does NOT add to the
+    # affected set automatically. Forces a human-or-Orchestrator scope
+    # decision via `--target`.
+    "manual_scope": {
+        "specs/20_gameplay_model.md": [
+            "level_data", "weapon_system", "enemy_logic", "presentation", "renderer", "game_loop",
+            "# Cross-cutting umbrella spec; touches anything player-vs-world.",
+            "# An edit may touch all of these or none. Use --target.",
         ],
     },
 }
@@ -125,17 +163,36 @@ def determine_modules(
 ) -> Set[str]:
     affected: Set[str] = set()
     known_modules = {entry.name for entry in modules}
+    manual_scope_files: List[str] = []
 
     for path in changed_files:
         normalized = path.replace("\\", "/")
         if match_any(TRIGGER_CONFIG["global"], normalized):
             return set(known_modules)
 
+        if normalized in TRIGGER_CONFIG.get("manual_scope", {}):
+            manual_scope_files.append(normalized)
+            continue
+
         for module, patterns in TRIGGER_CONFIG["file_triggers"].items():
             if module not in known_modules:
                 continue
             if match_any(patterns, normalized):
                 affected.add(module)
+
+    # Print INFO for cross-cutting files that need a manual scope decision.
+    for path in manual_scope_files:
+        candidates = [
+            x for x in TRIGGER_CONFIG["manual_scope"][path] if not x.startswith("#")
+        ]
+        notes = [
+            x for x in TRIGGER_CONFIG["manual_scope"][path] if x.startswith("#")
+        ]
+        print(f"\nINFO: {path} is cross-cutting (manual scope required).")
+        print(f"  Candidate modules: {', '.join(candidates) or '(none listed)'}")
+        for note in notes:
+            print(f"  {note}")
+        print("  Use --target to choose; the per-module heuristic does not auto-add any module.")
 
     # Expand using IR dependencies
     dependency_map = {

@@ -139,3 +139,16 @@ Ensure public knowledge files contain no source references or file paths from th
 - **No knowledge/ writes without reference/.** If `reference/` is empty, your *only* permissible output is the `EXTRACTOR_BLOCKED:` line above.
 - **No "from training" or "from genre convention" entries.** Knowledge is what is in `reference/`, period. If you find yourself reaching for a value because "everyone knows pistol pickups give 10 ammo", stop — that belongs in spec/25 as a `Generation default`, not in knowledge.
 - **No proper nouns.** If the reference uses "Stimpack", your knowledge entry says "small health pickup". The sanitization commit (`87863b7`) explicitly removed identifiers — do not re-add them.
+- **No numeric source-identifiers either.** Release years (1993, 1994, 2004), version numbers (`v1.10`), copyright years, and magic constants from the source's preprocessor that grep-match `\b(199[0-9]|200[0-9])\b` ALSO count as identifiers — substitute with neutral phrasing or omit. A previous extraction leaked the source-game's release year as a "sentinel value" because the rule did not say years count. They count.
+
+## Sanitization gate (mandatory before declaring done)
+
+Once `knowledge/<area>.md` is written, run:
+
+```
+python3 tooling/check_sanitization.py knowledge/<area>.md
+```
+
+It exits non-zero with offending lines if any forbidden token (proper nouns, source identifiers, year-range, lump names) survives. Treat any non-zero exit as a hard rejection — rewrite the offending sections, do NOT patch around the grep. The single source of truth for forbidden patterns is the script itself; do not maintain a parallel grep block in your prompt.
+
+`tooling/validate_specs.py` invokes the same script over every file in `knowledge/` as part of every run, so a leak that survives this gate fails the whole validation run.

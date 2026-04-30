@@ -1,6 +1,3 @@
-version: "2026-04-29.1"
-generated_for_run: pipeline_run_2026-04-29
-
 # -----------------------------------------------------------------------------
 # Shared low-level types
 # -----------------------------------------------------------------------------
@@ -36,7 +33,42 @@ shared_types:
       }
     notes: |
       Two-state enum is sufficient for the current static level
-      (specs/25 § Level Layout). Door / pickup tiles are deferred.
+      (specs/25 § Level Layout). Door tiles are deferred. Pickups
+      are NOT modeled as tiles; they live as Pickup entities in
+      Level::pickups (see PickupKind / Pickup below).
+
+  - name: PickupKind
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+      pub enum PickupKind {
+          Health,
+          Ammo,
+      }
+    notes: |
+      Discriminator for Pickup. Source: specs/60_pickups.md,
+      knowledge/pickups.md. Renderer dispatches sprite drawing on
+      this; game_loop dispatches pickup application on this.
+
+  - name: Pickup
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug)]
+      pub struct Pickup {
+          pub kind: PickupKind,
+          pub pos: Vec2,
+          pub active: bool,
+      }
+    notes: |
+      One pickup entity in the level. `active` flips from true to
+      false exactly once on consumption (specs/60 § State). Pickups
+      are NOT removed from Level::pickups when consumed -- inactive
+      pickups are skipped by the renderer and the collision check.
+      This deviates from knowledge/pickups.md § Single-use Consumption
+      (which removes the entity entirely); we keep the slot for stable
+      iteration order in our Vec-based world (specs/60 § Health
+      Pickup Consumption rationale). Copy/Clone is fine because
+      Pickup is a tiny POD.
 
   - name: InputState
     home_module: input_controller
@@ -70,6 +102,10 @@ modules:
         note: "Defined here; see shared_types.Vec2."
       - name: Tile
         note: "Defined here; see shared_types.Tile."
+      - name: PickupKind
+        note: "Defined here; see shared_types.PickupKind."
+      - name: Pickup
+        note: "Defined here; see shared_types.Pickup."
       - name: Level
         definition: |
           pub struct Level {
@@ -79,12 +115,14 @@ modules:
               pub player_spawn: Vec2,           // tile coords (specs/25 § Level Layout)
               pub enemy_spawns: Vec<Vec2>,      // single entry today
               pub exit: Vec2,                   // tile coords
+              pub pickups: Vec<Pickup>,         // static pickups (specs/60)
           }
     public_constants:
       - { name: TILE_SIZE,    type: f32,   value: "32.0", source: "specs/25 § Visual" }
       - { name: GRID_WIDTH,   type: usize, value: "20",   source: "specs/25 § Level Layout" }
       - { name: GRID_HEIGHT,  type: usize, value: "15",   source: "specs/25 § Level Layout" }
       - { name: EXIT_RADIUS,  type: f32,   value: "1.0",  source: "specs/25 § Win/Lose" }
+      - { name: PICKUP_RADIUS_TILES, type: f32, value: "1.0", source: "specs/25 § Pickups (knowledge-backed: § Pickup Touch Detection 16+16=32 units = 1 tile)" }
     public_methods:
       - signature: "pub fn build_default() -> Level"
         notes: |
@@ -92,6 +130,11 @@ modules:
           border, vertical interior wall x=10 y=3..8, horizontal interior wall
           y=7 x=4..9. Player spawn (2.5, 2.5), enemy spawn (17.5, 12.5),
           exit (17.5, 2.5). No I/O.
+          Pickups (specs/25 § Pickups § Default Level Placement):
+            pickups: vec![
+              Pickup { kind: PickupKind::Health, pos: Vec2::new(5.5, 12.5), active: true },
+              Pickup { kind: PickupKind::Ammo,   pos: Vec2::new(15.5, 7.5), active: true },
+            ]
       - signature: "pub fn is_wall(level: &Level, tile_x: i32, tile_y: i32) -> bool"
         notes: |
           Boundary-safe. Out-of-bounds (negative or >= width/height) returns
@@ -122,9 +165,16 @@ modules:
                                            // weapon_system can read & reset it for
                                            // first-shot accuracy + IDLE_THRESHOLD_SEC
                                            // (specs/25 § Weapon).
+              pub ammo: i32,               // pistol ammo (specs/60, knowledge/pickups.md §
+                                           // Ammo Gating of Firing). Bounded by
+                                           // PLAYER_AMMO_MAX; gated > 0 in weapon_system::fire.
           }
     public_constants:
       - { name: PLAYER_MAX_HEALTH, type: i32, value: "100",   source: "specs/25 § Player" }
+      - { name: PLAYER_AMMO_INITIAL, type: i32, value: "12",  source: "specs/25 § Pickups (Generation default — knowledge starting=50 too high for 1-enemy level)" }
+      - { name: PLAYER_AMMO_MAX,     type: i32, value: "30",  source: "specs/25 § Pickups (Generation default — knowledge cap=200 too high for prototype)" }
+      - { name: PICKUP_HEALTH_AMOUNT, type: i32, value: "25", source: "specs/25 § Pickups (knowledge-backed: § Health Pickup Tiers, large heal +25)" }
+      - { name: PICKUP_AMMO_AMOUNT,   type: i32, value: "10", source: "specs/25 § Pickups (knowledge-backed: § Ammo Pickup Tiers, 1 clip-load × clip_size 10 for Cat. A)" }
       - { name: PLAYER_TURN_SPEED, type: f32, value: "2.0",   source: "specs/25 § Player (rad/sec @ 60FPS)" }
       - { name: THRUST_FACTOR,     type: f32, value: "10.0",  source: "specs/21 § Thrust" }
       - { name: FRICTION,          type: f32, value: "0.906", source: "specs/21 § Friction" }
@@ -136,7 +186,8 @@ modules:
         notes: |
           health = PLAYER_MAX_HEALTH, alive = true, vel = (0,0), facing = 0.0,
           damage_count = 0.0, time_since_fire = f32::INFINITY (so the first
-          shot of the game gets first-shot accuracy).
+          shot of the game gets first-shot accuracy),
+          ammo = PLAYER_AMMO_INITIAL (specs/60).
       - signature: "pub fn apply_input(player: &mut Player, input: &InputState, level: &Level, dt: f32)"
         notes: |
           Per-frame movement update from specs/21:
@@ -180,8 +231,20 @@ modules:
           visual_effects (their other consumer is the renderer). Player
           imports them via `use crate::visual_effects::{DAMAGE_TINT_CAP,
           DAMAGE_TINT_DECAY_PER_SEC};`. This is the spec/80 acceptable
-          cross-module constant import: a player-side accumulator using a
-          visual-effects-defined cap.
+          cross-module constant import.
+      - signature: "pub fn take_health_pickup(player: &mut Player, amount: i32)"
+        notes: |
+          specs/60 § Health Pickup Consumption. Adds `amount` to
+          player.health, clamps to PLAYER_MAX_HEALTH. Does not touch
+          damage_count or alive. Caller (game_loop) is responsible for
+          flipping the Pickup's active flag and for the refused-at-cap
+          guard (knowledge/pickups.md § Cap Behavior).
+      - signature: "pub fn take_ammo_pickup(player: &mut Player, amount: i32)"
+        notes: |
+          specs/60 § Ammo Pickup Consumption. Adds `amount` to
+          player.ammo, clamps to PLAYER_AMMO_MAX. Caller (game_loop)
+          flips the Pickup's active flag and applies the refused-at-cap
+          guard.
     cross_module_borrows:
       - "&Level (immutable read in apply_input for collision)"
       - "&InputState (immutable read in apply_input)"
@@ -358,6 +421,12 @@ modules:
                    impact effect"), return.
           fire() is the per-frame combat hook -- spec/80 § API Surface
           permits direct &mut VisualEffects here (resolution A).
+
+          Ammo gate (specs/60 § Ammo-Gated Firing, knowledge/pickups.md §
+          Ammo Gating of Firing): order is (1) cooldown gate, (2) ammo
+          gate `if player.ammo == 0 { return; }` -- no side effects, no
+          time_since_fire reset, (3) reset time_since_fire and aim, (4)
+          all spawn/march/damage steps, (5) ammo -= 1.
       - signature: "pub fn pistol_damage_roll() -> i32"
         notes: |
           Returns one of {5, 10, 15} uniformly at random per the
@@ -557,6 +626,21 @@ modules:
       - { name: DIRECTION_LINE_LEN_PX,     type: i32, value: "20",  source: "specs/25 § Visual" }
       - { name: GAME_OVER_BORDER_PX,       type: i32, value: "10",  source: "specs/25 § Visual" }
       - { name: DAMAGE_TINT_MAX_ALPHA_PCT, type: u32, value: "50",  source: "specs/25 § Visual Feedback (~50%)" }
+      # Pickup sprite constants (specs/25 § Pickups, all generation defaults)
+      - { name: PICKUP_HEALTH_SIZE_PX,         type: i32, value: "12",        source: "specs/25 § Pickups (Generation default)" }
+      - { name: PICKUP_HEALTH_OUTER_COLOR,     type: u32, value: "0xFFFFFF",  source: "specs/25 § Pickups (Generation default)" }
+      - { name: PICKUP_HEALTH_INNER_COLOR,     type: u32, value: "0xFF2020",  source: "specs/25 § Pickups (Generation default)" }
+      - { name: PICKUP_HEALTH_INNER_THICKNESS_PX, type: i32, value: "4",      source: "specs/25 § Pickups (Generation default)" }
+      - { name: PICKUP_AMMO_SIZE_PX,           type: i32, value: "10",        source: "specs/25 § Pickups (Generation default)" }
+      - { name: PICKUP_AMMO_COLOR,             type: u32, value: "0xFFFF00",  source: "specs/25 § Pickups (Generation default)" }
+      # HUD ammo pane constants (specs/25 § HUD Ammo Pane, all generation defaults)
+      - { name: HUD_PANE_GAP_PX,               type: i32, value: "4",         source: "specs/25 § HUD Ammo Pane (Generation default)" }
+      - { name: HUD_AMMO_ICON_PX,              type: i32, value: "8",         source: "specs/25 § HUD Ammo Pane (Generation default)" }
+      - { name: HUD_AMMO_COLOR,                type: u32, value: "0xFFFF00",  source: "specs/25 § HUD Ammo Pane (Generation default)" }
+      # NOTE: HUD_* layout/font/band constants from the HUD workflow are
+      # renderer-private and NOT contracted here. Their authoritative source is
+      # `specs/25 § HUD`; the renderer module's source file is the wire-up
+      # checked by Reconciler against that section.
     public_methods:
       - signature: |
           pub fn draw(
@@ -569,9 +653,16 @@ modules:
           )
         notes: |
           Single render entry point invoked once per frame by game_loop.
-          Layer order (back to front, per spec/40 § Effect Layering):
+          Layer order (back to front, per spec/40 § Effect Layering and
+          spec/60 § Pickup Rendering / spec/50 § Render Order Update):
             1. Floor + walls (level tiles).
             2. Exit marker (cyan X) and corpses.
+            2.5. Active pickups (specs/60 § Pickup Rendering):
+                  iterate level.pickups; skip !active. For Health draw a
+                  filled square in PICKUP_HEALTH_OUTER_COLOR with a
+                  centered cross in PICKUP_HEALTH_INNER_COLOR
+                  (PICKUP_HEALTH_INNER_THICKNESS_PX wide). For Ammo draw
+                  a filled square in PICKUP_AMMO_COLOR.
             3. Blood splats and wall puffs.
             4. Tracer lines.
             5. Muzzle flashes.
@@ -586,13 +677,16 @@ modules:
                               / DAMAGE_TINT_LEVELS;
                  software-blend COLOR_DAMAGE_TINT into framebuffer at
                  alpha_pct.
-            9. Game-over border if game_over.is_some()
+            9. HUD pane (specs/50 § Health Pane and § Ammo Pane):
+               health bar + digits in top-left corner, ammo pane
+               (icon + digits) directly below.
+            10. Game-over border if game_over.is_some()
                (green tint for win, red for lose; thickness
                GAME_OVER_BORDER_PX).
           The renderer reads visual_effects, player.damage_count,
-          enemy.pain_flash_remaining, enemy.death_fade_remaining (for
-          fade interpolation), and enemy.alive (corpse vs. live). It
-          does NOT mutate any other module's state.
+          player.health, player.ammo, level.pickups, enemy.pain_flash_remaining,
+          enemy.death_fade_remaining (for fade interpolation), and enemy.alive
+          (corpse vs. live). It does NOT mutate any other module's state.
       - signature: "pub fn make_framebuffer() -> Vec<u32>"
         notes: |
           Allocates Vec::from_iter([0u32; WINDOW_WIDTH * WINDOW_HEIGHT]).
@@ -627,6 +721,8 @@ modules:
               pub fx: VisualEffects,
               pub running: bool,           // false -> main loop exits
               pub won: bool,               // true once player reaches exit
+              pub elapsed: f32,            // total seconds since game start; ticked by += dt in update.
+              pub game_over_at: Option<f32>, // timestamp (in `elapsed` units) at which the game-over state was reached. None until the player wins or dies. Drives the post-game-over hold (specs/20 § Game Over Flow + specs/25 § Visual GAME_OVER_HOLD_SEC).
               #[cfg(test)]
               pub frames: u64,             // tick counter; only autopilot reads this
           }
@@ -769,12 +865,15 @@ modules:
 frame_update_order:
   - "if input.quit { state.running = false; return; }"
   - "player_state::apply_input(&mut state.player, input, &state.level, dt)"
+  - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds (Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX), set pickup.active=false and call player_state::take_health_pickup or take_ammo_pickup based on pickup.kind."
   - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)"
-  - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire"
+  - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire. Ammo gate is also inside fire(): if player.ammo == 0, fire() returns without side effects after the cooldown gate."
   - "player_state::decay_damage_tint(&mut state.player, dt)"
   - "visual_effects::tick(&mut state.fx, dt)"
-  - "if !state.player.alive: state.running = false  // game over (lose)"
-  - "if state.player.pos.distance_to(state.level.exit) < EXIT_RADIUS: state.won = true; state.running = false  // game over (win)"
+  - "// specs/20 § Game Over Flow: the game-over DECISION (player alive becomes false; or pos.distance_to(level.exit) < EXIT_RADIUS) and the loop-EXIT ACTION (running = false) MUST be in separate iterations of the main loop. Implementation pattern: the decision sets `state.game_over_at = Some(elapsed_seconds)`. The exit action runs only when `now - game_over_at >= GAME_OVER_HOLD_SEC` from specs/25 § Visual. Until then, the loop continues to call update + draw with `game_over` set so the colored border keeps rendering. Without this separation, the implementation flips running=false on the same tick the win/lose state is detected and the colored border renders for zero frames."
+  - "if !state.player.alive: state.game_over_at = Some(state.elapsed)  // game over (lose) — DECISION ONLY; loop continues to draw"
+  - "if state.player.pos.distance_to(state.level.exit) < EXIT_RADIUS: state.won = true; state.game_over_at = Some(state.elapsed)  // game over (win) — DECISION ONLY"
+  - "if let Some(t0) = state.game_over_at: if state.elapsed - t0 >= GAME_OVER_HOLD_SEC: state.running = false  // exit ACTION after hold elapsed"
   - "#[cfg(test)] state.frames += 1"
 
 # -----------------------------------------------------------------------------

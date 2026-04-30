@@ -107,6 +107,7 @@ Before submitting:
 - [ ] Cross-references are valid
 - [ ] Every spec has an `Implementation Status` section with both Implemented and Deferred buckets populated
 - [ ] No dangling cross-references (e.g. "see ADR N" must point to an existing decision)
+- [ ] Every spec rule that EXPLICITLY contradicts a knowledge entry (e.g. spec uses circle distance where knowledge uses AABB; spec hardcodes a value where knowledge reads from asset; spec applies a coloring policy that knowledge says the reference does NOT do) is flagged at the rule site with an inline `*(Generation default — knowledge says X; we use Y because <rationale>.)*` AND surfaced to the run journal under `### ADR candidates` for the PostMortem to elevate. Rationale: deviations that accumulate unflagged become future re-extraction questions the journal-only parking lot will lose. See `tooling/agents/postmortem.md` for the elevation pipeline.
 
 ## Escalation
 

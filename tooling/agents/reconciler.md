@@ -62,6 +62,21 @@ For key behaviors (movement, combat, AI), verify code matches spec:
 
 If code differs → decide: update spec to match code, or flag for Coder to fix.
 
+### Step 3.5: End-to-end behavioral verification
+
+For any spec entry tagged "renders" / "displays" / "shows" / "is visible" / "appears", verify that the rendered behavior actually appears at runtime — not just that the code path exists. Compile + grep for the symbol is INSUFFICIENT: a draw call inside a loop that has already exited is dead at runtime even if `cargo check` is green.
+
+Concretely, for each "X is visible on Y event" rule:
+
+1. Locate the event in `game_loop.rs` / `enemy_logic.rs` / wherever the state flips.
+2. Locate the `draw()` call in `main.rs` / `game_loop.rs`.
+3. Confirm at least one full draw cycle occurs *after* the state change. If the loop's exit condition fires on the same iteration the state flips, the post-state-change draw never runs. Cite the relevant `main.rs:N` / `game_loop.rs:N` lines in the report.
+4. If no post-change draw occurs, this is **drift** — not "no action needed". Flag it in `### Drift found` with the spec rule that's silently broken.
+
+Rationale: a previous Reconciler pass missed the game-over border rendering for zero frames because Steps 0–3 are code-shape checks, not runtime-reachability checks. `main.rs:while game.running` exits on the same tick `game_loop::update` flips `running = false`. Spec said it should render; code path existed; tests passed; nothing rendered.
+
+This step is text-tracing, not execution: you do not need to run the binary. You DO need to read both `main.rs` and the module that flips the state, and reason about loop ordering. The mechanical safety net (a headless render eval) is `tooling/run_evals.py`'s job; this step is the agent-side complement.
+
 ### Step 4: Report
 
 Produce a summary:

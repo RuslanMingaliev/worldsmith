@@ -64,7 +64,8 @@ When dispatching subagents, pick the model by *cost of an error in that role × 
 | Architect | **Opus** | One call upstream of all Coders. A bad contract cascades to N Coder reworks; the model spend is small relative to the leverage. |
 | Reconciler | **Opus** | One call after generation. Synthesises code ↔ specs ↔ journal — a missed drift becomes spec rot. Opus pays for itself. |
 | PostMortem | **Opus** | One call per run. Reads the journal, existing ADRs, and current agent prompts; finds non-obvious process patterns. A missed pattern persists across runs as wasted tokens. |
-| Extractor / TestBuilder / EvalWriter | Sonnet (default) | Bounded text-extraction or template-filling tasks. |
+| **Extractor** | **Opus** | Knowledge is the most upstream artifact in the pipeline — every spec, every Coder wave, every test inherits its quality. A missed mechanic, a misread constant, or a leaked source identifier (proper noun, function name, source's release year) downstream-rots into spec rot, code rot, and a sanitization-recommit (see commit `87863b7` for prior cost). Empirically, Sonnet has leaked source-code identifiers and year-of-release sentinels in this role despite an explicit "no proper nouns" rule — Opus is worth the per-call premium given the cascade. |
+| TestBuilder / EvalWriter | Sonnet (default) | Bounded text-extraction or template-filling tasks. |
 | Researcher | Opus when the question is open-ended; Sonnet when it's a lookup. |
 | Orchestrator (this role) | Opus | Long-context coordination across waves; not delegated. |
 
