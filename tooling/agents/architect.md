@@ -116,9 +116,34 @@ Escalate to Orchestrator when:
 - Change would break existing specs
 - Uncertain about scope boundaries
 
+## Citation discipline (BLOCKING)
+
+Before citing `knowledge/X.md § Y` as the source for any spec value:
+
+1. Verify the section exists in the *committed* HEAD copy of the file:
+   `git show HEAD:knowledge/X.md | grep '^### Y'`. If the section does not exist in HEAD, you cannot cite it.
+2. You may NOT cite a knowledge section that you (or any agent) wrote in the same session unless an Extractor pass produced it from `reference/` AND `tooling/validate_specs.py` passed afterward. Architect must never write to `knowledge/` directly — that is the Extractor's exclusive role.
+3. If a spec value has no committed knowledge backing, mark its Source explicitly as:
+
+   ```
+   Generation default — no knowledge backing
+   ```
+
+   AND add a parking-lot item to the run journal (`work/pipeline_run_<tag>.md` § Run-level follow-ups) of the form:
+
+   ```
+   - [spec/file § section] value `NAME = X` is a generation default; flagged
+     for Extractor re-pass once reference/ has source for <area>.
+   ```
+
+   Do NOT silently invent a knowledge citation to satisfy the rule.
+
+`tooling/validate_specs.py` blocks the failure mode mechanically (fails the run if `reference/` is empty AND `knowledge/` has uncommitted changes), but the editorial rule is yours: even when the validator is silent, never cite something you fabricated.
+
 ## Constraints
 
 - Do not write code (that's Coder's job)
 - Do not copy reference implementation details
+- Do not write to `knowledge/` (that's Extractor's exclusive role; see § Citation discipline)
 - Keep specs focused on "what", not "how"
 - Document assumptions explicitly

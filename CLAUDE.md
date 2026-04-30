@@ -67,6 +67,16 @@ This prevents specs and code from drifting apart across regenerations.
 - Rust: safe code only, no unsafe, minimal dependencies
 - Versions are git tags, not hardcoded in docs
 
+## Reference and Knowledge Integrity
+
+This project's whole proposition is "specs distilled from a real reference, regenerated into code". That only works if the chain stays honest. Two rules:
+
+1. **`reference/` is gitignored and may be empty.** When it contains only `.gitignore` and `README.md`, no extraction is possible. The Extractor agent must STOP in that state — it must NOT infer mechanics from training data, genre conventions, or common knowledge of similar games. See `tooling/agents/extractor.md` § Step 0.
+
+2. **Only the Extractor writes to `knowledge/`, and only when `reference/` is loaded.** Architect, Orchestrator, Reconciler, and PostMortem must never add or modify knowledge files. If a spec value has no knowledge backing, mark its Source as `Generation default — no knowledge backing` in `specs/25_game_tuning.md` and add a parking-lot item to the run journal — never invent a knowledge citation. See `tooling/agents/architect.md` § Citation discipline.
+
+`tooling/validate_specs.py` enforces this mechanically: a session that modifies `knowledge/` while `reference/` is empty fails validation with a loud banner. Trust the gate; do not work around it. If the gate fires unexpectedly, the right responses are (a) revert the knowledge edit, (b) load the relevant reference and re-run Extractor properly, or (c) demote the value to a `Generation default` in spec/25.
+
 ## Auto-Documentation Rules
 
 When a decision is made during conversation, **automatically**:

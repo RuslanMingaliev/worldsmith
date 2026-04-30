@@ -6,11 +6,16 @@ Checks:
 - Required spec/knowledge files exist.
 - `ir/game_ir.yaml` and `ir/module_plan.yaml` parse as YAML.
 - Minimal schema validation for the IR files.
+- Reference / knowledge integrity: if `reference/` is empty, knowledge/
+  must not have uncommitted additions or modifications. (This catches
+  the failure mode where a session writes invented "knowledge" without
+  any reference loaded.)
 """
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -146,6 +151,113 @@ def validate_module_plan(path: Path) -> List[ValidationIssue]:
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Reference / knowledge integrity check
+# ---------------------------------------------------------------------------
+#
+# `reference/` is a private corpus; it is gitignored except for `.gitignore`
+# and `README.md`. When `reference/` contains nothing else (i.e. no source
+# files have been loaded), the Extractor agent CANNOT run — there is nothing
+# to extract from. In that state, ANY uncommitted change to `knowledge/`
+# (modified tracked files OR untracked new files) is almost certainly an
+# invented entry that does not come from a real reference. This check
+# surfaces that condition loudly so the model does not silently fabricate.
+#
+# Rule (enforced):
+#   if reference/ is empty AND knowledge/ has uncommitted changes -> FAIL.
+#
+# Rule (warning only):
+#   if reference/ is empty -> print a banner reminding the session that
+#   the Extractor is disabled this run.
+
+REFERENCE_DIR = REPO_ROOT / "reference"
+KNOWLEDGE_DIR = REPO_ROOT / "knowledge"
+
+# Files that may be present in reference/ even when "no reference is loaded".
+REFERENCE_BASELINE = {".gitignore", "README.md"}
+
+
+def reference_is_empty() -> bool:
+    """True iff reference/ contains only the baseline placeholder files."""
+    if not REFERENCE_DIR.is_dir():
+        return True
+    for entry in REFERENCE_DIR.iterdir():
+        if entry.name not in REFERENCE_BASELINE:
+            return False
+    return True
+
+
+def knowledge_has_uncommitted_changes() -> List[str]:
+    """Return a list of `knowledge/*` paths with modifications or untracked content.
+
+    Uses `git status --porcelain knowledge/` so the check works without a
+    full diff. If git is unavailable, returns an empty list (the script
+    still runs in non-git environments — the warning above is enough).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "knowledge/"],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            check=False,
+        )
+    except FileNotFoundError:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    paths: List[str] = []
+    for line in result.stdout.splitlines():
+        # Porcelain format: `XY path` where XY are status codes.
+        if len(line) < 4:
+            continue
+        path = line[3:].strip()
+        # Strip surrounding quotes that git adds for paths with spaces.
+        path = path.strip('"')
+        if path.startswith("knowledge/"):
+            paths.append(path)
+    return paths
+
+
+def validate_reference_knowledge_integrity() -> List[ValidationIssue]:
+    """Block invented knowledge when no reference is loaded."""
+    if not reference_is_empty():
+        return []
+
+    # Reference is empty. Print a loud banner regardless of knowledge state.
+    banner = (
+        "\n"
+        "============================================================\n"
+        "  EXTRACTOR DISABLED: reference/ is empty.\n"
+        "  No knowledge/ entries can be ADDED or MODIFIED this session.\n"
+        "  Existing knowledge files were extracted before the public\n"
+        "  release; treat them as immutable until reference/ is\n"
+        "  repopulated. If a spec value lacks knowledge backing, mark\n"
+        "  Source as `Generation default — no knowledge backing` in\n"
+        "  spec/25 instead of inventing a knowledge citation.\n"
+        "============================================================\n"
+    )
+    print(banner, file=sys.stderr)
+
+    dirty = knowledge_has_uncommitted_changes()
+    if not dirty:
+        return []
+
+    issues = [
+        ValidationIssue(
+            KNOWLEDGE_DIR,
+            "reference/ is empty but knowledge/ has uncommitted changes — "
+            "Extractor cannot run, so these entries cannot have a real "
+            "reference source. Revert them or load reference/ first.",
+        )
+    ]
+    for path in dirty:
+        issues.append(ValidationIssue(REPO_ROOT / path, "uncommitted knowledge change without reference/ backing"))
+    return issues
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Validate specs, knowledge, and IR files."
@@ -166,6 +278,7 @@ def main() -> None:
     issues.extend(validate_required_files(REQUIRED_KNOWLEDGE_FILES))
     issues.extend(validate_game_ir(REPO_ROOT / "ir" / "game_ir.yaml"))
     issues.extend(validate_module_plan(REPO_ROOT / "ir" / "module_plan.yaml"))
+    issues.extend(validate_reference_knowledge_integrity())
 
     if issues:
         print("Validation failed:", file=sys.stderr)
