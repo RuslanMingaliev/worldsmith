@@ -250,3 +250,35 @@ Step 3: Verify
 - Don't make architectural decisions without escalation
 - Don't ignore failed evals
 - Don't let agents modify files outside their scope
+
+## CI mode (release pipeline)
+
+The Orchestrator can be invoked non-interactively from the `release.yml`
+GitHub Actions workflow via `tooling/orchestrator_run.py --phase <phase>
+--mode release`. The release pipeline assumes specs in the repo are valid
+and `reference/` is empty (the integrity gate in `validate_specs.py`
+enforces this). Phase order:
+
+1. `architect` — verify or refresh module contracts.
+2. `coder` — regenerate every module from specs (full-regen).
+3. `reconciler` — diff regenerated code against specs; escalate on drift.
+4. `postmortem` — produce `artifacts/postmortem.md` (see postmortem.md § CI
+   output target).
+
+The Extractor phase is skipped because reference is empty.
+
+### Output requirements
+
+- Per-phase token usage is captured by `orchestrator_run.py` and appended to
+  `artifacts/usage.jsonl`. You do not write usage; the wrapper does.
+- All long-form artifacts (architect contracts, reconciler report,
+  postmortem) live under `artifacts/<phase>_*.md` so the workflow can collect
+  them without scraping `work/`.
+- Do NOT write to `work/pipeline_run_*.md` in CI mode — those journals are
+  for local human-in-the-loop runs and may contain reference identifiers.
+
+### Cost ceiling
+
+If `WORLDSMITH_MAX_TOKENS_PER_RUN` is set, the wrapper aborts before the next
+phase if the running total exceeds the cap. Treat any abort as a hard stop;
+do not "retry from scratch" without operator action.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sanitization gate for `knowledge/*.md` files.
+Sanitization gate for any markdown file that may be published.
 
 The Extractor agent writes knowledge files that get versioned and published.
 A previous sanitization commit (`87863b7`) explicitly removed source-game
@@ -10,7 +10,7 @@ Extractor pass leaked source-code identifiers (`ST_Drawer`, `STlib_*`)
 and the source-game's release year as a "sentinel value".
 
 This script is the single source of truth for forbidden patterns. It is
-called from two places:
+called from three places:
 
 1. `tooling/agents/extractor.md` § Sanitization gate — the Extractor agent
    runs `python3 tooling/check_sanitization.py knowledge/<area>.md` after
@@ -21,10 +21,14 @@ called from two places:
    somehow survived the Extractor's gate fails the next validate_specs
    invocation.
 
+3. `release.yml` workflow — runs this script over the composed release
+   notes before publishing, so source-game identifiers cannot reach a
+   public GitHub release through the post-mortem section.
+
 Usage:
 
     python3 tooling/check_sanitization.py knowledge/hud.md
-    python3 tooling/check_sanitization.py knowledge/*.md
+    python3 tooling/check_sanitization.py knowledge/*.md artifacts/release-notes.md
     python3 tooling/check_sanitization.py --all   # scans everything in knowledge/
 
 Exit codes:
@@ -185,7 +189,10 @@ def scan_paths(paths: List[Path]) -> int:
         if not hits:
             continue
         total_leaks += len(hits)
-        rel = path.relative_to(REPO_ROOT) if path.is_absolute() else path
+        try:
+            rel = path.relative_to(REPO_ROOT) if path.is_absolute() else path
+        except ValueError:
+            rel = path
         print(f"\n{rel}: {len(hits)} forbidden token(s) found:", file=sys.stderr)
         for line_no, line, matched, kind in hits:
             print(f"  line {line_no}: matched {matched!r} ({kind})", file=sys.stderr)

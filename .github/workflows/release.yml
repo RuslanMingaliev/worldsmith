@@ -1,0 +1,277 @@
+name: Release (full regen → draft GitHub release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 2026.02"
+        required: true
+        type: string
+      publish:
+        description: "Publish a draft GitHub release; set false to skip and only upload artifacts"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    environment: release
+    if: ${{ github.actor == 'RuslanMingaliev' }}
+
+    outputs:
+      target_ref: ${{ steps.drift.outputs.target_ref }}
+
+    env:
+      WORLDSMITH_MAX_TOKENS_PER_RUN: ${{ vars.WORLDSMITH_MAX_TOKENS_PER_RUN }}
+
+    steps:
+      - name: Validate version input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]{4}\.[0-9]+(-[A-Za-z0-9._-]+)?$'; then
+            echo "::error::version='$VERSION' does not match yyyy.NN[-suffix] (suffix: alnum, dot, underscore, dash)."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Pre-flight — assert reference is empty
+        run: |
+          set -e
+          if [ -d reference ]; then
+            extra=$(find reference -mindepth 1 ! -name '.gitignore' ! -name 'README.md')
+            if [ -n "$extra" ]; then
+              echo "::error::reference/ contains non-template files; release flow refuses to run with reference present."
+              echo "$extra"
+              exit 1
+            fi
+          fi
+
+      - name: Pre-flight validate specs
+        run: python tooling/validate_specs.py --verbose
+
+      - name: Install Claude CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run pipeline
+        env:
+          # Bills the operator's claude.ai Pro/Max subscription. Generated locally via
+          # `claude setup-token` and stored in the `release` GitHub Environment.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -e
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty in the 'release' environment."
+            exit 1
+          fi
+          mkdir -p artifacts
+          python tooling/orchestrator_run.py --mode release --phase architect
+          python tooling/orchestrator_run.py --mode release --phase coder
+          python tooling/orchestrator_run.py --mode release --phase reconciler
+          python tooling/orchestrator_run.py --mode release --phase postmortem
+
+      - name: Post-flight validate (catch accidental knowledge writes)
+        run: python tooling/validate_specs.py --verbose
+
+      - name: Capture spec/agent drift as a PR
+        id: drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          TRIGGER_SHA: ${{ github.sha }}
+        run: |
+          set -e
+          # Watch only paths that the agents are supposed to influence. generated/
+          # and artifacts/ are gitignored. work/ is gitignored too.
+          WATCHED="specs ir knowledge tooling/agents"
+          if git diff --quiet HEAD -- $WATCHED; then
+            echo "No drift detected; release will tag the trigger commit ${TRIGGER_SHA}."
+            echo "target_ref=${TRIGGER_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BRANCH="release-${VERSION}-reflect-changes"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A $WATCHED
+          git commit -m "release ${VERSION}: reflect agent-generated changes" \
+                     -m "Captured during release.yml run #${{ github.run_id }}."
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "release ${VERSION}: reflect agent-generated changes" \
+            --body "Spec / IR / knowledge / agent-prompt drift captured during the release.yml run.
+
+          Release tag \`${VERSION}\` points at this branch's HEAD; merging brings main back in sync with what the release was built from.
+
+          See workflow artifacts \`generation-${VERSION}\` for per-phase reports." \
+            --draft
+          echo "target_ref=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload generation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: generation-${{ inputs.version }}
+          path: |
+            generated/
+            artifacts/
+          retention-days: 14
+
+  release:
+    needs: generate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: release
+    if: ${{ github.actor == 'RuslanMingaliev' }}
+
+    steps:
+      - name: Checkout target ref (drift branch or main)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.generate.outputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install system packages (xvfb, ffmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb ffmpeg
+
+      - name: Download generation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: generation-${{ inputs.version }}
+
+      - name: Build linux release binary
+        run: |
+          cargo build --release --manifest-path generated/game/Cargo.toml
+
+      - name: Run unit + autopilot tests
+        run: |
+          cargo test --release --manifest-path generated/game/Cargo.toml
+
+      - name: Record demo
+        run: |
+          mkdir -p release
+          xvfb-run -a tooling/record_autopilot.sh tests/combat/kill_enemy.yaml release/demo.gif
+
+      - name: Package src zip + linux tarball
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -e
+          mkdir -p assets
+          python tooling/package_release.py --version "$VERSION"
+          mv "artifacts/worldsmith-game-${VERSION}-src.zip" \
+             "assets/worldsmith-game-${VERSION}-src.zip"
+          # Linux binary tarball: bin + README + LICENSE.
+          STAGE="worldsmith-game-${VERSION}-linux-x86_64"
+          mkdir -p "$STAGE"
+          cp generated/game/target/release/game "$STAGE/worldsmith"
+          [ -f generated/game/README.md ] && cp generated/game/README.md "$STAGE/README.md" || true
+          [ -f LICENSE ] && cp LICENSE "$STAGE/LICENSE" || true
+          tar -czf "assets/$STAGE.tar.gz" "$STAGE"
+          rm -rf "$STAGE"
+          # Demo GIF (mirror 2026.01 naming).
+          cp release/demo.gif "assets/worldsmith-${VERSION}-gameplay.gif"
+
+      - name: Build manifest
+        run: |
+          python - <<'PY'
+          import json, subprocess, datetime, pathlib, yaml
+          repo = pathlib.Path('.')
+          modules = yaml.safe_load((repo / 'ir' / 'module_plan.yaml').read_text())['modules']
+          src_dir = repo / 'generated' / 'game' / 'src'
+          loc = sum(1 for f in src_dir.rglob('*.rs') for _ in f.read_text(encoding='utf-8').splitlines())
+          rustc = subprocess.run(['rustc', '--version'], capture_output=True, text=True).stdout.strip()
+          manifest = {
+              'module_count': str(len(modules)),
+              'loc': f'{loc:,}',
+              'test_summary': 'See workflow logs for test counts.',
+              'rustc_version': rustc,
+              'generated_at': datetime.datetime.utcnow().strftime('%Y-%m-%d'),
+          }
+          (repo / 'artifacts').mkdir(exist_ok=True)
+          (repo / 'artifacts' / 'manifest.json').write_text(json.dumps(manifest, indent=2))
+          print(manifest)
+          PY
+
+      - name: Compose release notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python tooling/compose_release_notes.py \
+            --version "$VERSION" \
+            --usage-jsonl artifacts/usage.jsonl \
+            --postmortem artifacts/postmortem.md \
+            --manifest artifacts/manifest.json \
+            --assets-dir assets \
+            --out artifacts/release-notes.md
+
+      - name: Upload release assets bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ inputs.version }}
+          path: |
+            assets/
+            artifacts/release-notes.md
+            artifacts/manifest.json
+            artifacts/usage.jsonl
+            artifacts/postmortem.md
+          retention-days: 30
+
+      - name: Publish draft GitHub release
+        if: ${{ inputs.publish == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          TARGET_REF: ${{ needs.generate.outputs.target_ref }}
+        run: |
+          set -e
+          gh release create "$VERSION" \
+            --draft \
+            --target "$TARGET_REF" \
+            --title "Worldsmith $VERSION" \
+            --notes-file artifacts/release-notes.md \
+            assets/*

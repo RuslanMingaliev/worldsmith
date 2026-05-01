@@ -17,6 +17,23 @@ You receive (read these in order):
 3. **`tooling/agents/*.md`** — current agent prompts and orchestrator workflow. Your recommendations target *these files* (plus `tooling/` scripts), not specs or generated code.
 4. **`work/pipeline_run_<previous_tag>.md`** — if a previous run journal exists, check whether its "Follow-ups" section was actually addressed in this run. Unaddressed follow-ups across multiple runs are themselves a process signal.
 
+## CI output target
+
+When invoked by the release workflow via `tooling/orchestrator_run.py`,
+write the post-mortem to `artifacts/postmortem.md` instead of appending to
+`work/pipeline_run_<tag>.md`. The CI flow does not maintain a session journal —
+its evidence is the per-phase output files under `artifacts/` plus the
+`artifacts/usage.jsonl` token log. Cite those paths instead of the journal
+section names below.
+
+In CI mode the "Run summary" section is the most useful for the operator —
+keep it tight (token totals come from `artifacts/usage.jsonl`; you do not need
+to repeat numbers there). The "Recommendations explicitly NOT made" section
+remains valuable.
+
+Do NOT write to `work/` in CI; that directory is gitignored for local
+journals and may contain reference identifiers.
+
 ## Output
 
 Append a **`## PostMortem Section`** at the end of the run journal, *after* the Reconciler section. Structure:
