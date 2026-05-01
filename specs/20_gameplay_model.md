@@ -43,16 +43,11 @@ The player has one ranged weapon (pistol). Combat uses hitscan (instant ray trac
 - The specific values are defined in `25_game_tuning.md`
 - The discrete outcomes create "lucky hit" and "weak hit" moments
 
-**Accuracy (current):**
-- The first shot after a pause uses a tighter alignment check (more likely to hit)
-- Sustained fire uses a slightly looser alignment check
-- This is a simplification — see Target Accuracy below
-
-**Accuracy (target, from knowledge):**
-- First shot: perfectly accurate (zero angular spread)
-- Sustained fire: random angular offset +/- 5.6 degrees, triangular distribution
+**Accuracy (implemented):**
+- First shot after `IDLE_THRESHOLD_SEC` idle: perfectly accurate (zero angular spread)
+- Sustained fire: random angular offset applied as `(rand - rand) * PISTOL_REFIRE_SPREAD_RAD` — triangular distribution, +/- 5.6 degrees max
 - Triangular distribution = difference of two uniform random values (most shots near center, outliers rare)
-- Not yet implemented — current code approximates via dot-product threshold adjustment
+- Both the first-shot accuracy rule and triangular spread are fully implemented in `weapon_system::fire`
 
 **Pain/Stagger:**
 - When an enemy takes damage, there is a chance it enters a pain state
@@ -140,13 +135,30 @@ Concretely, this requires the loop-exit *decision* and the loop-exit *action* to
 
 (Rationale: an earlier generated game flipped `running = false` on the same tick that the win/lose flag was set, then the `while window.is_open() && game.running` loop in `main.rs` exited before the next `draw()` call. The colored border rendered for zero frames. The fix is the decision/action separation described above.)
 
+## Implementation Status
+
+**Implemented:**
+- Player movement (forward/backward/strafe) with thrust+friction momentum model (see [`21_player_movement.md`](21_player_movement.md)).
+- World collision — player cannot walk through walls; axis-aligned wall sliding.
+- Combat — hitscan pistol: fire cycle, discrete damage (5/10/15), triangular spread, first-shot accuracy, pain/stagger system.
+- Enemy basic trooper — AI states Idle/Chase/Pain/Dead; contact damage; reaction delay before first attack; pain flash visual.
+- Level — walls, walkable space, player spawn, enemy spawn, exit objective.
+- HUD — health bar + digits + ammo pane (see [`50_hud.md`](50_hud.md)).
+- Pickups — health and ammo pickups; refused-at-cap rule; ammo gates firing (see [`60_pickups.md`](60_pickups.md)).
+- Visual feedback — muzzle flash, hit-scan tracer, wall puff, blood splat, enemy pain flash, enemy death fade + corpse, player damage tint (see [`40_visual_feedback.md`](40_visual_feedback.md)).
+- Game Over Flow — decision/action separation; GAME_OVER_HOLD_SEC hold before exit; colored border on win/lose.
+- Demo mode — `--autopilot` and `--record-frames` CLI flags; deterministic replay (see [`35_demo_mode.md`](35_demo_mode.md)).
+
+**Deferred:**
+- See § Deferred Features below for the full list.
+
 ## Deferred Features
 
 - Multiple weapons (shotgun, chaingun, fist, super shotgun)
 - Projectile-based enemy attacks (fireball with travel time, dodging)
 - Multiple enemy types (shotgun trooper, rapid-hitscan trooper, ranged-melee hybrid, melee-only beast, invisible melee-only beast, floating projectile mid-tier, kamikaze flyer, mid-tier melee+projectile boss, heavy melee+projectile boss, homing-missile boss, triple-projectile boss, rapid-plasma boss, area-attack boss with corpse-resurrect, rocket-launcher mega-boss, super-chaingun mega-boss)
 - Armor and damage reduction system
-- Ammo economy and pickups
+- Full ammo economy (multiple categories, scarcity pressure, dropped-from-enemy pickups, backpack/cap expander)
 - Difficulty levels (damage scaling)
 - Auto-aim / vertical targeting
 - Advanced enemy coordination

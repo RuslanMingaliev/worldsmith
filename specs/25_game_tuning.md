@@ -25,6 +25,7 @@ This spec captures all gameplay balance constants, visual parameters, and level 
 | Attack type | Contact damage | Target: hitscan at range |
 | Attack damage | 3, 6, 9, 12, or 15 per hit | Formula: `(random(0..4) + 1) * 3`, mean ~9 |
 | Attack cooldown | 0.54 seconds | Time between contact hits |
+| ENEMY_RADIUS_TILES | 0.375 | Derived from enemy visual radius 12 px / TILE_SIZE (32). Used for collision detection in `enemy_logic.rs` and implicitly by `ENEMY_CONTACT_RANGE_TILES`. Captured during reconcile pass — was present in code but not named in spec. |
 | ENEMY_CONTACT_RANGE_TILES | 0.8125 tile (= 26 px) | Derived from player + enemy visual radii in `## Visual` (14 px + 12 px) divided by `TILE_SIZE`. Specs/20 says "contact damage when within melee range" without naming a value; this range fires the hit exactly when the two discs visually touch. Captured during a reconcile pass (was inlined as a derived constant in `enemy_logic.rs`). |
 | Pain chance | 78% (200/255) | Chance to enter pain/stagger state when hit |
 | Pain duration | 0.17 seconds | Duration of pain stagger animation |
@@ -260,11 +261,10 @@ Behavior spec: [`50_hud.md`](50_hud.md). Knowledge: [`knowledge/hud.md`](../know
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| HUD_MARGIN_PX | 8 | Generation default — no knowledge backing. Knowledge/hud.md § Status Bar Layout describes a bottom-anchored full-width chrome strip; we use a top-left corner pane instead because the top-down 2D viewport fills the entire window. Margin sized for visual breathing room only. |
+| HUD_MARGIN | 4 | Generation default — no knowledge backing (revised from initial design value of 8 to match generated code; code constant is `HUD_MARGIN`, not `HUD_MARGIN_PX`). Knowledge/hud.md § Status Bar Layout describes a bottom-anchored full-width chrome strip; we use a top-left corner pane instead. Margin sized for visual breathing room. |
 | HUD_HEALTH_BAR_WIDTH_PX | 100 | Generation default — no knowledge backing. The reference uses digits-only without a proportional bar (knowledge § Color / State Encoding: digits inherit global palette tint instead). The bar substitutes for the missing palette channel; width is wide enough to read 1% increments. |
 | HUD_HEALTH_BAR_HEIGHT_PX | 10 | Generation default — no knowledge backing. Rationale: ~10% of bar width (100 px) — thick enough to be visible at a glance from the corner of the eye, thin enough not to overwhelm the digits next to it. Aspect ratio 10:1 borrowed from typical retro HUD bars. |
-| HUD_DIGIT_GAP_PX | 6 | Generation default — no knowledge backing. Rationale: ~half the digit width post-upscale (6 px ≈ 3*HUD_DIGIT_PIXEL_SIZE), so the digit reads as a separate widget from the bar without "floating off". Eyeballed; revisit if the digits look pinched against or detached from the bar. |
-| HUD_DIGIT_KERN_PX | 1 | Generation default — no knowledge backing. Rationale: minimum non-zero kerning so adjacent digits never visually merge, while still keeping the field compact. Knowledge § Numeric Widget describes fixed-width glyph advancement but does not specify kerning — the reference's glyphs include their own padding in the bitmap. |
+| HUD_DIGIT_KERN_PX | 1 | Generation default — no knowledge backing. Rationale: minimum non-zero kerning so adjacent digits never visually merge, while still keeping the field compact. Knowledge § Numeric Widget describes fixed-width glyph advancement but does not specify kerning — the reference's glyphs include their own padding in the bitmap. Note: the bar→digits horizontal gap and the icon→digits horizontal gap both reuse `HUD_PANE_GAP_PX = 4` (§ HUD Ammo Pane), so a separate `HUD_DIGIT_GAP_PX` constant does not exist in the codebase. |
 
 ### Bitmap Font
 
@@ -279,9 +279,9 @@ Knowledge basis: [`knowledge/hud.md`](../knowledge/hud.md) § Numeric Widget and
 The 10-entry glyph table (`HUD_DIGIT_GLYPHS`) is a renderer-private compile-time constant, not a tuning constant.
 
 Knowledge-grounded numeric-widget rules (encoded in renderer behavior, not as constants):
-- Right-justified anchoring (knowledge § Numeric Widget).
-- No leading zeros — value 7 in a 3-digit slot renders as `7`, not `007` (knowledge § Numeric Widget).
-- Zero special-cased — `0` renders as the `0` glyph, not blank (knowledge § Numeric Widget).
+- Right-justified anchoring (knowledge § Numeric Widget) — **deferred**: code renders digits left-to-right from a fixed x offset (`digits_x`); field width is variable, not padded to a fixed column. Digits are not right-justified in the current prototype.
+- No leading zeros — value 7 in a 3-digit slot renders as `7`, not `007` (knowledge § Numeric Widget). **Implemented** via `n.to_string()`.
+- Zero special-cased — `0` renders as the `0` glyph, not blank (knowledge § Numeric Widget). **Implemented**.
 
 ### Health Bands
 
@@ -296,15 +296,25 @@ All five HUD colors are generation defaults — no knowledge backing. Reasoning:
 
 | Constant | Color | Source |
 |----------|-------|--------|
-| HUD_FRAME_COLOR | #C0C0C0 light gray | Generation default — bar outline. Rationale: distinguishable from both wall (`#404040`) and floor (`#808080`) tiles so the bar reads as UI not as a tile. Light enough to imply "frame" rather than "fill". |
+| HUD_FRAME_COLOR | #C0C0C0 light gray | Generation default — bar outline (deferred). Rationale: distinguishable from both wall (`#404040`) and floor (`#808080`) tiles so the bar reads as UI not as a tile. Note: the 1 px outline around the health bar is not drawn in current code — `renderer::draw_hud` draws only the background fill and foreground fill. Bar outline is tracked as deferred in specs/50. |
 | HUD_HEALTH_BAR_BG_COLOR | #303030 dark gray | Generation default — empty-bar fill. Rationale: darker than the wall color (`#404040`) so the empty portion of the bar reads as "drained" rather than as part of the level chrome. |
 | HUD_HEALTH_COLOR_HIGH | #00C000 green | Generation default — full/healthy state. Rationale: pure green is the universal "OK / safe" signal; matches the player disc color (`COLOR_PLAYER` `#00FF00`) so player and full-health bar visually agree. |
 | HUD_HEALTH_COLOR_MID | #C0C000 yellow | Generation default — middle band. Rationale: standard yellow caution; sits between green and red on the hue circle so the band transition is monotonic and intuitive. |
 | HUD_HEALTH_COLOR_LOW | #C00000 red | Generation default — critical band. Rationale: matches the enemy color (`COLOR_ENEMY` `#FF0000`) and damage tint (`COLOR_DAMAGE_TINT`) so "low health" thematically links to "the enemy is winning". |
 
+## RNG Seeds (Determinism)
+
+Fixed seeds used when `--autopilot` flag is passed (specs/35 § Determinism). Seed values are generation defaults captured during reconcile pass — was noted in specs/35 as "Coder choice; document in work/decisions.md".
+
+| Constant | Value | Module | Source |
+|----------|-------|--------|--------|
+| WEAPON_RNG_SEED | `0xDEAD_BEEF_1234_5678` | `weapon_system` | Generation default — arbitrary distinctive hex value. Seeds weapon damage RNG for deterministic demo recording. |
+| ENEMY_RNG_SEED | `0xCAFE_BABE_8765_4321` | `enemy_logic` | Generation default — arbitrary distinctive hex value. Seeds enemy pain-check and attack-damage RNG. |
+| BOT_RNG_SEED | `0x00C0_FFEE` | `autopilot` | Generation default — "coffee" mnemonic. Seeds bot stuck-detection strafe-direction RNG. |
+
 ## Autopilot (Bot Tuning)
 
-The autopilot bot in `src/autopilot.rs` is `#[cfg(test)]`-only. Behavior is described in `specs/30_test_framework.md` § Bot Behavior; the constants below are the bot's tuning knobs.
+The autopilot bot in `src/autopilot.rs` exposes a per-frame API always compiled, with a batch test-driver gated behind `#[cfg(test)]`. Behavior is described in `specs/30_test_framework.md` § Bot Behavior; the constants below are the bot's tuning knobs.
 
 | Constant | Value | Source |
 |----------|-------|--------|

@@ -1,5 +1,5 @@
 game_family: retro_shooter
-version: "2026.1"
+version: "2026.01"
 goal: minimal_playable_vertical_slice
 
 player:
@@ -62,8 +62,8 @@ simplifications:
   - enemy_attack_is_contact_not_hitscan
   - enemy_ai_simplified_no_attack_state
   - enemy_detection_is_immediate_no_los
-  - weapon_spread_approximated_not_triangular
-  - player_movement_direct_not_momentum
+  # Removed: weapon_spread_approximated_not_triangular — triangular spread (rand-rand) is now implemented
+  # Removed: player_movement_direct_not_momentum — thrust+friction momentum model is now implemented
 
 generation:
   mode: incremental_preferred

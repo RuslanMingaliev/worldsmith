@@ -81,7 +81,7 @@ Source: [`knowledge/visual_feedback.md`](../knowledge/visual_feedback.md).
 - The mapping is roughly even across the cap (e.g. for 8 levels and cap 100, each level covers ~12.5 units of damage).
 - The accumulator is *cumulative*: many small hits chain into a sustained red without per-hit logic.
 - "Faster decay when facing attacker" rule from the source is **deferred** for the prototype (the prototype has only one enemy and no concept of "facing the attacker").
-- Pickup tint (gold flash on item pickup) is **deferred** (no pickups exist yet).
+- Pickup tint (gold flash on item pickup) is **deferred** (pickups are implemented; the visual tint on consumption is not yet added).
 
 ### Enemy Death Visual
 
@@ -178,14 +178,14 @@ The following are documented in `knowledge/visual_feedback.md` but are out of sc
 - **World-brightness pulse from muzzle flash** — requires first-person rendering.
 - **Damage-tiered blood sprites** — single splat size for now; will be revisited when the weapon roster expands.
 - **Gib (extreme death) animation** — single death visual path; will be revisited when overkill thresholds matter.
-- **Pickup tint** (yellow flash on item pickup) — no pickups exist yet.
+- **Pickup tint** (yellow flash on item pickup) — pickups (health/ammo) are implemented but the tint on consumption is not; see `knowledge/pickups.md` § Player-Side State.
 - **Force feedback / rumble** on damage — not applicable to keyboard input.
 - **"Faster decay when facing attacker"** for damage tint — single-enemy prototype.
 - **Anti-lockstep random jitter** on effect first-frame durations — only meaningful with many simultaneous effects.
 - **Effect-count cap / culling** — only meaningful in long sustained combat.
 - **Vertical jitter / upward drift** on impact effects — fade-out alone is sufficient in top-down view.
 - **Different puff variant for melee vs. ranged** — only one weapon exists.
-- **Corpse-position drop items** — pickups not implemented.
+- **Corpse-position drop items** — placed health/ammo pickups are implemented; enemy death-drop spawn hook is deferred (see `specs/60_pickups.md` § Deferred).
 
 ## Test Scenarios
 
