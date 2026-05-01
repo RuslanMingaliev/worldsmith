@@ -151,15 +151,102 @@ jobs:
             artifacts/
           retention-days: 14
 
-  release:
+  build:
     needs: generate
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+            archive: tar.gz
+            bin: game
+            ext: ""
+          - platform: macos-aarch64
+            os: macos-latest
+            archive: tar.gz
+            bin: game
+            ext: ""
+          - platform: windows-x86_64
+            os: windows-latest
+            archive: zip
+            bin: game.exe
+            ext: ".exe"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     environment: release
     if: ${{ github.actor == 'RuslanMingaliev' }}
 
     steps:
-      - name: Checkout target ref (drift branch or main)
+      - name: Checkout target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.generate.outputs.target_ref }}
+
+      - name: Download generation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: generation-${{ inputs.version }}
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build release binary
+        run: cargo build --release --manifest-path generated/game/Cargo.toml
+
+      - name: Run unit + autopilot tests
+        run: cargo test --release --manifest-path generated/game/Cargo.toml
+
+      - name: Package binary archive (Unix)
+        if: runner.os != 'Windows'
+        env:
+          VERSION: ${{ inputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          BIN: ${{ matrix.bin }}
+        shell: bash
+        run: |
+          set -e
+          STAGE="worldsmith-game-${VERSION}-${PLATFORM}"
+          mkdir -p "$STAGE" assets
+          cp "generated/game/target/release/$BIN" "$STAGE/worldsmith"
+          [ -f generated/game/README.md ] && cp generated/game/README.md "$STAGE/README.md" || true
+          [ -f LICENSE ] && cp LICENSE "$STAGE/LICENSE" || true
+          tar -czf "assets/$STAGE.tar.gz" "$STAGE"
+
+      - name: Package binary archive (Windows)
+        if: runner.os == 'Windows'
+        env:
+          VERSION: ${{ inputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          BIN: ${{ matrix.bin }}
+        shell: pwsh
+        run: |
+          $stage = "worldsmith-game-$env:VERSION-$env:PLATFORM"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          New-Item -ItemType Directory -Force -Path "assets" | Out-Null
+          Copy-Item "generated/game/target/release/$env:BIN" "$stage/worldsmith.exe"
+          if (Test-Path "generated/game/README.md") { Copy-Item "generated/game/README.md" "$stage/README.md" }
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" "$stage/LICENSE" }
+          Compress-Archive -Path $stage -DestinationPath "assets/$stage.zip"
+
+      - name: Upload platform asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.platform }}
+          path: assets/
+          retention-days: 14
+
+  release:
+    needs: [generate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release
+    if: ${{ github.actor == 'RuslanMingaliev' }}
+
+    steps:
+      - name: Checkout target ref (drift branch or trigger SHA)
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.generate.outputs.target_ref }}
@@ -190,37 +277,32 @@ jobs:
         with:
           name: generation-${{ inputs.version }}
 
-      - name: Build linux release binary
-        run: |
-          cargo build --release --manifest-path generated/game/Cargo.toml
+      - name: Download platform builds
+        uses: actions/download-artifact@v4
+        with:
+          path: assets-staging
+          pattern: build-*
+          merge-multiple: true
 
-      - name: Run unit + autopilot tests
+      - name: Stage platform tarballs into assets/
         run: |
-          cargo test --release --manifest-path generated/game/Cargo.toml
+          mkdir -p assets
+          mv assets-staging/* assets/
+          ls -la assets/
 
-      - name: Record demo
+      - name: Record demo (linux only)
         run: |
           mkdir -p release
           xvfb-run -a tooling/record_autopilot.sh tests/combat/kill_enemy.yaml release/demo.gif
 
-      - name: Package src zip + linux tarball
+      - name: Package src zip + demo GIF
         env:
           VERSION: ${{ inputs.version }}
         run: |
           set -e
-          mkdir -p assets
           python tooling/package_release.py --version "$VERSION"
           mv "artifacts/worldsmith-game-${VERSION}-src.zip" \
              "assets/worldsmith-game-${VERSION}-src.zip"
-          # Linux binary tarball: bin + README + LICENSE.
-          STAGE="worldsmith-game-${VERSION}-linux-x86_64"
-          mkdir -p "$STAGE"
-          cp generated/game/target/release/game "$STAGE/worldsmith"
-          [ -f generated/game/README.md ] && cp generated/game/README.md "$STAGE/README.md" || true
-          [ -f LICENSE ] && cp LICENSE "$STAGE/LICENSE" || true
-          tar -czf "assets/$STAGE.tar.gz" "$STAGE"
-          rm -rf "$STAGE"
-          # Demo GIF (mirror 2026.01 naming).
           cp release/demo.gif "assets/worldsmith-${VERSION}-gameplay.gif"
 
       - name: Build manifest
