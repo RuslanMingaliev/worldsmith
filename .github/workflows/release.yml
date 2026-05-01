@@ -123,7 +123,11 @@ jobs:
           git commit -m "release ${VERSION}: reflect agent-generated changes" \
                      -m "Captured during release.yml run #${{ github.run_id }}."
           git push -u origin "$BRANCH"
-          gh pr create \
+          # PR creation is best-effort: if the repo setting blocks it, log a
+          # warning and continue. The branch is already pushed, so the operator
+          # can open a PR by hand. We still emit target_ref so the release job
+          # tags the right commit.
+          if ! gh pr create \
             --base main \
             --head "$BRANCH" \
             --title "release ${VERSION}: reflect agent-generated changes" \
@@ -132,10 +136,13 @@ jobs:
           Release tag \`${VERSION}\` points at this branch's HEAD; merging brings main back in sync with what the release was built from.
 
           See workflow artifacts \`generation-${VERSION}\` for per-phase reports." \
-            --draft
+            --draft; then
+            echo "::warning::PR creation failed (often: 'Allow GitHub Actions to create and approve pull requests' is off in repo settings). Branch ${BRANCH} is pushed; create the PR manually."
+          fi
           echo "target_ref=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Upload generation artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: generation-${{ inputs.version }}
