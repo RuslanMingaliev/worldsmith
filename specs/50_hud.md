@@ -29,10 +29,10 @@ Source: [`knowledge/hud.md`](../knowledge/hud.md). Spec values that are NOT dire
 (The HUD also draws an **ammo pane** directly below the health pane; see § Ammo Pane.)
 
 **Rules:**
-- Pane origin is `(HUD_MARGIN_PX, HUD_MARGIN_PX)` from the top-left of the framebuffer. *(Generation default: the reference engine uses a bottom-anchored full-width strip; we use top-left because our top-down 2D viewport fills the entire window with no chrome budget. See spec/25 § HUD.)*
-- The bar's outline is drawn first (1 px, `HUD_FRAME_COLOR`). The bar's interior is filled with `HUD_HEALTH_BAR_BG_COLOR`. A foreground fill then covers a fraction of the interior proportional to `player.health / PLAYER_MAX_HEALTH`, clamped to `[0.0, 1.0]`. *(Generation default: the reference engine uses digits-only, no proportional bar. The bar is added because our prototype lacks the global palette-shift damage feedback that the reference's digits inherit; a visible bar substitutes for the missing channel.)*
+- Pane origin is `(HUD_MARGIN, HUD_MARGIN)` from the top-left of the framebuffer (code constant: `HUD_MARGIN = 4`). *(Generation default: the reference engine uses a bottom-anchored full-width strip; we use top-left because our top-down 2D viewport fills the entire window with no chrome budget. See spec/25 § HUD.)*
+- The bar's interior is filled with `HUD_HEALTH_BAR_BG_COLOR` (background), then a foreground fill covers a fraction proportional to `player.health / PLAYER_MAX_HEALTH`, clamped to `[0.0, 1.0]`. A 1 px outline (`HUD_FRAME_COLOR`) is **deferred** — not drawn in current code; see § Deferred. *(Generation default: the reference engine uses digits-only, no proportional bar. The bar is added because our prototype lacks the global palette-shift damage feedback that the reference's digits inherit; a visible bar substitutes for the missing channel.)*
 - The foreground fill color is selected by health band (see § Health Bands below). *(Generation default: the reference engine does NOT color-shift digits by value — see knowledge/hud.md § Color / State Encoding. We add bands for the same reason as the bar above.)*
-- The numeric value is drawn immediately to the right of the bar with a gap of `HUD_DIGIT_GAP_PX`. Each glyph is `HUD_DIGIT_WIDTH_PX × HUD_DIGIT_HEIGHT_PX`, scaled by `HUD_DIGIT_PIXEL_SIZE`. Digits are drawn **right-justified, no leading zeros, with `0` special-cased to render as a single glyph rather than blank**. *(Knowledge: § Numeric Widget — exact rules.)*
+- The numeric value is drawn immediately to the right of the bar with a gap of `HUD_PANE_GAP_PX`. Each glyph is `HUD_DIGIT_WIDTH_PX × HUD_DIGIT_HEIGHT_PX`, scaled by `HUD_DIGIT_PIXEL_SIZE`. Digits are drawn **no leading zeros, with `0` special-cased to render as a single glyph rather than blank**. Right-justified anchoring (knowledge § Numeric Widget) is **deferred** — code renders left-to-right from a fixed x offset. *(Knowledge: § Numeric Widget — exact rules for no-leading-zeros and zero-special-case.)*
 - The numeric value is `player.health.max(0)` (never negative — clamp to zero for display).
 - Digit color matches the foreground fill color of the bar in the same frame, so the whole pane shifts hue together. *(Generation default; see § Color / State Encoding caveat above.)*
 
@@ -63,8 +63,8 @@ Source: [`knowledge/hud.md`](../knowledge/hud.md). Spec values that are NOT dire
 2. The player's `ammo` value drawn to the right of the icon using the same bitmap digit font, color `HUD_AMMO_COLOR`. Vertically centered against the icon.
 
 **Rules:**
-- Pane origin: `(HUD_MARGIN_PX, HUD_MARGIN_PX + HUD_HEALTH_BAR_HEIGHT_PX + HUD_PANE_GAP_PX)`.
-- Icon-to-digits gap is `HUD_DIGIT_GAP_PX` (reused from the health pane).
+- Pane origin: `(HUD_MARGIN, HUD_MARGIN + HUD_HEALTH_BAR_HEIGHT_PX + HUD_PANE_GAP_PX)` (note: code constant is `HUD_MARGIN`, not `HUD_MARGIN_PX`).
+- Icon-to-digits gap is `HUD_PANE_GAP_PX` (same constant as the inter-pane vertical gap; no separate `HUD_DIGIT_GAP_PX` constant exists in code — the health pane bar→digits gap also uses `HUD_PANE_GAP_PX`).
 - No background bar; the pane is `[icon] [digits]`.
 - Ammo digits use the same right-justified, no-leading-zeros, zero-special-cased rules as health digits (knowledge § Numeric Widget — same pattern, applied to a single color instead of a band).
 - Ammo digits are single-color (`HUD_AMMO_COLOR`). No band thresholds. Low-ammo warning color is **deferred**.
@@ -130,8 +130,10 @@ The bitmap font is a compile-time constant table (`HUD_DIGIT_GLYPHS`) of ten ent
 
 ## Deferred
 
-The following are intentionally out of scope for this prototype HUD:
+The following are intentionally out of scope for this prototype HUD (or not yet implemented despite being specified):
 
+- **Health bar 1 px outline** (`HUD_FRAME_COLOR` `#C0C0C0`) — specified in spec/25 § HUD Colors; not drawn by current `draw_hud`. Code draws background fill + foreground fill only. Low-priority visual polish.
+- **Right-justified digit field** — knowledge § Numeric Widget; current code left-aligns digits from a fixed `digits_x`. Causes field-width shift when health crosses a digit-count boundary (e.g. 100→99). Low-priority given small field size.
 - **Multi-state icon widgets** (key cards, weapon-ready slots, animated face portrait) — knowledge documents these but the prototype has no inventory or weapon roster to drive them.
 - **HUD low-ammo warning color** — ammo digits are single-color (`HUD_AMMO_COLOR`). Color shift on `ammo < threshold` is deferred.
 - **Score / kill counter** — no scoring system in v2026.01.
@@ -163,7 +165,7 @@ The following are intentionally out of scope for this prototype HUD:
 1. Health value 7 in a 3-digit field renders as `7`, NOT `007` (no leading zeros — knowledge § Numeric Widget).
 2. Health value 0 renders as the digit `0`, NOT blank (zero special-case — knowledge § Numeric Widget).
 3. Each digit `0..=9` renders into a `HUD_DIGIT_WIDTH_PX × HUD_DIGIT_HEIGHT_PX` glyph block, scaled by `HUD_DIGIT_PIXEL_SIZE`.
-4. Multi-digit numbers (e.g. `100`) advance horizontally by `HUD_DIGIT_WIDTH_PX*HUD_DIGIT_PIXEL_SIZE + HUD_DIGIT_KERN_PX` per glyph.
+4. Multi-digit numbers (e.g. `100`) advance horizontally by `HUD_DIGIT_WIDTH_PX*HUD_DIGIT_PIXEL_SIZE + HUD_DIGIT_KERN_PX` per glyph (= 3×2 + 1 = 7 px per character).
 
 ### Render Order
 1. The HUD pane pixels are not overwritten by any subsequent gameplay layer.
@@ -174,13 +176,12 @@ The following are intentionally out of scope for this prototype HUD:
 
 **Implemented:**
 - Health bar (frame, background, foreground fill) in top-left corner.
-- Numeric health display next to the bar using a bitmap digit font (right-justified, no leading zeros, `0` special-cased per knowledge § Numeric Widget).
+- Numeric health display next to the bar using a bitmap digit font (no leading zeros, `0` special-cased per knowledge § Numeric Widget). Right-justification is **not yet implemented** — digits are left-aligned from a fixed x offset (`digits_x = HUD_MARGIN + HUD_BAR_WIDTH + HUD_PANE_GAP_PX`); tracked as deferred below.
 - Color-coded health bands (HIGH / MID / LOW thresholds).
 - HUD layered above damage tint, below game-over border.
 - Ammo pane below health pane (yellow icon + yellow digits, single color).
 
 **Deferred** (also listed in the Deferred section above):
-- Ammo display (workflow 2 — pickups).
 - Multi-state icon widgets.
 - Score / kill counter.
 - Minimap.

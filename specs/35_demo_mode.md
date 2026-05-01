@@ -133,3 +133,19 @@ The script is a thin wrapper — no game logic lives in it. `WINDOW_WIDTH`, `WIN
 - Two runs of the same command produce **byte-identical** files (determinism).
 - `tooling/record_autopilot.sh tests/combat/kill_enemy.yaml release/demo.gif` produces a playable GIF **and** an h264 MP4 sibling (`release/demo.mp4`) from the same raw stream.
 - The interactive `cargo run` path (no flags) is unchanged — existing manual-play behavior preserved.
+
+## Implementation Status
+
+**Implemented:**
+- `--autopilot <path>` and `--record-frames <path>` CLI flags parsed via `std::env::args`.
+- Headed autopilot mode: bot drives live minifb render loop at fixed `dt = 1/60`.
+- Raw BGRA frame recording (`frame_recorder` module): `open`, `write_frame`, `close`; `bgr0` pixel format for ffmpeg.
+- Determinism: all module-private RNGs seeded from fixed constants in `--autopilot` mode.
+- `tooling/record_autopilot.sh`: GIF (two-pass palettegen/paletteuse) + MP4 (libx264 yuv420p faststart) from the same raw stream.
+- Per-frame API (`parse_scenario`, `BotState`, `BotProgress`, `bot_step`) always compiled (not `#[cfg(test)]`).
+
+**Deferred:**
+- Audio in recordings (no audio system in binary).
+- Post-production HUD overlays or cropping.
+- Multiple-scenario montage recordings.
+- Before/after comparison GIFs.

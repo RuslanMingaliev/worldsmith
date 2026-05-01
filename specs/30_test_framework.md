@@ -67,10 +67,10 @@ Objectives are executed sequentially. Each must complete before the next begins.
 | `enemy` | First alive enemy position; falls back to first enemy's last position, then to `exit`, if no enemies are alive. |
 | `exit` | Level exit position |
 | `spawn` | Player spawn position |
-| `pickup_health` | First active health pickup position (specs/60). Falls back to player's current position when no active health pickup remains, so a `reach: pickup_health` objective trivially completes once all health pickups are consumed. |
-| `pickup_ammo` | First active ammo pickup position (specs/60). Same fallback rule as `pickup_health`. |
+| `pickup_health` | First active health pickup position (specs/60). Falls back to player's current position when no active health pickup remains, so a `reach: pickup_health` objective trivially completes once all health pickups are consumed. **Partial drift**: current code in `resolve_pos_target` uses `find(kind == Health)` without filtering `active`, so a consumed (inactive) pickup's position is still returned instead of falling back to the player's position. |
+| `pickup_ammo` | First active ammo pickup position (specs/60). Same fallback rule as `pickup_health`. Same partial drift as above. |
 
-The fallback semantics for pickup targets are deliberate: a scavenge-style scenario like `reach: pickup_health → reach: pickup_ammo → reach: exit` should not stall when a pickup is missing or already consumed — it should treat that objective as already satisfied and move on.
+The fallback semantics for pickup targets are deliberate: a scavenge-style scenario like `reach: pickup_health → reach: pickup_ammo → reach: exit` should not stall when a pickup is missing or already consumed — it should treat that objective as already satisfied and move on. The `active` filter and fallback are not yet enforced in code (flagged as drift; fix in next Coder pass).
 
 ## Assertions
 
@@ -129,6 +129,25 @@ If the bot's position hasn't changed for 30 frames, it begins strafing. After 60
 - `enemy_logic` (Enemy)
 - `weapon_system` (Weapon, indirectly via GameState)
 - `serde`, `serde_yaml` — runtime dependencies (used by `main.rs` in `--autopilot` mode per specs/35); also used by the `#[cfg(test)]` test runner. Promoted from `[dev-dependencies]` to `[dependencies]` when demo mode shipped (specs/80 § Dependencies carries the rationale).
+
+## Implementation Status
+
+**Implemented:**
+- Scenario YAML format (`scenario`, `description`, `objectives`, `assertions` fields).
+- Objective types: `kill:`, `reach:`, `approach:`, `wait:`.
+- Target names: `enemy`, `exit`, `spawn`, `pickup_health`, `pickup_ammo` (with fallback semantics).
+- Assertion fields: `player.alive`, `player.health`, `enemy.alive`, `game.won`, `game.frames` — these five are implemented in `autopilot::eval_assertion`.
+- **Not yet implemented** (return "unknown assertion field" error at runtime): `player.position.x`, `player.position.y`, `enemy.health`, `game.running`.
+- Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
+- Bot behavior: turn-toward objective, move-forward when roughly facing, fire when aligned and in range, stuck detection with strafe recovery.
+- Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, 3600-frame max.
+- Per-frame API (`parse_scenario`, `BotState`, `BotProgress`, `bot_step`) always compiled for `--autopilot` mode (specs/35).
+- Batch driver (`run_scenario`, `run_all_scenarios`) gated behind `#[cfg(test)]`.
+
+**Deferred:**
+- Objectives that require game features not yet implemented (e.g., `kill: boss`, multi-enemy targeting).
+- Parallel scenario execution (currently sequential).
+- Scenario-level RNG seed override (determinism currently tied to global seed from specs/35).
 
 ## Related
 
