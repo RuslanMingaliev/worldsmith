@@ -43,6 +43,7 @@ from typing import Dict, List, Optional
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS_DIR = REPO_ROOT / "tooling" / "agents"
 DEFAULT_USAGE = REPO_ROOT / "artifacts" / "usage.jsonl"
+GENERATED_SRC_DIR = REPO_ROOT / "generated" / "game" / "src"
 
 PHASES = ["architect", "coder", "reconciler", "postmortem"]
 
@@ -220,20 +221,113 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--transcript", type=Path, default=None)
     parser.add_argument("--max-turns", type=int, default=80)
     parser.add_argument("--model", default=None)
+    parser.add_argument(
+        "--target-modules",
+        nargs="*",
+        default=None,
+        help="Restrict edits to these module files (e.g. player_state weapon_system). "
+             "Snapshots generated/game/src/ before the phase and reverts any file "
+             "that does not correspond to a listed module after the phase. Used by "
+             "the PR workflow for partial regeneration.",
+    )
     return parser.parse_args()
+
+
+def _snapshot_src(src_dir: Path) -> Optional[Path]:
+    """Copy src_dir to a sibling .baseline directory before a phase runs.
+
+    Returns the baseline path, or None if src_dir doesn't exist."""
+    if not src_dir.exists():
+        return None
+    baseline = src_dir.parent / f".{src_dir.name}.baseline"
+    if baseline.exists():
+        shutil.rmtree(baseline)
+    shutil.copytree(src_dir, baseline)
+    return baseline
+
+
+def _revert_out_of_scope(
+    src_dir: Path,
+    baseline: Path,
+    target_modules: List[str],
+) -> List[str]:
+    """Revert any file in src_dir that does not correspond to a target module.
+
+    A target module name `X` maps to filename `X.rs`. Anything else is reverted
+    from baseline (if present) or deleted (if Coder created a new file).
+    Files Coder removed (and that aren't in targets) are restored from baseline.
+
+    Returns a list of reverted entries for logging."""
+    target_files = {f"{name}.rs" for name in target_modules}
+    current_files = {
+        p.relative_to(src_dir) for p in src_dir.rglob("*") if p.is_file()
+    }
+    baseline_files = {
+        p.relative_to(baseline) for p in baseline.rglob("*") if p.is_file()
+    }
+
+    reverted: List[str] = []
+
+    for rel in current_files:
+        rel_str = str(rel)
+        if rel_str in target_files:
+            continue
+        dest = src_dir / rel
+        src = baseline / rel
+        if src.exists():
+            shutil.copy2(src, dest)
+            reverted.append(f"{rel_str} (reverted to baseline)")
+        else:
+            dest.unlink()
+            reverted.append(f"{rel_str} (deleted; was new and out-of-scope)")
+
+    for rel in baseline_files - current_files:
+        rel_str = str(rel)
+        if rel_str in target_files:
+            continue
+        dest = src_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(baseline / rel, dest)
+        reverted.append(f"{rel_str} (restored; Coder deleted it)")
+
+    return reverted
 
 
 def main() -> int:
     args = parse_args()
 
-    usage = run_real(
-        phase=args.phase,
-        mode=args.mode,
-        scope=args.scope,
-        transcript=args.transcript,
-        max_turns=args.max_turns,
-        model=args.model,
-    )
+    baseline: Optional[Path] = None
+    if args.target_modules:
+        baseline = _snapshot_src(GENERATED_SRC_DIR)
+        if baseline is None:
+            print(
+                f"warning: --target-modules set but {GENERATED_SRC_DIR} does not exist; "
+                "skipping snapshot. Coder will run unguarded.",
+                file=sys.stderr,
+            )
+
+    try:
+        usage = run_real(
+            phase=args.phase,
+            mode=args.mode,
+            scope=args.scope,
+            transcript=args.transcript,
+            max_turns=args.max_turns,
+            model=args.model,
+        )
+    finally:
+        if baseline is not None and GENERATED_SRC_DIR.exists():
+            reverted = _revert_out_of_scope(
+                GENERATED_SRC_DIR, baseline, args.target_modules
+            )
+            if reverted:
+                print(
+                    "Out-of-scope edits reverted to baseline (--target-modules guard):",
+                    file=sys.stderr,
+                )
+                for entry in reverted:
+                    print(f"  - {entry}", file=sys.stderr)
+            shutil.rmtree(baseline)
 
     append_usage(usage, args.usage_jsonl)
     print(

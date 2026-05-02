@@ -2,17 +2,29 @@ name: PR Checks
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  specs-and-tooling:
+  validate:
+    name: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      needs_regen: ${{ steps.impact.outputs.needs_regen }}
+      same_repo: ${{ steps.impact.outputs.same_repo }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout PR HEAD
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -24,8 +36,277 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Validate specs/IR/knowledge
+      - name: Validate specs / IR / knowledge
         run: python tooling/validate_specs.py --verbose
 
-      - name: Ensure generated/ is untouched
+      - name: Ensure generated/ has no manual edits
         run: python tooling/check_generated_clean.py
+
+      - name: Impact analysis
+        id: impact
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -e
+          git fetch origin "$BASE_REF" --depth=1
+          CHANGED=$(git diff --name-only "origin/$BASE_REF...HEAD")
+          echo "Changed files relative to origin/$BASE_REF:"
+          echo "$CHANGED"
+          if printf '%s\n' "$CHANGED" | grep -E '^(specs/|knowledge/|ir/|tooling/agents/)' > /dev/null; then
+            echo "needs_regen=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_regen=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$HEAD_REPO" = "${{ github.repository }}" ]; then
+            echo "same_repo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "same_repo=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo
+          echo "Impact: needs_regen=$(grep needs_regen $GITHUB_OUTPUT | cut -d= -f2)"
+          echo "        same_repo=$(grep same_repo $GITHUB_OUTPUT | cut -d= -f2)"
+
+  regenerate-and-build:
+    name: regenerate-and-build
+    needs: validate
+    # Runs only when source-of-truth files changed AND the PR is from the
+    # base repo. Fork PRs are skipped (skipped == passed for branch
+    # protection) because the OAUTH secret is unavailable to fork workflows
+    # by GitHub's design. Non-source PRs are skipped likewise.
+    if: |
+      needs.validate.outputs.needs_regen == 'true'
+      && needs.validate.outputs.same_repo == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    environment: release
+    permissions:
+      contents: write   # to push demo gif to a per-PR pr-assets-<N> branch
+      pull-requests: write
+    env:
+      WORLDSMITH_MAX_TOKENS_PER_RUN: ${{ vars.WORLDSMITH_MAX_TOKENS_PER_RUN }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout PR HEAD
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install system packages (xvfb, ffmpeg, jq)
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb ffmpeg jq
+
+      - name: Pre-flight — assert reference is empty
+        run: |
+          set -e
+          if [ -d reference ]; then
+            extra=$(find reference -mindepth 1 ! -name '.gitignore' ! -name 'README.md')
+            if [ -n "$extra" ]; then
+              echo "::error::reference/ contains non-template files; PR regen flow refuses to run with reference present."
+              echo "$extra"
+              exit 1
+            fi
+          fi
+
+      - name: Install Claude CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Assert OAUTH secret is present
+        run: |
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty in the 'release' environment."
+            exit 1
+          fi
+
+      - name: Download last release's source archive as baseline
+        id: baseline
+        run: |
+          set -e
+          mkdir -p artifacts
+          LAST_TAG=$(gh release view --json tagName -q .tagName)
+          echo "Baseline tag: $LAST_TAG"
+          echo "last_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          gh release download "$LAST_TAG" -p 'worldsmith-game-*-src.zip' -D artifacts
+          unzip -q "artifacts/worldsmith-game-${LAST_TAG}-src.zip" -d artifacts/baseline-extract
+          mkdir -p generated/game
+          # Archive layout is `worldsmith-game-<TAG>/<files>` — flatten into generated/game/.
+          cp -R "artifacts/baseline-extract/worldsmith-game-${LAST_TAG}/." generated/game/
+          rm -rf artifacts/baseline-extract "artifacts/worldsmith-game-${LAST_TAG}-src.zip"
+          ls generated/game/
+
+      - name: Determine regeneration scope
+        id: scope
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -e
+          mkdir -p artifacts
+          python tooling/partial_regen.py --base "origin/$BASE_REF" --json > artifacts/regen_targets.json
+          echo "regen_targets.json:"
+          cat artifacts/regen_targets.json
+          COUNT=$(jq length artifacts/regen_targets.json)
+          echo "module_count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -gt 0 ]; then
+            TARGETS=$(jq -r '. | join(" ")' artifacts/regen_targets.json)
+            echo "targets=$TARGETS" >> "$GITHUB_OUTPUT"
+          else
+            echo "targets=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Coder / Reconciler / PostMortem on affected modules
+        if: steps.scope.outputs.module_count != '0'
+        env:
+          TARGETS: ${{ steps.scope.outputs.targets }}
+        run: |
+          set -e
+          python tooling/orchestrator_run.py --mode release --phase coder \
+            --scope "Regenerate ONLY modules: $TARGETS" \
+            --target-modules $TARGETS
+          python tooling/orchestrator_run.py --mode release --phase reconciler
+          python tooling/orchestrator_run.py --mode release --phase postmortem
+
+      - name: Post-flight validate (catch accidental knowledge writes)
+        if: steps.scope.outputs.module_count != '0'
+        run: python tooling/validate_specs.py --verbose
+
+      - name: Build & test (regenerated or baseline) code
+        run: |
+          set -e
+          xvfb-run -a cargo build --release --manifest-path generated/game/Cargo.toml
+          xvfb-run -a cargo test --release --manifest-path generated/game/Cargo.toml
+
+      - name: Record gameplay GIF
+        run: |
+          set -e
+          mkdir -p release
+          xvfb-run -a tooling/record_autopilot.sh tests/combat/kill_enemy.yaml release/demo.gif
+          ls -la release/
+
+      - name: Push demo GIF to shared pr-assets branch (for inline embed)
+        id: gif-push
+        if: hashFiles('release/demo.gif') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -e
+          BRANCH="pr-assets"
+          GIF_NAME="pr-${PR}-run-${RUN_ID}-demo.gif"
+          # Ensure the shared branch exists. If it doesn't, create it from main's HEAD.
+          # Subsequent runs (this PR or any other) reuse the same branch — no proliferation.
+          if ! gh api "/repos/${REPO}/branches/${BRANCH}" >/dev/null 2>&1; then
+            DEFAULT_SHA=$(gh api "/repos/${REPO}/git/ref/heads/${{ github.event.pull_request.base.ref }}" -q .object.sha)
+            gh api --method POST "/repos/${REPO}/git/refs" \
+              --field ref="refs/heads/${BRANCH}" \
+              --field sha="${DEFAULT_SHA}" > /dev/null
+            echo "Created shared branch ${BRANCH}."
+          fi
+          # Upload the gif as a new file (PR + run-id make the filename unique;
+          # no race conditions even with concurrent PR runs).
+          CONTENT=$(base64 -w0 release/demo.gif)
+          gh api --method PUT "/repos/${REPO}/contents/${GIF_NAME}" \
+            --field message="PR #${PR} demo (run ${RUN_ID})" \
+            --field content="${CONTENT}" \
+            --field branch="${BRANCH}" > /dev/null
+          RAW_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${GIF_NAME}"
+          echo "raw_url=${RAW_URL}" >> "$GITHUB_OUTPUT"
+          echo "Embeddable GIF URL: ${RAW_URL}"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-${{ github.event.pull_request.number }}-reports
+          path: |
+            artifacts/reconciler_report.md
+            artifacts/postmortem.md
+            artifacts/usage.jsonl
+            artifacts/regen_targets.json
+            artifacts/agent_changes.diff
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Capture agent-driven changes as a diff
+        id: capture-diff
+        if: always() && steps.scope.outputs.module_count != '0'
+        run: |
+          set -e
+          PATHS="specs knowledge ir tooling/agents"
+          git add -N $PATHS 2>/dev/null || true
+          git diff -- $PATHS > artifacts/agent_changes.diff || true
+          if [ -s artifacts/agent_changes.diff ]; then
+            echo "has_diff=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_diff=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Suggest changes inline (Reconciler / PostMortem)
+        if: always() && steps.capture-diff.outputs.has_diff == 'true'
+        uses: reviewdog/action-suggester@v1
+        with:
+          tool_name: worldsmith-agents
+          cleanup: false
+          fail_on_error: false
+
+      - name: Post PR status comment
+        if: always()
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          MODULE_COUNT: ${{ steps.scope.outputs.module_count }}
+          TARGETS: ${{ steps.scope.outputs.targets }}
+          BASELINE_TAG: ${{ steps.baseline.outputs.last_tag }}
+          GIF_URL: ${{ steps.gif-push.outputs.raw_url }}
+          STATUS: ${{ job.status }}
+        run: |
+          set -e
+          ARTIFACTS_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}#artifacts"
+          if [ "$MODULE_COUNT" = "0" ]; then
+            SCOPE_LINE="No module-specific targets identified by partial_regen.py (likely a manual-scope spec or pure agent-prompt edit). Skipped Coder/Reconciler/PostMortem; ran cargo build/test on baseline \`${BASELINE_TAG}\` as smoke check."
+          else
+            SCOPE_LINE="Regenerated modules from baseline \`${BASELINE_TAG}\`: \`${TARGETS}\`"
+          fi
+          {
+            echo "## PR Checks — \`${STATUS}\`"
+            echo
+            echo "${SCOPE_LINE}"
+            echo
+            if [ -n "$GIF_URL" ]; then
+              echo "### Gameplay demo"
+              echo
+              echo "![demo](${GIF_URL})"
+              echo
+            fi
+            echo "**Reports:** [run #${RUN_ID} artifacts](${ARTIFACTS_URL}) — \`reconciler_report.md\`, \`postmortem.md\`, \`usage.jsonl\`, \`agent_changes.diff\` (login required)."
+            echo
+            if [ "$MODULE_COUNT" != "0" ]; then
+              echo "Inline suggestions from Reconciler / PostMortem are posted as a separate review on this PR (only on lines this PR touches). Suggestions on files this PR didn't already change appear in the \`agent_changes.diff\` artifact."
+              echo
+            fi
+            echo "_Auto-posted by \`.github/workflows/pr.yml\`._"
+          } > /tmp/pr_comment.md
+          gh pr comment "$PR" --body-file /tmp/pr_comment.md

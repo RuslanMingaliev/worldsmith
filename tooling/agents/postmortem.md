@@ -61,15 +61,33 @@ Append a **`## PostMortem Section`** at the end of the run journal, *after* the 
 Categorise every recommendation:
 
 #### Agent-prompt changes
+
+For each agent-prompt change, **apply the edit directly** to
+`tooling/agents/<name>.md` using the Edit tool, then list the change here:
+
 - File: `tooling/agents/<name>.md`
 - Section: <existing or new>
-- Concrete diff (1-3 lines): <add / change>
-- Why: <which journal observation motivates this>
+- Edit summary: <one line: what changed and why>
+- Journal evidence: <which entry motivated this>
+
+The PR workflow captures these edits as a unified diff and posts them as
+inline suggested changes on the PR. The maintainer accepts/rejects each
+suggestion in the PR review UI — that is the human approval gate. **Do not**
+propose changes as free-text "concrete diff (1-3 lines)" any more — apply
+them and let the suggestion UX gate them.
+
+Keep edits surgical (1-5 lines per change). Multi-paragraph rewrites belong
+in an ADR draft, not an inline edit.
 
 #### Tooling / script changes
+
+Same rule: if you have a concrete, surgical fix, apply it directly to
+`tooling/<script>.py` (or whichever file) and list it here. Larger or
+risk-bearing tooling redesigns belong in an ADR draft instead.
+
 - File: `tooling/<script>.py` or `tooling/<new>.sh`
-- Concrete change
-- Why
+- Edit summary: <what changed>
+- Why: <journal evidence>
 
 #### ADR drafts
 - Draft a complete `## Decision N: Title` block ready to paste into `work/decisions.md`. Include Context (citing journal), Decision, Consequences, Related files. Mark **Status: Proposed** — the human accepts or rejects.
@@ -92,8 +110,12 @@ Look for *process* signals, not *code* signals (Reconciler owns code):
 ## Constraints
 
 - Do not modify specs, IR, knowledge, or generated code.
-- Do not modify ADR file directly — propose drafts in your output and let the human paste them in.
-- Do not propose code-level fixes (that's Reconciler / Coder).
+- Do not modify the ADR file (`work/decisions.md`) directly — propose drafts in your output and let the human paste them in.
+- You **may** edit `tooling/agents/*.md` and `tooling/*.py|sh` directly when the
+  change is surgical (1-5 lines, single section). The PR workflow turns those
+  edits into inline suggested changes; the PR review is the human approval
+  gate. For larger restructurings, draft an ADR instead.
+- Do not propose code-level fixes to generated Rust (that's Reconciler / Coder).
 - Do not repeat recommendations from accepted ADRs in `work/decisions.md`. Cite the ADR number instead and note status. **Distinguish "enabled-by" from "duplicate":** a recommendation that *activates* an existing ADR (e.g. creates a file the ADR names as desired but did not require to exist) is enabled-by, not duplicate — flag it inline with "enabled by Decision N, not duplicating". A recommendation that re-states an accepted decision in different words is duplicate — drop it.
 - Be concrete. "Tighten Coder prompts" is unacceptable; "add to `coder.md` Quality Checklist: 'No `///` doc comments unless explaining a non-obvious *why*' (specs/80 already says this; Coders ignored it)" is acceptable.
 - Cite journal evidence by section name (`### Coder — weapon_system (wave 4a)`) for every "What hurt" item and every recommendation.

@@ -107,6 +107,37 @@ Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ → C
 - Space — fire
 - ESC — quit
 
+## PR workflow
+
+`.github/workflows/pr.yml` runs on every pull request. Two jobs:
+
+- **`validate`** — always runs. Validates specs/IR/knowledge integrity, checks `generated/` for manual edits, and computes whether the PR touches `specs/**`, `knowledge/**`, `ir/**`, or `tooling/agents/**` (the source-of-truth paths).
+- **`regenerate-and-build`** — runs only when (a) source-of-truth paths changed AND (b) the PR head is from this repo (fork PRs are skipped because the OAUTH secret is unavailable to forked workflows). Steps:
+  1. Download last release's `worldsmith-game-X-src.zip` as a baseline and unpack into `generated/game/`.
+  2. `tooling/partial_regen.py --json` — determine which modules need regeneration.
+  3. Coder / Reconciler / PostMortem phases via `tooling/orchestrator_run.py --target-modules ...`. The harness snapshots `generated/game/src/` and reverts any file touched outside the listed modules — so Coder can't silently scope-creep.
+  4. `cargo build/test --release` (under `xvfb-run` because autopilot tests need a display).
+  5. Record `release/demo.gif` via `tooling/record_autopilot.sh`.
+  6. Reconciler's edits to `specs/`, `knowledge/`, `ir/`, `tooling/agents/` and PostMortem's surgical edits to `tooling/agents/*.md` are captured as a unified diff and posted as **inline review suggestions** via `reviewdog/action-suggester` (only on lines this PR already touches; the rest of the diff is in the `agent_changes.diff` artifact).
+  7. PostMortem's narrative analysis (run summary, "what hurt", ADR drafts) is saved to `artifacts/postmortem.md` and linked from the PR comment.
+  8. The demo GIF is uploaded to a single shared `pr-assets` branch (auto-created on first run from `main`'s HEAD) as `pr-<N>-run-<run_id>-demo.gif`, then embedded inline in the PR status comment via its `raw.githubusercontent.com` URL. PR number + run id make filenames unique, so concurrent PR runs don't race. The branch is **never automatically pruned** — see Known Issues for cleanup.
+
+### Branch protection (one-time setup)
+
+Settings → Branches → main → "Require status checks to pass before merging":
+
+- Required: `validate`
+- Required: `regenerate-and-build`
+
+`regenerate-and-build` is conditionally `if:`-skipped on fork PRs and on PRs that don't touch source-of-truth paths. GitHub treats a skipped job as a passing required check, so skipping doesn't block merge. A skipped check on a fork PR means the maintainer must rerun the workflow from this repo's branch (or close-and-reopen as a maintainer) to actually validate regeneration before merging.
+
+### Cost control
+
+- `concurrency: cancel-in-progress: true` per PR — re-pushes cancel the prior run, but tokens already spent are not refunded.
+- `WORLDSMITH_MAX_TOKENS_PER_RUN` repo variable caps per-run spend (enforced in `orchestrator_run.py`).
+- A PR that touches `specs/00_project_goal.md` (or another global-trigger file in `partial_regen.py`) regenerates ALL modules — effectively a full release run. This is intentional: such PRs are rare, and the alternative (forcing them through `release.yml`) blocks otherwise valid edits.
+
 ## Known Issues
 
 - Top-down view, not raycasting
+- The shared `pr-assets` branch grows by one file per PR run and is never pruned automatically. Periodic cleanup is needed — either a cron workflow that drops files older than N days, or a `pull_request: types: [closed]` workflow that deletes `pr-<N>-*.gif` for the closed PR. Not implemented yet.

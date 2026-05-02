@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -181,6 +182,7 @@ def determine_modules(
                 affected.add(module)
 
     # Print INFO for cross-cutting files that need a manual scope decision.
+    # Goes to stderr so --json callers get clean JSON on stdout.
     for path in manual_scope_files:
         candidates = [
             x for x in TRIGGER_CONFIG["manual_scope"][path] if not x.startswith("#")
@@ -188,11 +190,11 @@ def determine_modules(
         notes = [
             x for x in TRIGGER_CONFIG["manual_scope"][path] if x.startswith("#")
         ]
-        print(f"\nINFO: {path} is cross-cutting (manual scope required).")
-        print(f"  Candidate modules: {', '.join(candidates) or '(none listed)'}")
+        print(f"\nINFO: {path} is cross-cutting (manual scope required).", file=sys.stderr)
+        print(f"  Candidate modules: {', '.join(candidates) or '(none listed)'}", file=sys.stderr)
         for note in notes:
-            print(f"  {note}")
-        print("  Use --target to choose; the per-module heuristic does not auto-add any module.")
+            print(f"  {note}", file=sys.stderr)
+        print("  Use --target to choose; the per-module heuristic does not auto-add any module.", file=sys.stderr)
 
     # Expand using IR dependencies
     dependency_map = {
@@ -238,6 +240,12 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="Print example generate_module.py invocation when modules are detected.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit affected modules as a JSON array on stdout (machine-readable, "
+             "for CI consumption). Suppresses the human-readable text output.",
+    )
     return parser.parse_args()
 
 
@@ -249,6 +257,15 @@ def main() -> None:
         changed_files = [path.strip() for path in args.changed if path.strip()]
     else:
         changed_files = git_changed_files(args.base)
+
+    if args.json:
+        modules = (
+            sorted(determine_modules(changed_files, module_plan))
+            if changed_files
+            else []
+        )
+        print(json.dumps(modules))
+        return
 
     if not changed_files:
         print("No changed files detected.")

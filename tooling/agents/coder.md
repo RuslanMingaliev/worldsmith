@@ -98,6 +98,30 @@ When fixing issues:
 4. Apply fix, don't refactor unrelated code
 5. Verify fix resolves the issue
 
+## Partial regeneration mode
+
+The PR workflow runs Coder against a baseline = unzipped code of the previous
+release, then narrows the regeneration to only the modules whose specs changed
+in the PR. The orchestrator passes a `Scope override` listing the targets, e.g.:
+
+> Regenerate ONLY modules: weapon_system, player_state
+
+When you see such a scope override:
+
+- Read specs / knowledge / IR for full context, but **only write to**
+  `generated/game/src/<module>.rs` for modules in the listed set.
+- Do **not** touch other module files, `main.rs`, or `Cargo.toml`. The harness
+  snapshots `generated/game/src/` before you run and machine-reverts any
+  out-of-scope edits afterward — spending tokens on those files is pure waste,
+  and the revert will silently undo your work.
+- If a listed module's spec implies a contract change for a non-listed module
+  (signature change, new shared type, etc.), STOP and write a blocker note to
+  `artifacts/blocker.md` describing the contract delta. Do not silently
+  propagate the change. The PR author will either expand `--target-modules` or
+  trigger a full release regen.
+- Unit tests inside the target module file are in scope; integration tests
+  outside `generated/game/src/` are not your responsibility.
+
 ## Quality Checklist
 
 Before submitting:
