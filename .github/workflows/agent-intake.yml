@@ -112,12 +112,14 @@ jobs:
 
       - name: Extractor phase
         id: extractor
+        env:
+          SCOPE: ${{ steps.scope.outputs.scope }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
           python tooling/orchestrator_run.py \
             --phase extractor --mode release \
-            --scope "${{ steps.scope.outputs.scope }}" \
+            --scope "$SCOPE" \
             --usage-jsonl artifacts/usage.jsonl \
             --transcript artifacts/extractor.transcript.json
           if grep -q 'EXTRACTOR_BLOCKED:' artifacts/extractor.transcript.json 2>/dev/null; then
@@ -142,11 +144,13 @@ jobs:
         run: python tooling/validate_specs.py --verbose
 
       - name: Architect phase
+        env:
+          SCOPE: ${{ steps.scope.outputs.scope }}
         run: |
           set -euo pipefail
           python tooling/orchestrator_run.py \
             --phase architect --mode release \
-            --scope "${{ steps.scope.outputs.scope }}" \
+            --scope "$SCOPE" \
             --usage-jsonl artifacts/usage.jsonl
 
       - name: Validate specs (post-architect)
