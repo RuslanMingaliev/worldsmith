@@ -81,7 +81,23 @@ Source: [`knowledge/visual_feedback.md`](../knowledge/visual_feedback.md).
 - The mapping is roughly even across the cap (e.g. for 8 levels and cap 100, each level covers ~12.5 units of damage).
 - The accumulator is *cumulative*: many small hits chain into a sustained red without per-hit logic.
 - "Faster decay when facing attacker" rule from the source is **deferred** for the prototype (the prototype has only one enemy and no concept of "facing the attacker").
-- Pickup tint (gold flash on item pickup) is **deferred** (pickups are implemented; the visual tint on consumption is not yet added).
+
+### Pickup Tint Screen Flash
+
+**Trigger:** Player consumes a health or ammo pickup (pickup's `active` flag flips to `false`).
+
+**Effect:** A semi-transparent golden-yellow overlay covers the play area. Overlay alpha scales with the accumulated `pickup_tint_count` in `VisualEffects`.
+
+**Rules:**
+- On pickup consumption, `pickup_tint_count += PICKUP_TINT_PER_PICKUP`, clamped to `PICKUP_TINT_CAP`.
+- Each tick, `pickup_tint_count` decays by `PICKUP_TINT_DECAY_PER_SEC * delta_time`. Clamped at zero.
+- `pickup_tint_count` is mapped to one of `PICKUP_TINT_LEVEL_COUNT` discrete alpha levels. Level zero means the overlay is not drawn.
+- The counter is *cumulative* within the cap: a second pickup while the tint is still active resets the counter to cap, not beyond.
+- This tint is independent of the damage tint; both may render simultaneously in their respective colors.
+- The `pickup_tint_count` field lives in `VisualEffects` (parallel to how `damage_count` lives in `Player`). It is decayed inside `visual_effects::tick()`.
+- See `specs/25_game_tuning.md § Visual Feedback § Pickup Tint` for all constants and the mapping formula.
+
+Source: `knowledge/visual_feedback.md § Player Damage Screen Tint` (lines 90, 96–97, 171).
 
 ### Enemy Death Visual
 
@@ -107,7 +123,7 @@ Source: [`knowledge/visual_feedback.md`](../knowledge/visual_feedback.md).
 
 **Rules:**
 - Each effect runs on its own lifetime timer.
-- Render order (back to front): corpses, blood splats, wall puffs, tracers, muzzle flashes, enemies, player, damage tint overlay.
+- Render order (back to front): corpses, blood splats, wall puffs, tracers, muzzle flashes, enemies, player, damage tint overlay, pickup tint overlay.
 - Effect lifetimes are independent: a tracer expiring does not affect a still-active blood splat from the same shot.
 - All effects auto-despawn when their lifetime reaches zero. There is no manual cleanup.
 
@@ -128,6 +144,11 @@ Each effect carries:
 - **Type:** Float, scalar.
 - **Initial:** 0.0.
 - **Transitions:** Increased on player damage (clamped to cap), decayed each tick. Owned by player state (or the visual-feedback module if cleaner) — implementation choice deferred to Coder.
+
+### Pickup Tint Accumulator
+- **Type:** Float, scalar (`VisualEffects.pickup_tint_count`).
+- **Initial:** 0.0.
+- **Transitions:** Incremented by `PICKUP_TINT_PER_PICKUP` on pickup consumption (clamped to `PICKUP_TINT_CAP`). Decayed each tick by `PICKUP_TINT_DECAY_PER_SEC * dt` inside `visual_effects::tick()`. Bounded: `0 <= pickup_tint_count <= PICKUP_TINT_CAP`.
 
 ### Enemy Pain Flash Timer
 - **Type:** Float, per enemy (only one enemy exists today).
@@ -150,8 +171,12 @@ Each effect carries:
 - On `take_damage`, the player damage accumulator is increased.
 - The damage accumulator decays as part of normal frame updates.
 
+### With Pickup System
+- On pickup consumption (`game_loop` § Pickup Collision), `visual_effects::increment_pickup_tint(&mut fx)` is called; this increments `fx.pickup_tint_count`.
+- The pickup system does not need to know how the tint renders — only that it requests the increment.
+
 ### With Renderer
-- The renderer reads the active effects list, the pain-flash state on each enemy, and the player damage accumulator each frame.
+- The renderer reads the active effects list, the pain-flash state on each enemy, the player damage accumulator, and `fx.pickup_tint_count` each frame.
 - The renderer does not modify any effect state — it only draws.
 - Existing stdout messages from the weapon system and enemy logic ("Hit for X! ...", "Enemy hit player for X! ...") remain in place; visual feedback supplements, not replaces them. Their removal is a separate Coder decision later.
 
@@ -166,6 +191,7 @@ Each effect carries:
 - Effect lifetimes are non-negative; effects with lifetime <= 0 (other than corpses) must be pruned within one frame.
 - Effects do not affect gameplay state (no damage, no collision, no state machine transitions).
 - The player damage accumulator is bounded: `0 <= damage_count <= DAMAGE_TINT_CAP`.
+- The pickup tint accumulator is bounded: `0 <= pickup_tint_count <= PICKUP_TINT_CAP`.
 - Spawning an effect must succeed even if dozens of effects are already active. Effect-list capping is **deferred** (acceptable for the prototype's single-enemy combat).
 
 ### Determinism
@@ -178,7 +204,6 @@ The following are documented in `knowledge/visual_feedback.md` but are out of sc
 - **World-brightness pulse from muzzle flash** — requires first-person rendering.
 - **Damage-tiered blood sprites** — single splat size for now; will be revisited when the weapon roster expands.
 - **Gib (extreme death) animation** — single death visual path; will be revisited when overkill thresholds matter.
-- **Pickup tint** (yellow flash on item pickup) — pickups (health/ammo) are implemented but the tint on consumption is not; see `knowledge/pickups.md` § Player-Side State.
 - **Force feedback / rumble** on damage — not applicable to keyboard input.
 - **"Faster decay when facing attacker"** for damage tint — single-enemy prototype.
 - **Anti-lockstep random jitter** on effect first-frame durations — only meaningful with many simultaneous effects.
@@ -211,6 +236,12 @@ The following are documented in `knowledge/visual_feedback.md` but are out of sc
 3. With `damage_count` at zero, no overlay is rendered.
 4. After taking damage and waiting `DAMAGE_TINT_CAP / DAMAGE_TINT_DECAY_PER_SEC` seconds with no further damage, `damage_count` decays back to zero.
 
+### Pickup Tint Screen Flash
+1. Consuming a pickup increments `fx.pickup_tint_count` by exactly `PICKUP_TINT_PER_PICKUP`.
+2. After `PICKUP_TINT_CAP / PICKUP_TINT_DECAY_PER_SEC` seconds with no further pickup, `pickup_tint_count` decays back to zero.
+3. Two successive pickups clamp `pickup_tint_count` at `PICKUP_TINT_CAP` — no overflow beyond cap.
+4. The renderer maps `pickup_tint_count` to one of `PICKUP_TINT_LEVEL_COUNT` discrete alpha levels; all four levels are reachable from values in `(0, PICKUP_TINT_CAP]`.
+
 ### Enemy Death Visual
 1. When an enemy reaches 0 HP, the death-fade visual begins.
 2. After `ENEMY_DEATH_FADE_DURATION` elapses, a corpse marker is drawn at the death position.
@@ -226,13 +257,13 @@ The following are documented in `knowledge/visual_feedback.md` but are out of sc
 - Enemy pain-flash tint replacing the body color for `ENEMY_PAIN_FLASH_DURATION`.
 - Enemy death fade (sprite shrinks and recolors toward corpse color over `ENEMY_DEATH_FADE_DURATION`) followed by a persistent corpse marker.
 - Player damage tint accumulator with discrete-level alpha overlay and per-tick decay.
+- Pickup tint accumulator (`VisualEffects.pickup_tint_count`): golden-yellow overlay, incremented by `PICKUP_TINT_PER_PICKUP` on health/ammo pickup consumption, decayed per tick, mapped to `PICKUP_TINT_LEVEL_COUNT` discrete alpha levels.
 - Independent per-effect lifetimes with auto-despawn.
 
 **Deferred** (also listed in the Deferred section above, restated here so future Reconciler runs can compare line-by-line):
 - World-brightness pulse from muzzle flash.
 - Damage-tiered blood sprites.
 - Gib (extreme death) animation.
-- Pickup tint (gold flash on item pickup).
 - Force feedback / rumble on damage.
 - "Faster decay when facing attacker" rule for damage tint.
 - Anti-lockstep random jitter on first-frame durations.

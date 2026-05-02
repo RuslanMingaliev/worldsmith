@@ -312,6 +312,7 @@ modules:
         definition: |
           pub struct VisualEffects {
               pub effects: Vec<Effect>,
+              pub pickup_tint_count: f32,  // accumulates on pickup consumption, decays per tick
           }
     public_constants:
       # Muzzle flash
@@ -336,6 +337,11 @@ modules:
       # Enemy death visual
       - { name: ENEMY_DEATH_FADE_DURATION, type: f32, value: "0.40", source: "specs/25 § Visual Feedback / Enemy Death Visual" }
       - { name: ENEMY_CORPSE_RADIUS,       type: f32, value: "8.0",  source: "specs/25 § Visual Feedback / Enemy Death Visual (px)" }
+      # Pickup tint (specs/25 § Visual Feedback / Pickup Tint)
+      - { name: PICKUP_TINT_PER_PICKUP,    type: f32, value: "6.0",  source: "specs/25 § Visual Feedback / Pickup Tint (knowledge-backed: knowledge/visual_feedback.md § Player Damage Screen Tint, line 96)" }
+      - { name: PICKUP_TINT_LEVEL_COUNT,   type: u32, value: "4",    source: "specs/25 § Visual Feedback / Pickup Tint (knowledge-backed: knowledge/visual_feedback.md § Player Damage Screen Tint, line 97)" }
+      - { name: PICKUP_TINT_CAP,           type: f32, value: "6.0",  source: "specs/25 § Visual Feedback / Pickup Tint (Generation default — one pickup fills the counter)" }
+      - { name: PICKUP_TINT_DECAY_PER_SEC, type: f32, value: "35.0", source: "specs/25 § Visual Feedback / Pickup Tint (Generation default — 1 unit per reference tick at 35 Hz, matching DAMAGE_TINT_DECAY_PER_SEC)" }
       # Effect-list housekeeping
       - { name: EFFECT_LIST_INITIAL_CAPACITY, type: usize, value: "16", source: "specs/25 § Effect List" }
       - { name: PERSISTENT_LIFETIME, type: f32, value: "f32::INFINITY", source: "specs/25 § Effect List" }
@@ -354,11 +360,20 @@ modules:
         notes: "lifetime = ENEMY_DEATH_FADE_DURATION. The corpse marker is spawned later by enemy.update once the fade timer expires (per spec/40 line 100)."
       - signature: "pub fn spawn_enemy_corpse(fx: &mut VisualEffects, pos: Vec2)"
         notes: "lifetime_remaining = PERSISTENT_LIFETIME; tick() never decreases non-finite values."
+      - signature: "pub fn increment_pickup_tint(fx: &mut VisualEffects)"
+        notes: |
+          Called by game_loop on successful pickup consumption (specs/40
+          § Pickup Tint Screen Flash, specs/60 § With Visual Effects).
+          Implementation: fx.pickup_tint_count =
+              (fx.pickup_tint_count + PICKUP_TINT_PER_PICKUP).min(PICKUP_TINT_CAP).
       - signature: "pub fn tick(fx: &mut VisualEffects, dt: f32)"
         notes: |
           For each effect: if lifetime_remaining.is_finite() then
           lifetime_remaining -= dt. Then retain effects with
           (!lifetime_remaining.is_finite() || lifetime_remaining > 0.0).
+          Also decays pickup_tint_count:
+            fx.pickup_tint_count =
+                (fx.pickup_tint_count - PICKUP_TINT_DECAY_PER_SEC * dt).max(0.0).
           Called once per frame from game_loop.
     cross_module_borrows:
       - "Reads Vec2 (level_data) by value; no &mut other-module-types."
@@ -620,6 +635,7 @@ modules:
       - { name: COLOR_PAIN_FLASH,          type: u32, value: "0xFFFFFF", source: "specs/25 § Visual Feedback" }
       - { name: COLOR_CORPSE,              type: u32, value: "0x602020", source: "specs/25 § Visual Feedback" }
       - { name: COLOR_DAMAGE_TINT,         type: u32, value: "0xFF0000", source: "specs/25 § Visual Feedback" }
+      - { name: COLOR_PICKUP_TINT,         type: u32, value: "0xFFCC00", source: "specs/25 § Visual Feedback / Pickup Tint (Generation default — golden-yellow; knowledge qualitative only)" }
       - { name: PLAYER_RADIUS_PX,          type: i32, value: "14",  source: "specs/25 § Visual" }
       - { name: ENEMY_RADIUS_PX,           type: i32, value: "12",  source: "specs/25 § Visual" }
       - { name: EXIT_MARKER_SIZE_PX,       type: i32, value: "20",  source: "specs/25 § Visual" }
@@ -677,16 +693,24 @@ modules:
                               / DAMAGE_TINT_LEVELS;
                  software-blend COLOR_DAMAGE_TINT into framebuffer at
                  alpha_pct.
+            8.5. Pickup tint overlay if fx.pickup_tint_count > 0.0
+                 (specs/40 § Pickup Tint Screen Flash):
+                 pickup_level = ceil(fx.pickup_tint_count
+                                     * PICKUP_TINT_LEVEL_COUNT / PICKUP_TINT_CAP);
+                 pickup_level = pickup_level.min(PICKUP_TINT_LEVEL_COUNT);
+                 if pickup_level > 0: software-blend COLOR_PICKUP_TINT at
+                 (PICKUP_TINT_MAX_ALPHA_PCT * pickup_level / PICKUP_TINT_LEVEL_COUNT).
             9. HUD pane (specs/50 § Health Pane and § Ammo Pane):
                health bar + digits in top-left corner, ammo pane
                (icon + digits) directly below.
             10. Game-over border if game_over.is_some()
                (green tint for win, red for lose; thickness
                GAME_OVER_BORDER_PX).
-          The renderer reads visual_effects, player.damage_count,
-          player.health, player.ammo, level.pickups, enemy.pain_flash_remaining,
-          enemy.death_fade_remaining (for fade interpolation), and enemy.alive
-          (corpse vs. live). It does NOT mutate any other module's state.
+          The renderer reads visual_effects (including fx.pickup_tint_count),
+          player.damage_count, player.health, player.ammo, level.pickups,
+          enemy.pain_flash_remaining, enemy.death_fade_remaining (for fade
+          interpolation), and enemy.alive (corpse vs. live). It does NOT
+          mutate any other module's state.
       - signature: "pub fn make_framebuffer() -> Vec<u32>"
         notes: |
           Allocates Vec::from_iter([0u32; WINDOW_WIDTH * WINDOW_HEIGHT]).
@@ -1100,7 +1124,7 @@ main_cli:
 frame_update_order:
   - "if input.quit { state.running = false; return; }"
   - "player_state::apply_input(&mut state.player, input, &state.level, dt)"
-  - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds (Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX), set pickup.active=false and call player_state::take_health_pickup or take_ammo_pickup based on pickup.kind."
+  - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds (Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX), set pickup.active=false, call player_state::take_health_pickup or take_ammo_pickup based on pickup.kind, and call visual_effects::increment_pickup_tint(&mut state.fx) (specs/40 § Pickup Tint Screen Flash)."
   - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)"
   - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire. Ammo gate is also inside fire(): if player.ammo == 0, fire() returns without side effects after the cooldown gate."
   - "player_state::decay_damage_tint(&mut state.player, dt)"

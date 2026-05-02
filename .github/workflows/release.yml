@@ -290,7 +290,7 @@ jobs:
       - name: Record demo (linux only)
         run: |
           mkdir -p release
-          xvfb-run -a tooling/record_autopilot.sh tests/combat/kill_enemy.yaml release/demo.gif
+          xvfb-run -a tooling/record_autopilot.sh tests/level/scavenge_run.yaml release/demo.gif
 
       - name: Package src zip + demo GIF
         env:

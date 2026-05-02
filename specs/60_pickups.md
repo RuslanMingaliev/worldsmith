@@ -136,7 +136,8 @@ Source: [`knowledge/pickups.md`](../knowledge/pickups.md). Spec values that are 
 - `draw_hud` (from spec/50) gets a second pane drawing call after the health pane.
 
 ### With Visual Effects
-- **None.** No pickup-tint flash spawned. *(Knowledge § Player-Side State mentions a pickup-flash counter — already deferred in spec/40 § Deferred and remains deferred this round.)*
+- On pickup consumption, `game_loop` calls `visual_effects::increment_pickup_tint(&mut state.fx)`, which adds `PICKUP_TINT_PER_PICKUP` to `VisualEffects.pickup_tint_count` (clamped to `PICKUP_TINT_CAP`).
+- The golden-yellow screen-tint flash is fully specified in `specs/40_visual_feedback.md § Pickup Tint Screen Flash`. This spec does not duplicate those rules; it only documents the trigger point (pickup consumption) and the API call.
 
 ## Constraints
 
@@ -161,7 +162,6 @@ The following are intentionally out of scope for the prototype:
 - **Over-cap health pickups** — the +1 / +100 / set-200 tier (knowledge § Health Pickup Tiers). Single-cap prototype, normal_max only.
 - **Auto-weapon-switch on zero→nonzero ammo** — knowledge § Ammo Pickup Tiers. Only one weapon exists.
 - **Pickup respawn** — single-use within a run.
-- **Pickup tint flash** (gold) on consumption — already deferred in spec/40 § Deferred.
 - **Pickup pickup sound / dry-fire "click"** — no audio system in the prototype.
 - **Backpack / capacity expansion** — fixed `PLAYER_AMMO_MAX`.
 - **Enemy ammo drops** — knowledge § Drop on Kill documents this; deferred until enemy_logic gets a death-time spawn hook.
@@ -212,6 +212,7 @@ The following are intentionally out of scope for the prototype:
 - `game_loop::update` Step 2.5 per-frame pickup check (refused-at-cap rule applied).
 - Renderer pickup layer (between exit/corpses and blood/puffs).
 - HUD ammo pane (icon + digits, below the health pane).
+- Pickup tint flash: `visual_effects::increment_pickup_tint` called on consumption; golden-yellow overlay spec in `specs/40 § Pickup Tint Screen Flash`.
 
 **Deferred** (also listed above):
 - Multiple weapon ammo pools.
@@ -219,7 +220,6 @@ The following are intentionally out of scope for the prototype:
 - Over-cap health pickups.
 - Auto-weapon-switch on zero→nonzero ammo.
 - Pickup respawn.
-- Pickup tint flash.
 - Pickup audio.
 - Backpack / capacity expansion.
 - Enemy ammo drops.
