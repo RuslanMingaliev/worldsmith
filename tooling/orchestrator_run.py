@@ -138,7 +138,33 @@ def parse_usage_from_json(stdout: str, phase: str, mode: str) -> PhaseUsage:
 
     usage.duration_ms = int(payload.get("duration_ms", 0) or 0)
     usage.turns = int(payload.get("num_turns", 0) or 0)
-    if "model" in payload:
+    # Newer Claude CLI emits `modelUsage` (a dict keyed by model id) instead
+    # of a top-level `model` field. A single phase routinely uses multiple
+    # models (e.g. Opus for primary inference + Haiku for sub-task decisions),
+    # so pick the primary by output token volume — that's the model the
+    # operator cares about for cost / capability attribution. Older CLIs
+    # with a top-level `model` field still work via the fallback.
+    model_usage = payload.get("modelUsage") or {}
+    if model_usage:
+        # Rank by total token volume (input + output + cache_read + cache_creation)
+        # rather than output_tokens alone — Haiku helpers often emit more
+        # output_tokens on trivial sub-tasks than the primary Opus pass that
+        # actually carries the work. Total volume tracks model effort honestly.
+        def _model_volume(stats: dict) -> int:
+            stats = stats or {}
+            return sum(
+                int(stats.get(k, 0) or 0)
+                for k in (
+                    "inputTokens",
+                    "outputTokens",
+                    "cacheReadInputTokens",
+                    "cacheCreationInputTokens",
+                )
+            )
+
+        primary = max(model_usage.items(), key=lambda kv: _model_volume(kv[1]))
+        usage.model = primary[0]
+    elif "model" in payload:
         usage.model = str(payload["model"])
 
     agg = payload.get("usage") or {}
