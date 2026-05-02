@@ -98,6 +98,18 @@ def build_prompt(phase: str, mode: str, scope: Optional[str]) -> str:
     return "\n\n".join([framing, scope_block, "---", role_prompt])
 
 
+# Pin per-phase. CLI default is Sonnet 4.6 (200K) which blew up on issue #6.
+# Coder stays on Sonnet — per-module context fits 200K and Orchestrator has
+# its own Opus fallback after repeated cargo-check failures.
+PHASE_DEFAULT_MODEL = {
+    "extractor": "claude-opus-4-7[1m]",
+    "architect": "claude-opus-4-7[1m]",
+    "coder": "sonnet",
+    "reconciler": "claude-opus-4-7[1m]",
+    "postmortem": "claude-opus-4-7[1m]",
+}
+
+
 def claude_command(phase: str, model: Optional[str], max_turns: int) -> List[str]:
     """Build the `claude` CLI invocation. The prompt is fed via stdin
     (the CLI does not expose a `--prompt-file` flag) and a single JSON
@@ -112,8 +124,9 @@ def claude_command(phase: str, model: Optional[str], max_turns: int) -> List[str
         "--allowedTools",
         ",".join(PHASE_TOOLS.get(phase, ["Read", "Write", "Edit", "Bash"])),
     ]
-    if model:
-        cmd.extend(["--model", model])
+    effective_model = model or PHASE_DEFAULT_MODEL.get(phase)
+    if effective_model:
+        cmd.extend(["--model", effective_model])
     return cmd
 
 
