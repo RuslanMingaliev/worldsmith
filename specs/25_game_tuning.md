@@ -181,6 +181,21 @@ Source: `knowledge/visual_feedback.md`. Reference durations were given in 35-tic
 
 Mapping: `level = ceil(damage_count * DAMAGE_TINT_LEVELS / DAMAGE_TINT_CAP)`, clamped to `[0, DAMAGE_TINT_LEVELS]`.
 
+#### Pickup Tint
+
+Behavior spec: [`40_visual_feedback.md § Pickup Tint Screen Flash`](40_visual_feedback.md).
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| PICKUP_TINT_PER_PICKUP | 6 | — | knowledge/visual_feedback.md § Player Damage Screen Tint (pickup-tint accumulation: +6 per pickup) |
+| PICKUP_TINT_LEVEL_COUNT | 4 | — | knowledge/visual_feedback.md § Player Damage Screen Tint (pickup-tint level count: 4) |
+| COLOR_PICKUP_TINT | — | #FFCC00 golden-yellow | Generation default — no knowledge backing. Knowledge describes "golden-yellow" qualitatively; hex value is a generation default chosen to be visually distinct from the ammo-pickup color (`#FFFF00`) and the muzzle-flash color (`#FFFF80`). |
+| PICKUP_TINT_CAP | 6.0 | — | Generation default — one pickup fills the counter to its cap (matches PICKUP_TINT_PER_PICKUP). Knowledge does not specify the cap beyond the per-pickup accumulation. |
+| PICKUP_TINT_DECAY_PER_SEC | 35 units/sec | — | Generation default — same 1-unit-per-reference-tick decay rate used by the damage tint (knowledge/visual_feedback.md § Player Damage Screen Tint: "decay by 1 per tick at 35 ticks/sec"). |
+| PICKUP_TINT_MAX_ALPHA | ~30% | — | Generation default — gentler than the damage tint max (50%) to signal a positive event rather than harm. |
+
+Mapping: `level = ceil(pickup_tint_count * PICKUP_TINT_LEVEL_COUNT / PICKUP_TINT_CAP)`, clamped to `[0, PICKUP_TINT_LEVEL_COUNT]`. Level zero means no overlay.
+
 #### Enemy Death Visual
 
 | Constant | Value | Color | Source |
