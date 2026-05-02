@@ -152,8 +152,14 @@ Local helper: the project-level skill `/create-agent-task` (`.claude/skills/crea
 ### One-time configuration
 
 - Repo variable `WORLDSMITH_REFERENCE_REPO` — clone URL (public HTTPS) of the reference corpus.
+- Repo secret `CLAUDE_CODE_OAUTH_TOKEN` — generated locally via `claude setup-token`. Bills the operator's claude.ai Pro/Max subscription.
+- Repo secret `WORLDSMITH_AGENT_PAT` — fine-grained Personal Access Token scoped to this repo only, with permissions: Contents R/W, Pull requests R/W, Issues R/W, Metadata R. Used by `agent-intake.yml` to push the `agent/issue-N` branch and open the draft PR. Rationale: pushes/PRs created with the default `GITHUB_TOKEN` do NOT trigger downstream workflows (GitHub recursion guard), so `pr.yml` would never fire on bot-created PRs. The PAT makes the resulting `pull_request: opened` event "real". Same secret powers `agent-auto-approve.yml`. Recommended expiry 90 days; rotate via Settings → Developer settings → Personal access tokens.
 - Labels: `agent:task`, `agent:run`, `agent:in-pr`, `agent:failed`.
 - Recommended: Settings → Issues → restrict label management to collaborators (defense-in-depth on top of the workflow's permission gate).
+
+### Trusted-user auto-approve
+
+`.github/workflows/agent-auto-approve.yml` watches `issues: [opened, labeled]` and auto-applies `agent:run` if the issue author is `RuslanMingaliev`, the issue carries `agent:task`, and none of `agent:run` / `agent:in-pr` / `agent:failed` are already present. Other collaborators continue to need a manual click on `agent:run`. The auto-approve uses `WORLDSMITH_AGENT_PAT` so the resulting `labeled` event triggers `agent-intake.yml`. The guard explicitly excludes `agent:in-pr`/`agent:failed` so the agent-intake's own label-swaps don't re-fire the auto-approve in a loop.
 
 ### Cost control
 
