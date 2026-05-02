@@ -244,7 +244,11 @@ def run_real(
         transcript.write_text(proc.stdout, encoding="utf-8")
 
     if proc.returncode != 0:
+        # Without this dump the JSON error body is invisible whenever
+        # --transcript wasn't passed, leaving the operator blind.
         sys.stderr.write(proc.stderr)
+        sys.stderr.write("\n--- claude stdout (error body) ---\n")
+        sys.stderr.write(proc.stdout)
         raise SystemExit(
             f"claude CLI exited {proc.returncode} for phase '{phase}'."
         )

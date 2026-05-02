@@ -150,7 +150,8 @@ jobs:
           python tooling/orchestrator_run.py \
             --phase architect --mode release \
             --scope "$SCOPE" \
-            --usage-jsonl artifacts/usage.jsonl
+            --usage-jsonl artifacts/usage.jsonl \
+            --transcript artifacts/architect.transcript.json
 
       - name: Validate specs (post-architect)
         run: python tooling/validate_specs.py --verbose
@@ -263,6 +264,7 @@ jobs:
             artifacts/agent_changes.diff
             artifacts/issue_scope.md
             artifacts/extractor.transcript.json
+            artifacts/architect.transcript.json
             work/
           if-no-files-found: warn
           retention-days: 14
