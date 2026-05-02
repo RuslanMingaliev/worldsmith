@@ -200,7 +200,7 @@ jobs:
         run: |
           set -e
           mkdir -p release
-          xvfb-run -a tooling/record_autopilot.sh tests/combat/kill_enemy.yaml release/demo.gif
+          xvfb-run -a tooling/record_autopilot.sh tests/level/scavenge_run.yaml release/demo.gif
           ls -la release/
 
       - name: Push demo GIF to shared pr-assets branch (for inline embed)
@@ -241,6 +241,7 @@ jobs:
         with:
           name: pr-${{ github.event.pull_request.number }}-reports
           path: |
+            artifacts/coder_report.md
             artifacts/reconciler_report.md
             artifacts/postmortem.md
             artifacts/usage.jsonl
@@ -301,8 +302,16 @@ jobs:
               echo "![demo](${GIF_URL})"
               echo
             fi
-            echo "**Reports:** [run #${RUN_ID} artifacts](${ARTIFACTS_URL}) — \`reconciler_report.md\`, \`postmortem.md\`, \`usage.jsonl\`, \`agent_changes.diff\` (login required)."
+            echo "**Reports:** [run #${RUN_ID} artifacts](${ARTIFACTS_URL}) — \`coder_report.md\`, \`reconciler_report.md\`, \`postmortem.md\`, \`usage.jsonl\`, \`agent_changes.diff\` (login required)."
             echo
+            if [ -f artifacts/postmortem.md ]; then
+              echo "<details><summary>PostMortem summary (auto-extracted — first 80 lines)</summary>"
+              echo
+              head -80 artifacts/postmortem.md
+              echo
+              echo "</details>"
+              echo
+            fi
             if [ "$MODULE_COUNT" != "0" ]; then
               echo "Inline suggestions from Reconciler / PostMortem are posted as a separate review on this PR (only on lines this PR touches). Suggestions on files this PR didn't already change appear in the \`agent_changes.diff\` artifact."
               echo

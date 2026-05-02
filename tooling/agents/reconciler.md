@@ -99,7 +99,7 @@ Produce a summary:
 - [list of modules that match specs]
 ```
 
-The report must also be appended to `work/pipeline_run_<tag>.md` (the run journal owned by the Orchestrator) so the next session can read it.
+The report must also be appended to `work/pipeline_run_<tag>.md` (the run journal owned by the Orchestrator) so the next session can read it. **In CI mode (when an `artifacts/` directory is present at the repo root), write to `artifacts/reconciler_report.md` instead of `work/pipeline_run_*.md`** — the CI artifact collector scrapes `artifacts/<phase>_*.md` and cannot read the gitignored `work/` tree.
 
 ## Output
 

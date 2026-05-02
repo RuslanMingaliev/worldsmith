@@ -135,6 +135,30 @@ Before submitting:
 - [ ] Tests cover key behaviors
 - [ ] Every spec constant referenced in your target module is actually wired into runtime code (not just `pub const` on the side)
 
+## CI mode output
+
+In CI mode (when an `artifacts/` directory is present at the repo root before you start), write `artifacts/coder_report.md` after generation. The report exists so Reconciler can complement your work instead of re-discovering everything from scratch, and so PostMortem has a Coder activity trail to reason about.
+
+Structure (omit a section by writing "None." rather than skipping it):
+
+```
+## Coder Report
+
+### Modules generated
+- [module]: [one-line summary of what was written]
+
+### Invented constants
+- [CONST_NAME] = [value] → flagged for Reconciler to either move into spec/25 or escalate.
+
+### Skipped spec features
+- [spec section]: [reason — e.g. "deferred per spec", "interface not present", "blocked by §X"]
+
+### Cross-module surface changes
+- [module.symbol]: [shape change, who calls it]
+```
+
+This is the only artifact Coder writes. Do not append to `work/pipeline_run_*.md` — that file is owned by Orchestrator/Reconciler and the CI artifact collector cannot scrape it.
+
 ## Escalation
 
 Escalate to Orchestrator when:
