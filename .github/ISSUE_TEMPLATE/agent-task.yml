@@ -1,0 +1,54 @@
+name: Agent task
+description: Request a knowledge / spec / IR refresh through the Extractor + Architect pipeline.
+title: "[agent] "
+labels: ["agent:task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Filing this issue **does not** trigger the agent workflow. A maintainer must
+        review the task and apply the `agent:run` label to start a billed run.
+
+        See `CLAUDE.md` § Issue-driven agent flow for the full pipeline.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One paragraph — what should be true after this run?
+      placeholder: e.g. "Capture enemy turning behaviour from reference and reflect it in specs/30_combat.md."
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Which knowledge files, spec sections, or IR keys are in scope?
+      placeholder: |
+        - knowledge/enemies.md (turning, reaction time)
+        - specs/30_combat.md § Enemy AI
+    validations:
+      required: true
+  - type: textarea
+    id: affected_modules
+    attributes:
+      label: Affected modules (optional)
+      description: e.g. `enemy_ai`, `weapon_system`. Leave blank if unknown — Coder will infer from spec changes.
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: What must the agent NOT touch? Any tuning values to preserve?
+      placeholder: e.g. "Do not change player movement constants. Do not modify specs/25_game_tuning.md § Player."
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Verifiable, bulleted statements. Used by the maintainer when reviewing the resulting PR.
+      placeholder: |
+        - knowledge/enemies.md cites turning rate from reference
+        - specs/30_combat.md § Enemy AI references the new knowledge entry
+        - validate_specs.py passes
+    validations:
+      required: true

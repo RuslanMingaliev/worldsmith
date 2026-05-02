@@ -2,7 +2,7 @@
 """
 Headless wrapper that drives the multi-agent pipeline from CI.
 
-For each invocation, this script runs ONE phase (architect / coder /
+For each invocation, this script runs ONE phase (extractor / architect / coder /
 reconciler / postmortem) by calling the `claude` CLI in non-interactive mode,
 captures the per-call token usage, and appends a JSON record to
 `artifacts/usage.jsonl`. Phase outputs that the agent writes to disk (e.g.
@@ -14,7 +14,7 @@ the workflow runs validation steps (validate_specs.py, etc.) so a failing
 intermediate state surfaces immediately.
 
 Inputs:
-- --phase            architect | coder | reconciler | postmortem
+- --phase            extractor | architect | coder | reconciler | postmortem
 - --mode             release (kept as a parameter for future use)
 - --scope            optional free-text scope (forwarded into the prompt)
 - --usage-jsonl      output path for the usage record (default: artifacts/usage.jsonl)
@@ -45,11 +45,12 @@ AGENTS_DIR = REPO_ROOT / "tooling" / "agents"
 DEFAULT_USAGE = REPO_ROOT / "artifacts" / "usage.jsonl"
 GENERATED_SRC_DIR = REPO_ROOT / "generated" / "game" / "src"
 
-PHASES = ["architect", "coder", "reconciler", "postmortem"]
+PHASES = ["extractor", "architect", "coder", "reconciler", "postmortem"]
 
 # Tools each phase is permitted to invoke. Conservative defaults — broaden
 # only when the phase legitimately needs more.
 PHASE_TOOLS: Dict[str, List[str]] = {
+    "extractor": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     "architect": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     "coder": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     "reconciler": ["Read", "Edit", "Bash", "Grep", "Glob"],

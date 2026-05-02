@@ -137,6 +137,30 @@ Settings → Branches → main → "Require status checks to pass before merging
 - `WORLDSMITH_MAX_TOKENS_PER_RUN` repo variable caps per-run spend (enforced in `orchestrator_run.py`).
 - A PR that touches `specs/00_project_goal.md` (or another global-trigger file in `partial_regen.py`) regenerates ALL modules — effectively a full release run. This is intentional: such PRs are rare, and the alternative (forcing them through `release.yml`) blocks otherwise valid edits.
 
+## Issue-driven agent flow
+
+`.github/workflows/agent-intake.yml` lets a maintainer launch the Extractor + Architect pipeline from a GitHub Issue. End-to-end:
+
+1. Anyone files an issue using `.github/ISSUE_TEMPLATE/agent-task.yml` — fields are Goal, Scope, Affected modules (optional), Constraints, Acceptance criteria. The form auto-applies the inert label `agent:task`. **Filing alone does NOT spend tokens.**
+2. A maintainer (admin / write / maintain) reviews the issue and applies `agent:run`. The workflow verifies the sender's permission via `gh api .../collaborators/.../permission` before doing anything else.
+3. The job clones the public reference repo from `vars.WORLDSMITH_REFERENCE_REPO` into `reference/`, runs Extractor, runs `check_sanitization.py` + `validate_specs.py`, runs Architect, validates again, wipes `reference/`, commits to `agent/issue-<N>`, force-pushes, and opens a draft PR `Closes #<N>`.
+4. The PR triggers the existing `pr.yml` flow — Coder / Reconciler / PostMortem on the affected modules, plus `cargo build/test` and the demo GIF.
+5. On success the workflow swaps the issue's labels to `agent:in-pr`. On failure (including the `EXTRACTOR_BLOCKED` sentinel from an empty reference clone), it comments the reason and applies `agent:failed`. Re-applying `agent:run` re-runs and force-pushes onto the same branch.
+
+Local helper: the project-level skill `/create-agent-task` (`.claude/skills/create-agent-task/`) walks you through writing a well-formed issue body for `gh issue create --body-file -`.
+
+### One-time configuration
+
+- Repo variable `WORLDSMITH_REFERENCE_REPO` — clone URL (public HTTPS) of the reference corpus.
+- Labels: `agent:task`, `agent:run`, `agent:in-pr`, `agent:failed`.
+- Recommended: Settings → Issues → restrict label management to collaborators (defense-in-depth on top of the workflow's permission gate).
+
+### Cost control
+
+- Permission gate, label gate, and reference clone all run before the first `claude` invocation — unauthorized triggers spend no tokens.
+- `WORLDSMITH_MAX_TOKENS_PER_RUN` is honoured by both phases via `orchestrator_run.py`.
+- `concurrency: cancel-in-progress: true` keyed on issue number — re-labeling the same issue cancels the prior run.
+
 ## Known Issues
 
 - Top-down view, not raycasting

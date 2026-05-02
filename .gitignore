@@ -21,5 +21,9 @@ __pycache__/
 *.swp
 .DS_Store
 
-# Claude Code local state (settings, hooks output, transcripts)
-.claude/
+# Claude Code local state (settings, hooks output, transcripts) —
+# but ship project-level skills/agents/commands to contributors.
+.claude/*
+!.claude/skills/
+!.claude/agents/
+!.claude/commands/

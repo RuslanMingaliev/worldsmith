@@ -282,3 +282,39 @@ The Extractor phase is skipped because reference is empty.
 If `WORLDSMITH_MAX_TOKENS_PER_RUN` is set, the wrapper aborts before the next
 phase if the running total exceeds the cap. Treat any abort as a hard stop;
 do not "retry from scratch" without operator action.
+
+## Issue intake (CI)
+
+A maintainer-triggered GitHub Issue can drive a knowledge / spec / IR refresh
+through `.github/workflows/agent-intake.yml`. Unlike the release pipeline,
+this flow runs the **Extractor** phase — the workflow clones the public
+reference corpus into `reference/` for the duration of the job, then wipes
+it before commit. The resulting commit only touches `specs/`, `knowledge/`,
+`ir/`, and `tooling/agents/`; the standard `pr.yml` flow then handles
+Coder / Reconciler / PostMortem on the opened PR.
+
+Phase order in this flow:
+
+1. `extractor` — load reference, write `knowledge/<area>.md`.
+2. `architect` — formalize knowledge into specs / IR.
+
+Between phases the workflow runs `tooling/check_sanitization.py` over any
+changed `knowledge/*.md` and `tooling/validate_specs.py` twice (once after
+Extractor, once after Architect) so a failing intermediate state surfaces
+immediately.
+
+Trigger contract:
+
+- Issue must be filed via `.github/ISSUE_TEMPLATE/agent-task.yml` (auto-applies
+  inert label `agent:task`).
+- A maintainer (admin / write / maintain) applies `agent:run`. The workflow
+  verifies the sender's permission via `gh api .../collaborators/.../permission`
+  before spending any tokens.
+- The issue body — rendered with the form's `### Goal / ### Scope / ### Affected
+  modules / ### Constraints / ### Acceptance criteria` headings — is passed
+  verbatim as `--scope` to both phases. Treat the headings as structure;
+  do NOT add extra phases or invent scope beyond what the issue says.
+
+Re-applying `agent:run` force-pushes a fresh commit on `agent/issue-<N>` —
+the prior agent commit is fully derived from the issue body, so destroying
+it is safe.

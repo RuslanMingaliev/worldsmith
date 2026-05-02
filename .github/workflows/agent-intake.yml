@@ -1,0 +1,240 @@
+name: Agent Intake (issue → Extractor + Architect → PR)
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: agent-intake-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    if: github.event.label.name == 'agent:run'
+    name: agent-intake
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    environment: release
+
+    env:
+      WORLDSMITH_MAX_TOKENS_PER_RUN: ${{ vars.WORLDSMITH_MAX_TOKENS_PER_RUN }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      ACTOR: ${{ github.event.sender.login }}
+      REFERENCE_REPO: ${{ vars.WORLDSMITH_REFERENCE_REPO }}
+
+    steps:
+      - name: Permission gate (admin/write/maintain only)
+        run: |
+          set -euo pipefail
+          ROLE=$(gh api "/repos/${{ github.repository }}/collaborators/${ACTOR}/permission" -q .permission)
+          echo "Sender ${ACTOR} role: ${ROLE}"
+          case "$ROLE" in
+            admin|write|maintain) ;;
+            *) echo "::error::sender '${ACTOR}' lacks write permission (role=${ROLE})"; exit 1 ;;
+          esac
+
+      - name: Assert reference repo configured
+        run: |
+          if [ -z "${REFERENCE_REPO:-}" ]; then
+            echo "::error::repo variable WORLDSMITH_REFERENCE_REPO is not set"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install Claude CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Assert OAUTH secret is present
+        run: |
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty in the 'release' environment."
+            exit 1
+          fi
+
+      - name: Clone reference corpus
+        run: |
+          set -euo pipefail
+          # Wipe any pre-existing reference content (defense-in-depth) but
+          # preserve the gitignored README/.gitignore stubs by re-checkout.
+          find reference -mindepth 1 ! -name '.gitignore' ! -name 'README.md' -exec rm -rf {} + 2>/dev/null || true
+          git clone --depth=1 "$REFERENCE_REPO" reference/.cloned
+          # Move clone contents into reference/ (preserving stubs).
+          shopt -s dotglob nullglob
+          for entry in reference/.cloned/*; do
+            name=$(basename "$entry")
+            [ "$name" = ".git" ] && continue
+            mv "$entry" "reference/$name"
+          done
+          rm -rf reference/.cloned
+          if [ -z "$(find reference -mindepth 1 ! -name '.gitignore' ! -name 'README.md')" ]; then
+            echo "::error::reference clone yielded no source files"
+            exit 1
+          fi
+
+      - name: Build scope from issue body
+        id: scope
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh issue view "$ISSUE_NUMBER" --json title,body \
+            -q '"# " + .title + "\n\n" + .body' > artifacts/issue_scope.md
+          echo "Issue scope (truncated):"
+          head -c 1000 artifacts/issue_scope.md
+          echo
+          {
+            echo 'scope<<__WS_EOS__'
+            cat artifacts/issue_scope.md
+            echo '__WS_EOS__'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extractor phase
+        id: extractor
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python tooling/orchestrator_run.py \
+            --phase extractor --mode release \
+            --scope "${{ steps.scope.outputs.scope }}" \
+            --usage-jsonl artifacts/usage.jsonl \
+            --transcript artifacts/extractor.transcript.json
+          if grep -q 'EXTRACTOR_BLOCKED:' artifacts/extractor.transcript.json 2>/dev/null; then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Extractor returned EXTRACTOR_BLOCKED — see transcript"
+            exit 1
+          fi
+
+      - name: Sanitization gate on changed knowledge
+        run: |
+          set -euo pipefail
+          CHANGED=$(git status --porcelain knowledge/ | awk '{print $2}' | grep -E '\.md$' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "Running sanitization on:"
+            echo "$CHANGED"
+            python tooling/check_sanitization.py $CHANGED
+          else
+            echo "No knowledge/*.md changes from Extractor — skipping sanitization gate."
+          fi
+
+      - name: Validate specs (post-extractor)
+        run: python tooling/validate_specs.py --verbose
+
+      - name: Architect phase
+        run: |
+          set -euo pipefail
+          python tooling/orchestrator_run.py \
+            --phase architect --mode release \
+            --scope "${{ steps.scope.outputs.scope }}" \
+            --usage-jsonl artifacts/usage.jsonl
+
+      - name: Validate specs (post-architect)
+        run: python tooling/validate_specs.py --verbose
+
+      - name: Wipe reference (defense-in-depth)
+        if: always()
+        run: |
+          find reference -mindepth 1 ! -name '.gitignore' ! -name 'README.md' -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Commit, push, open PR
+        id: pr
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          git checkout -B "$BRANCH"
+          # Add only paths the agents are supposed to influence.
+          git add specs knowledge ir tooling/agents
+          if git diff --cached --quiet; then
+            echo "No spec/knowledge/ir/agent changes produced; skipping PR."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p artifacts
+          git diff --cached > artifacts/agent_changes.diff
+          git commit -m "agent: refresh from issue #${ISSUE_NUMBER}" \
+                     -m "Run #${{ github.run_id }}. See artifacts/usage.jsonl."
+          git push -u origin "$BRANCH" --force-with-lease
+          BODY="Closes #${ISSUE_NUMBER}
+
+          Generated by \`agent-intake.yml\` run [#${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+          Issue scope, usage stats, and the unified diff are attached as workflow artifacts."
+          if PR_URL=$(gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --draft \
+              --title "agent: refresh from issue #${ISSUE_NUMBER}" \
+              --body "$BODY" 2>&1); then
+            echo "url=$PR_URL" >> "$GITHUB_OUTPUT"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::gh pr create failed: $PR_URL"
+            echo "url=https://github.com/${{ github.repository }}/tree/${BRANCH}" >> "$GITHUB_OUTPUT"
+            echo "created=branch-only" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment on issue (success)
+        if: success()
+        run: |
+          set -euo pipefail
+          case "${{ steps.pr.outputs.created }}" in
+            true)
+              gh issue comment "$ISSUE_NUMBER" --body "Agent run finished. PR: ${{ steps.pr.outputs.url }}"
+              gh issue edit "$ISSUE_NUMBER" --remove-label "agent:run" --add-label "agent:in-pr" || true
+              ;;
+            branch-only)
+              gh issue comment "$ISSUE_NUMBER" --body "Agent run finished, but \`gh pr create\` failed. Branch: ${{ steps.pr.outputs.url }}"
+              gh issue edit "$ISSUE_NUMBER" --remove-label "agent:run" --add-label "agent:in-pr" || true
+              ;;
+            false)
+              gh issue comment "$ISSUE_NUMBER" --body "Agent run produced no spec/knowledge/ir changes — nothing to PR."
+              gh issue edit "$ISSUE_NUMBER" --remove-label "agent:run" || true
+              ;;
+          esac
+
+      - name: Comment on issue (failure)
+        if: failure()
+        run: |
+          REASON="failed at a step. See run https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "${{ steps.extractor.outputs.blocked }}" = "true" ]; then
+            REASON="EXTRACTOR_BLOCKED — reference clone yielded no extractable code"
+          fi
+          gh issue comment "$ISSUE_NUMBER" --body "Agent run failed: ${REASON}" || true
+          gh issue edit "$ISSUE_NUMBER" --remove-label "agent:run" --add-label "agent:failed" || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-intake-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
+          path: |
+            artifacts/usage.jsonl
+            artifacts/agent_changes.diff
+            artifacts/issue_scope.md
+            artifacts/extractor.transcript.json
+            work/
+          if-no-files-found: warn
+          retention-days: 14
