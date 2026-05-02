@@ -79,7 +79,6 @@ jobs:
       && needs.validate.outputs.same_repo == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 350
-    environment: release
     permissions:
       contents: write   # to push demo gif to a per-PR pr-assets-<N> branch
       pull-requests: write
@@ -135,7 +134,7 @@ jobs:
       - name: Assert OAUTH secret is present
         run: |
           if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty in the 'release' environment."
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN repo secret is empty."
             exit 1
           fi
 

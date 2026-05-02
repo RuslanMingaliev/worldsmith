@@ -1,0 +1,53 @@
+name: Auto-apply agent:run for trusted user
+
+# Saves a click for issues filed by the repo owner. For everyone else the
+# label gate in agent-intake.yml stays — a maintainer must apply agent:run
+# by hand. Trigger types are intentionally narrow:
+#   - opened   — fresh issue with the template-applied agent:task label.
+#   - labeled  — user adds agent:task to an existing issue manually.
+# `edited` is NOT in the list: typo fixes in the issue body should not
+# re-trigger the agent run.
+#
+# The PAT (WORLDSMITH_AGENT_PAT) is required: applying agent:run via the
+# default GITHUB_TOKEN would NOT trigger agent-intake.yml downstream
+# (GitHub's recursion guard suppresses workflow events from GITHUB_TOKEN).
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-latest
+    # Hard guard against re-firing loops:
+    #   - agent:run already on  → don't re-apply (idempotent).
+    #   - agent:in-pr already on → run already converted to PR; don't kick again.
+    #   - agent:failed already on → user must explicitly clear the failure
+    #     state and re-add agent:task to retry.
+    # The trusted-user check is hardcoded — only RuslanMingaliev gets the
+    # automatic path; other collaborators continue to need a manual click.
+    if: |
+      github.actor == 'RuslanMingaliev'
+      && github.event.issue.state == 'open'
+      && contains(github.event.issue.labels.*.name, 'agent:task')
+      && !contains(github.event.issue.labels.*.name, 'agent:run')
+      && !contains(github.event.issue.labels.*.name, 'agent:in-pr')
+      && !contains(github.event.issue.labels.*.name, 'agent:failed')
+
+    steps:
+      - name: Apply agent:run
+        env:
+          GH_TOKEN: ${{ secrets.WORLDSMITH_AGENT_PAT }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::WORLDSMITH_AGENT_PAT is empty — auto-approve disabled. Apply agent:run manually."
+            exit 0
+          fi
+          gh issue edit "$ISSUE" --repo "$REPO" --add-label "agent:run"
+          echo "Applied agent:run to issue #$ISSUE."

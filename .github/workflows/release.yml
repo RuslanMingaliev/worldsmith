@@ -25,7 +25,6 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     timeout-minutes: 350
-    environment: release
     if: ${{ github.actor == 'RuslanMingaliev' }}
 
     outputs:
@@ -82,12 +81,12 @@ jobs:
       - name: Run pipeline
         env:
           # Bills the operator's claude.ai Pro/Max subscription. Generated locally via
-          # `claude setup-token` and stored in the `release` GitHub Environment.
+          # `claude setup-token` and stored as a repository secret.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -e
           if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty in the 'release' environment."
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN repo secret is empty."
             exit 1
           fi
           mkdir -p artifacts
@@ -174,7 +173,6 @@ jobs:
             ext: ".exe"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    environment: release
     if: ${{ github.actor == 'RuslanMingaliev' }}
 
     steps:
@@ -242,7 +240,6 @@ jobs:
     needs: [generate, build]
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: release
     if: ${{ github.actor == 'RuslanMingaliev' }}
 
     steps:
