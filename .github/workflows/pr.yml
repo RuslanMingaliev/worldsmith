@@ -225,11 +225,19 @@ jobs:
           fi
           # Upload the gif as a new file (PR + run-id make the filename unique;
           # no race conditions even with concurrent PR runs).
-          CONTENT=$(base64 -w0 release/demo.gif)
+          # The base64 payload can be megabytes, which busts ARG_MAX if passed
+          # via `gh api --field content="$CONTENT"`. Build the JSON body on
+          # disk with jq and stream it via --input so nothing flows through argv.
+          base64 -w0 release/demo.gif > /tmp/demo.b64
+          jq -n \
+            --rawfile content /tmp/demo.b64 \
+            --arg message "PR #${PR} demo (run ${RUN_ID})" \
+            --arg branch "${BRANCH}" \
+            '{message: $message, content: $content, branch: $branch}' \
+            > /tmp/contents-payload.json
           gh api --method PUT "/repos/${REPO}/contents/${GIF_NAME}" \
-            --field message="PR #${PR} demo (run ${RUN_ID})" \
-            --field content="${CONTENT}" \
-            --field branch="${BRANCH}" > /dev/null
+            --input /tmp/contents-payload.json > /dev/null
+          rm -f /tmp/demo.b64 /tmp/contents-payload.json
           RAW_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${GIF_NAME}"
           echo "raw_url=${RAW_URL}" >> "$GITHUB_OUTPUT"
           echo "Embeddable GIF URL: ${RAW_URL}"
