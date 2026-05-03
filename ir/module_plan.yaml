@@ -67,3 +67,27 @@ modules:
       ffmpeg consumes the raw stream downstream.
     depends_on:
       - presentation
+
+  - name: main
+    responsibility: |
+      Binary entry point (generated/game/src/main.rs). Parses CLI flags
+      (--autopilot, --record-frames), declares `mod <name>;` for every
+      other module, constructs GameState, owns the main render loop.
+      Not gameplay logic — but contracted in ir/module_contracts.yaml
+      § main_cli, so spec edits that name main.rs (new CLI flag, new
+      module wiring) MUST regenerate it. Listing every other module in
+      depends_on makes partial_regen.py's reverse-dep closure pull main
+      in whenever any module is touched. validate_specs.py asserts the
+      list stays complete.
+    depends_on:
+      - level_data
+      - player_state
+      - input_controller
+      - visual_effects
+      - weapon_system
+      - enemy_logic
+      - presentation
+      - renderer
+      - game_loop
+      - autopilot
+      - frame_recorder

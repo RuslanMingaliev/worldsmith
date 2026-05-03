@@ -69,6 +69,18 @@ TRIGGER_CONFIG = {
         "autopilot": [
             "specs/30_test_framework.md",
             "tests/**",
+            # specs/15 § Scenario.level: autopilot.Scenario gains an optional
+            # `level` field referencing crate::level_generator::DemoLevelKind.
+            "specs/15_level_generator.md",
+            "knowledge/level_scenarios.md",
+        ],
+        "level_generator": [
+            # specs/15 owns the demo-level builder. Trigger fires once
+            # level_generator joins ir/module_plan.yaml (added by an Architect
+            # pass). Until then, `if module not in known_modules: continue`
+            # in determine_modules() filters this row out — harmless.
+            "specs/15_level_generator.md",
+            "knowledge/level_scenarios.md",
         ],
         "level_data": [
             # specs/60 § Pickup Entity: Pickup type + pickups field live here.

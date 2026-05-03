@@ -27,6 +27,12 @@ Produce or update:
 - Spec files in `specs/`
 - IR files in `ir/`
 - Design notes in `work/`
+- **Test-fixture YAML files under `tests/`** when a spec references them by
+  filename (e.g. `tests/level/local_chase_obstacle.yaml`). Fixtures are part
+  of the spec — without them the Reconciler will mark the referenced spec
+  feature as deferred and the next Coder pass cannot wire the scenario
+  through. The Coder does not author these (its scope is `generated/`); if
+  you write a spec that names a fixture, you write the fixture too.
 
 ## Spec Writing Principles
 
@@ -97,6 +103,8 @@ modules:
 
 **Note:** `depends_on` is authoritative metadata. Keep it accurate because downstream tooling (partial regeneration planner, automation agents) rely on it to know which modules must be updated when specs change.
 
+**`main` is the universal sink.** When you add a new module to `module_plan.yaml`, also add its name to `main.depends_on`. `main` represents `generated/game/src/main.rs` (the binary entry point) and consumes every other module via `mod <name>;` declarations. Forgetting to update `main.depends_on` creates a silent gap: the new module would regenerate without `main.rs` being re-emitted to declare it, and the file ships orphaned (PR #10's `level_generator.rs` failure mode). `tooling/validate_specs.py § validate_module_plan` enforces this invariant — adding a module without updating `main.depends_on` will fail the validator.
+
 ## Quality Checklist
 
 Before submitting:
@@ -108,6 +116,8 @@ Before submitting:
 - [ ] Every spec has an `Implementation Status` section with both Implemented and Deferred buckets populated
 - [ ] No dangling cross-references (e.g. "see ADR N" must point to an existing decision)
 - [ ] Every spec rule that EXPLICITLY contradicts a knowledge entry (e.g. spec uses circle distance where knowledge uses AABB; spec hardcodes a value where knowledge reads from asset; spec applies a coloring policy that knowledge says the reference does NOT do) is flagged at the rule site with an inline `*(Generation default — knowledge says X; we use Y because <rationale>.)*` AND surfaced to the run journal under `### ADR candidates` for the PostMortem to elevate. Rationale: deviations that accumulate unflagged become future re-extraction questions the journal-only parking lot will lose. See `tooling/agents/postmortem.md` for the elevation pipeline.
+- [ ] If you added a new module to `ir/module_plan.yaml`, you also added its name to `main.depends_on`. `tooling/validate_specs.py` will fail otherwise.
+- [ ] If a new or modified spec names a `tests/**/*.yaml` fixture file, the fixture is authored alongside the spec — Coder will not create it.
 
 ## Escalation
 
