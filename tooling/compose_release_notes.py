@@ -181,6 +181,18 @@ def render(template: str, version: str, replacements: Dict[str, str]) -> str:
     return rendered
 
 
+def load_optional_markdown(path: Optional[Path], fallback: str) -> str:
+    """Read an LLM-authored markdown fragment, falling back to `fallback` if
+    the file is absent or empty. Returning a non-empty string keeps the
+    template's section visible even when the upstream LLM phase failed —
+    the maintainer just sees the fallback and edits the draft release.
+    """
+    if path is None or not path.exists():
+        return fallback
+    text = path.read_text(encoding="utf-8").strip()
+    return text or fallback
+
+
 def run_sanitizer(target: Path) -> int:
     result = subprocess.run(
         [sys.executable, str(SANITIZER), str(target)],
@@ -202,6 +214,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--usage-jsonl", type=Path, default=None)
     parser.add_argument("--postmortem", type=Path, default=None)
     parser.add_argument("--manifest", type=Path, default=None)
+    parser.add_argument(
+        "--prev-version",
+        default=None,
+        help="Previous release tag, e.g. 2026.02. Substituted into {{PREV_VERSION}}. "
+             "If absent, the placeholder is left as a literal string.",
+    )
+    parser.add_argument(
+        "--release-hero",
+        type=Path,
+        default=None,
+        help="Path to artifacts/release_hero.md (LLM-authored hero pitch). If absent, "
+             "{{HERO_PITCH}} falls back to a short generic line.",
+    )
+    parser.add_argument(
+        "--release-whatsnew",
+        type=Path,
+        default=None,
+        help="Path to artifacts/release_whatsnew.md (LLM-authored what's-new bullets). "
+             "If absent, {{WHATSNEW_PROSE}} falls back to a generic note pointing at "
+             "the git log.",
+    )
     parser.add_argument(
         "--assets-dir",
         type=Path,
@@ -228,6 +261,23 @@ def main() -> int:
     usage = load_usage(args.usage_jsonl)
     manifest = load_manifest(args.manifest)
 
+    hero_pitch = load_optional_markdown(
+        args.release_hero,
+        fallback=(
+            "_(Release Editor agent did not produce a hero pitch — write one "
+            "in this draft before publishing.)_"
+        ),
+    )
+    whatsnew_prose = load_optional_markdown(
+        args.release_whatsnew,
+        fallback=(
+            "_(Release Editor agent did not produce a what's-new list — see the "
+            "merge commits in `git log` for the raw set of PRs since the previous "
+            "tag and write them up in this draft before publishing.)_"
+        ),
+    )
+    prev_version = args.prev_version or "_(previous tag)_"
+
     replacements = {
         "GENERATED_AT": manifest["generated_at"],
         "MODULE_COUNT": manifest["module_count"],
@@ -237,6 +287,9 @@ def main() -> int:
         "ASSET_TABLE": render_asset_table(args.assets_dir, args.version),
         "TOKENS_TABLE": render_tokens_table(usage),
         "POSTMORTEM_SUMMARY": load_postmortem(args.postmortem),
+        "HERO_PITCH": hero_pitch,
+        "WHATSNEW_PROSE": whatsnew_prose,
+        "PREV_VERSION": prev_version,
     }
 
     rendered = render(template, args.version, replacements)
