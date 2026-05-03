@@ -100,7 +100,12 @@ pub fn bot_step(
 
 ## Test Scenario Suitability for Demo
 
-Any scenario in `tests/**/*.yaml` is a valid demo input. The release process selects one scenario that produces the most visually informative recording — by default `tests/combat/kill_enemy.yaml` (movement + shooting + enemy death + visual feedback). Selection is a release-time choice, not a property of this spec.
+Any scenario in `tests/**/*.yaml` is a valid demo input. The release process selects one scenario that produces the most visually informative recording. Two canonical choices exist, picked at release-time:
+
+- **PR-preview GIF** (per-PR, on every push): `tests/level/local_chase_obstacle.yaml`. Uses the `local_chase_obstacle` demo level (specs/15) — a single vertical wall between player and enemy that forces the chase routine through priority-2 (perpendicular alternates) and priority-3 (continue old direction) of `knowledge/level_scenarios.md § Obstacle-Aware Chase`. The recorded GIF visibly answers "did the enemy navigate around the obstacle?" in a few seconds.
+- **Tagged-release GIF** (`release.yml`): `tests/level/scavenge_run.yaml`. Uses the default level — exercises movement + pickup pickup + combat + exit-reach in one run. Better suited for "tour of mechanics" than for any single behavior demo.
+
+Selection is a release-time choice, not a property of this spec; the spec asserts only that any `tests/**/*.yaml` scenario is a valid demo input. The PR-preview / release-gif split lives in `.github/workflows/{pr,release}.yml`.
 
 Demo recordings are intentionally short (< 10 seconds at 60 FPS = < 600 frames). The bot's `BOT_MAX_FRAMES` (3600) caps long runs; the recording script should also pass a soft duration budget.
 
