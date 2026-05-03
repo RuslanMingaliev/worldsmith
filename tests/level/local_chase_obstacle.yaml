@@ -1,0 +1,11 @@
+scenario: local_chase_obstacle
+description: Enemy chases player around a wall, demonstrating obstacle-aware chase behavior
+level: local_chase_obstacle
+
+objectives:
+  - approach: enemy
+  - kill: enemy
+
+assertions:
+  - player.alive: true
+  - enemy.alive: false

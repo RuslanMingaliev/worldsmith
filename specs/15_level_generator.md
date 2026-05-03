@@ -168,15 +168,15 @@ The spec asserts that the PR workflow's "Record gameplay GIF" step (`.github/wor
 - Spec defines the `DemoLevelKind` enum, the `level_generator::build` function, and the `LocalChaseObstacle` variant.
 - Spec defines the `level:` scenario YAML field and its fall-back semantics.
 - Spec defines the `game_loop::new(level: Level)` signature change and `main.rs`'s call-site decision.
-- Test fixture `tests/level/local_chase_obstacle.yaml` is authored alongside this spec.
+- Test fixture `tests/level/local_chase_obstacle.yaml` exists on disk and uses the `level: local_chase_obstacle` field plus the `approach: enemy` / `kill: enemy` objectives.
 - IR module `level_generator` is added to `ir/module_plan.yaml` (universal-sink rule applied: `main.depends_on` lists `level_generator`).
 - IR contract for `level_generator` and the autopilot / `game_loop` extensions live in `ir/module_contracts.yaml`.
+- `.github/workflows/pr.yml` and `.github/workflows/release.yml` record the demo GIF using `tests/level/local_chase_obstacle.yaml` as the canonical PR-preview scenario.
 
 **Deferred:**
 - Additional demo level variants beyond `LocalChaseObstacle` (e.g. corridor chase, multi-enemy fan-out, pickup-scavenge tutorial). Add a variant to `DemoLevelKind` and a builder function as the need arises.
 - Authoring fixtures for additional demo levels.
 - Allowing scenarios to override the default level's *contents* (e.g. a scenario that uses the default geometry but adds an extra enemy) — this would require either splitting `Level` into geometry-vs-entities or adding a separate "scenario overlay" concept. Not needed for the current PR-preview goal.
-- Workflow swap to use `tests/level/local_chase_obstacle.yaml` as the PR preview's recorded scenario (see `work/pipeline_run_2026-05-03.md § Run-level follow-ups`). The spec defines the integration target; the workflow file change ships in a maintainer follow-up because agent-intake's commit scope (`specs knowledge ir tooling/agents`) does not include `.github/workflows/` or `tooling/record_autopilot.sh`.
 
 ## Related
 

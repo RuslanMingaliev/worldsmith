@@ -1,3 +1,7 @@
+# Demo recording (pr.yml + release.yml) switched from scavenge_run to
+# local_chase_obstacle as of this commit; touching this file forces a
+# global regen so the new fixture is exercised end-to-end on the
+# triggering PR rather than on the next release.
 modules:
   - name: level_data
     responsibility: static map and spawn positions
