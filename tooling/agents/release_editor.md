@@ -31,13 +31,13 @@ Answer: "what happened in this release, and why does the reader care". Plainspok
 
 ### `artifacts/release_whatsnew.md`
 
-A bulleted "What's new" list. One bullet per merged PR that ships user-facing or process-facing change. **Drop housekeeping/nit PRs that don't move gameplay, generation pipeline, or release process.** Format each bullet:
+A bulleted "What's new" list. One bullet per merged PR that ships user-facing or process-facing change. **Drop housekeeping/nit PRs that don't move gameplay, generation pipeline, or release process.** Format each bullet with a clickable PR link:
 
 ```
-- **#NN — Bold headline (4–8 words)** — One or two sentences expanding into concrete impact. Cite spec/section if applicable.
+- **[#NN](https://github.com/RuslanMingaliev/worldsmith/pull/NN) — Bold headline (4–8 words)** — One or two sentences expanding into concrete impact. Cite spec/section if applicable.
 ```
 
-Order by impact, not chronology. If 6+ bullets remain after dropping nits, group into thematic sub-sections (`### Gameplay`, `### Pipeline`, `### Release process`).
+Substitute the actual PR number into both the link text and the URL. Order bullets by impact, not chronology. If 6+ bullets remain after dropping nits, group into thematic sub-sections (`### Gameplay`, `### Pipeline`, `### Release process`).
 
 ## Constraints
 
@@ -56,7 +56,7 @@ Order by impact, not chronology. If 6+ bullets remain after dropping nits, group
 
 **Bad bullet:** "- **#15 — release: swap PR-preview demo to local_chase_obstacle scenario** — This PR swaps the demo."
 
-**Good bullet:** "- **#15 — Demo records on the obstacle scenario** — PR-preview and release demo GIFs now use `tests/level/local_chase_obstacle.yaml`, demonstrating the new level generator (`spec/15`) end-to-end. The first 4 seconds of the GIF visibly show the enemy navigating around the wall."
+**Good bullet:** "- **[#15](https://github.com/RuslanMingaliev/worldsmith/pull/15) — Demo records on the obstacle scenario** — PR-preview and release demo GIFs now use `tests/level/local_chase_obstacle.yaml`, demonstrating the new level generator (`spec/15`) end-to-end. The first 4 seconds of the GIF visibly show the enemy navigating around the wall."
 
 ## Failure modes
 
