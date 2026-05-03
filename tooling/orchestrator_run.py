@@ -45,7 +45,7 @@ AGENTS_DIR = REPO_ROOT / "tooling" / "agents"
 DEFAULT_USAGE = REPO_ROOT / "artifacts" / "usage.jsonl"
 GENERATED_SRC_DIR = REPO_ROOT / "generated" / "game" / "src"
 
-PHASES = ["extractor", "architect", "coder", "reconciler", "postmortem"]
+PHASES = ["extractor", "architect", "coder", "reconciler", "postmortem", "release_editor"]
 
 # Tools each phase is permitted to invoke. Conservative defaults — broaden
 # only when the phase legitimately needs more.
@@ -55,6 +55,7 @@ PHASE_TOOLS: Dict[str, List[str]] = {
     "coder": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     "reconciler": ["Read", "Edit", "Bash", "Grep", "Glob"],
     "postmortem": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
+    "release_editor": ["Read", "Write", "Bash", "Grep", "Glob"],
 }
 
 
@@ -107,6 +108,7 @@ PHASE_DEFAULT_MODEL = {
     "coder": "sonnet",
     "reconciler": "claude-opus-4-7[1m]",
     "postmortem": "claude-opus-4-7[1m]",
+    "release_editor": "claude-opus-4-7[1m]",
 }
 
 

@@ -269,6 +269,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y xvfb ffmpeg
 
+      - name: Install Claude CLI (for release_editor phase)
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Download generation artifacts
         uses: actions/download-artifact@v4
         with:
@@ -323,15 +328,61 @@ jobs:
           print(manifest)
           PY
 
+      - name: Determine previous release tag
+        id: prev_tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -e
+          # Pick the most recent existing release tag (excluding the version
+          # being created right now, in case a previous attempt left a draft).
+          PREV=$(gh release list --exclude-drafts --limit 5 \
+                  --json tagName --jq ".[] | select(.tagName != \"$VERSION\") | .tagName" \
+                  | head -n1)
+          if [ -z "$PREV" ]; then
+            # Fallback: nearest annotated tag in git history excluding HEAD itself.
+            PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          fi
+          echo "Previous release tag: ${PREV:-(none)}"
+          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+
+      - name: Author release narrative (hero pitch + what's new prose)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PREV_TAG: ${{ steps.prev_tag.outputs.tag }}
+        run: |
+          set -e
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::warning::CLAUDE_CODE_OAUTH_TOKEN not set; skipping release_editor (release notes will use fallback placeholders)."
+            exit 0
+          fi
+          if [ -z "${PREV_TAG:-}" ]; then
+            echo "::warning::Could not determine previous release tag; release_editor will use git fallback."
+          fi
+          # The agent reads previous_tag/current_tag from the scope override.
+          # Failure here is non-fatal (fallback placeholders ship in compose).
+          python tooling/orchestrator_run.py \
+            --mode release \
+            --phase release_editor \
+            --scope "previous_tag: ${PREV_TAG:-(unknown)}; current_tag: ${VERSION}" \
+            || echo "::warning::release_editor phase failed; release notes will use fallback placeholders."
+
       - name: Compose release notes
         env:
           VERSION: ${{ inputs.version }}
+          PREV_TAG: ${{ steps.prev_tag.outputs.tag }}
         run: |
           python tooling/compose_release_notes.py \
             --version "$VERSION" \
+            --prev-version "${PREV_TAG:-unknown}" \
             --usage-jsonl artifacts/usage.jsonl \
             --postmortem artifacts/postmortem.md \
             --manifest artifacts/manifest.json \
+            --release-hero artifacts/release_hero.md \
+            --release-whatsnew artifacts/release_whatsnew.md \
             --assets-dir assets \
             --out artifacts/release-notes.md
 
