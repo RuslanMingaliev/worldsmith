@@ -39,6 +39,7 @@ Scenarios are YAML files in `tests/` organized by area:
 ```yaml
 scenario: scenario_name
 description: Human-readable description
+level: local_chase_obstacle    # OPTIONAL — see specs/15. Absent = use default level.
 
 objectives:
   - kill: enemy
@@ -48,6 +49,8 @@ assertions:
   - player.alive: true
   - enemy.alive: false
 ```
+
+The `level:` field is optional. When present, it names a `DemoLevelKind` variant in `snake_case` form (currently only `local_chase_obstacle`); `main.rs` calls `level_generator::build(kind)` instead of `level_data::build_default()` to construct the scenario's level. When absent or null, the runtime uses the default level. See [`15_level_generator.md`](15_level_generator.md) for the catalog of demo levels and the layout details. Existing fixtures (`tests/combat/kill_enemy.yaml`, `tests/level/{complete_level,reach_exit,scavenge_run}.yaml`) omit the field and continue to use the default level.
 
 ## Objectives
 
@@ -134,6 +137,7 @@ If the bot's position hasn't changed for 30 frames, it begins strafing. After 60
 
 **Implemented:**
 - Scenario YAML format (`scenario`, `description`, `objectives`, `assertions` fields).
+- Optional `level:` field on Scenario (specs/15) — selects a generated demo level instead of `level_data::build_default()` when set; backwards compatible with all existing fixtures.
 - Objective types: `kill:`, `reach:`, `approach:`, `wait:`.
 - Target names: `enemy`, `exit`, `spawn`, `pickup_health`, `pickup_ammo` (with fallback semantics).
 - Assertion fields: `player.alive`, `player.health`, `enemy.alive`, `game.won`, `game.frames` — these five are implemented in `autopilot::eval_assertion`.
@@ -151,4 +155,5 @@ If the bot's position hasn't changed for 30 frames, it begins strafing. After 60
 
 ## Related
 
+- `specs/15_level_generator.md` — `DemoLevelKind` catalog and the optional `level:` scenario field.
 - `specs/35_demo_mode.md` — headed-autopilot CLI mode and frame recording for release demos.

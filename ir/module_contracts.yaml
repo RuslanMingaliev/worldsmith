@@ -148,6 +148,74 @@ modules:
       geometry, not the loop.
 
   # ---------------------------------------------------------------------------
+  - name: level_generator
+    file: src/level_generator.rs
+    depends_on: [level_data]
+    public_types:
+      - name: DemoLevelKind
+        definition: |
+          #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+          #[serde(rename_all = "snake_case")]
+          pub enum DemoLevelKind {
+              LocalChaseObstacle,
+          }
+        notes: |
+          Public because autopilot::Scenario.level holds
+          Option<DemoLevelKind> (specs/15 § Scenario YAML Extension), so
+          serde_yaml can deserialize the YAML name directly into the
+          enum. `rename_all = "snake_case"` maps `LocalChaseObstacle`
+          -> `local_chase_obstacle` for YAML readability. Adding a new
+          demo level: add one variant here and one match arm in build()
+          below; nothing else changes.
+    public_constants: []
+    public_methods:
+      - signature: "pub fn build(kind: DemoLevelKind) -> Level"
+        notes: |
+          Pure function: same `kind` always returns a byte-equal Level.
+          No I/O, no randomness, no global state. Per specs/15 §
+          Determinism this purity is the spec's full contribution to the
+          determinism contract; everything else (RNG seeds, fixed dt,
+          frame recording format) is already pinned by specs/35.
+          Implementation pattern (one match arm per variant):
+            match kind {
+                DemoLevelKind::LocalChaseObstacle => build_local_chase_obstacle(),
+            }
+          where build_local_chase_obstacle() is a private helper that
+          returns the Level layout pinned in specs/15 § LocalChaseObstacle.
+      - signature: "fn build_local_chase_obstacle() -> Level"
+        notes: |
+          Module-private. Builds the LocalChaseObstacle layout from
+          specs/15 § LocalChaseObstacle. Concretely:
+            width = GRID_WIDTH (20); height = GRID_HEIGHT (15);
+            tiles[y][x] = Wall iff (x == 0 || x == 19 || y == 0 || y == 14
+                          || (x == 10 && (4..=10).contains(&y)))
+                          else Floor;
+            player_spawn = Vec2::new(3.5, 7.5);
+            enemy_spawns = vec![Vec2::new(16.5, 7.5)];
+            exit         = Vec2::new(1.5, 1.5);
+            pickups      = vec![];   // no pickups
+          Reuses GRID_WIDTH / GRID_HEIGHT from level_data; does not
+          introduce new constants. Coder may inline the layout (one
+          double-loop over the grid is the obvious form) or use a small
+          helper -- the *Level* it produces is what matters.
+    cross_module_borrows: []
+    notes: |
+      Consumed by main.rs at startup (one call per --autopilot launch
+      whose scenario sets `level: <name>`) and by autopilot for the
+      `DemoLevelKind` type only (Scenario.level is
+      Option<DemoLevelKind>). NOT consumed by any per-frame path:
+      game_loop::update, autopilot::bot_step, enemy_logic::update,
+      weapon_system::fire all stay unaware of this module. This keeps
+      the generator out of gameplay runtime per the issue's
+      "Generator must not be part of gameplay runtime logic" constraint.
+
+      Determinism: build() is a pure function; identical inputs produce
+      byte-equal Level structs. Demo recordings inherit determinism
+      from specs/35 § Determinism (fixed dt, fixed RNG seeds, fixed
+      framebuffer format) plus this purity guarantee — no scenario-RNG
+      shenanigans needed.
+
+  # ---------------------------------------------------------------------------
   - name: player_state
     file: src/player_state.rs
     depends_on: [level_data]
@@ -752,15 +820,27 @@ modules:
           }
     public_constants: []
     public_methods:
-      - signature: "pub fn new() -> GameState"
+      - signature: "pub fn new(level: Level) -> GameState"
         notes: |
-          Constructs GameState from Level::build_default():
-            level = level_data::build_default()
+          Constructs GameState from a caller-supplied Level. Caller is
+          responsible for choosing the level (default vs. demo); this
+          constructor is level-agnostic.
             player = Player::new(level.player_spawn)
             enemies = level.enemy_spawns.iter()
                           .map(|&s| Enemy::new(s)).collect()
             fx = VisualEffects::new()
             running = true; won = false; (#[cfg(test)] frames = 0)
+            level (moved into GameState as state.level)
+          Per specs/15 § game_loop::new constructor signature, main.rs
+          picks the level via:
+            let level = match autopilot_scenario.as_ref().and_then(|s| s.level) {
+                Some(kind) => level_generator::build(kind),
+                None       => level_data::build_default(),
+            };
+            let mut game = game_loop::new(level);
+          Interactive play (no --autopilot) always passes
+          level_data::build_default(). The generator is never called from
+          inside game_loop or any other per-frame path.
       - signature: "pub fn update(state: &mut GameState, input: &InputState, dt: f32)"
         notes: |
           ONE per-frame tick. Order is pinned by frame_update_order
@@ -784,6 +864,7 @@ modules:
       - game_loop
       - input_controller
       - level_data
+      - level_generator
       - player_state
       - enemy_logic
     public_types:
@@ -794,11 +875,23 @@ modules:
           pub struct Scenario {
               pub scenario: String,
               pub description: String,
+              #[serde(default)]
+              pub level: Option<crate::level_generator::DemoLevelKind>,
               pub objectives: Vec<Objective>,
               #[serde(default)]
               pub assertions: Vec<Assertion>,
           }
         cfg_test_only: false
+        notes: |
+          `level` (specs/15) is optional. Absent => caller (main.rs)
+          uses level_data::build_default(). Present => caller calls
+          level_generator::build(kind). The serde rename_all attribute
+          on DemoLevelKind handles snake_case YAML names
+          (e.g. `local_chase_obstacle`). Unknown names yield a
+          serde_yaml deserialization error which `parse_scenario`'s
+          `.expect("valid scenario YAML")` propagates as a panic with
+          a clear message — matching the existing parse error handling
+          rule in specs/30 § Execution Rules.
       - name: Objective
         definition: |
           #[derive(Debug, serde::Deserialize)]
@@ -1053,13 +1146,22 @@ main_cli:
         Existing behavior. minifb window opened, input_controller::poll
         each frame, dt from Instant::now() deltas, RNGs seeded as today.
         No frame_recorder used.
+        Level: always level_data::build_default(); the interactive path
+        does not parse scenarios so scenario.level is irrelevant here.
+            let level = level_data::build_default();
+            let mut game = game_loop::new(level);
     autopilot_only:
       trigger: "--autopilot <path>"
       behavior: |
         1. yaml = std::fs::read_to_string(path).expect("scenario file readable")
         2. scenario = autopilot::parse_scenario(&yaml)
         3. bot = autopilot::BotState::new()
-        4. game = game_loop::new()
+        4. Pick the level from scenario.level (specs/15):
+             let level = match scenario.level {
+                 Some(kind) => level_generator::build(kind),
+                 None       => level_data::build_default(),
+             };
+             let mut game = game_loop::new(level);
         5. each frame:
              (input, progress) = autopilot::bot_step(&game, &scenario, &mut bot);
              game_loop::update(&mut game, &input, BOT_FRAME_TIME);  // fixed dt!
@@ -1084,6 +1186,8 @@ main_cli:
         interactive mode -- this mode is NOT deterministic; it captures
         whatever the human plays. (Useful for ad-hoc captures, not for
         release demos.)
+        Level: same as interactive (level_data::build_default()) — no
+        scenario is parsed in this mode.
     autopilot_and_record:
       trigger: "--autopilot <path> --record-frames <out>"
       behavior: |
@@ -1091,6 +1195,10 @@ main_cli:
         dumped via frame_recorder::write_frame. THIS is the canonical
         release-demo invocation. Two runs produce byte-identical files
         (specs/35 § Acceptance Criteria).
+        Level selection follows autopilot_only (specs/15): scenario.level
+        Some(kind) => level_generator::build(kind), None => default.
+        The PR-preview scenario tests/level/local_chase_obstacle.yaml
+        sets level: local_chase_obstacle and is the canonical input here.
 
   rng_seeding:
     notes: |

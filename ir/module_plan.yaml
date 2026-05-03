@@ -3,6 +3,17 @@ modules:
     responsibility: static map and spawn positions
     depends_on: []
 
+  - name: level_generator
+    responsibility: |
+      Demo-only level builder (specs/15). Owns DemoLevelKind enum and a
+      pure `build(kind) -> Level` function. Returns the same Level type
+      that level_data::build_default returns; the runtime cannot tell which
+      builder produced a given Level. NOT consumed by any per-frame path
+      — only main.rs (once at startup, when --autopilot scenario.level is
+      Some) and autopilot's Scenario type (the DemoLevelKind enum is
+      referenced as Scenario.level: Option<DemoLevelKind>).
+    depends_on: [level_data]
+
   - name: player_state
     responsibility: player position, direction, health if needed
     depends_on: [level_data]
@@ -51,11 +62,15 @@ modules:
       (parse_scenario, bot_step, BotState, BotProgress, Scenario, Objective)
       are always compiled and consumed by main.rs in --autopilot mode
       (specs/35). The batch test runner (run_scenario, run_all_scenarios)
-      is #[cfg(test)]-gated.
+      is #[cfg(test)]-gated. Scenario.level: Option<DemoLevelKind> picks
+      a generated demo level when set (specs/15); main.rs decides whether
+      to call level_generator::build or level_data::build_default based on
+      that field.
     depends_on:
       - game_loop
       - input_controller
       - level_data
+      - level_generator
       - player_state
       - enemy_logic
 
@@ -81,6 +96,7 @@ modules:
       list stays complete.
     depends_on:
       - level_data
+      - level_generator
       - player_state
       - input_controller
       - visual_effects
