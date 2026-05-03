@@ -35,7 +35,9 @@ Triage the diff:
 - `dead_code` on a `pub` symbol that is dead in BOTH builds → unconditional dead export. Spec/80 § API Surface violation.
 - `unused_imports` referencing constants from `visual_effects`, `player_state`, etc. → the importing module gave up on a behavior the spec called for.
 
-Only proceed to Step 1 once warnings have been triaged into "spec drift" / "cfg-test-only / needs gate" / "expected wave-cascade noise" buckets and recorded in the report.
+**Orphan file check.** A clean `cargo build` is **not** sufficient — rustc only compiles what `main.rs` declares with `mod <name>;`. After triaging warnings, list `generated/game/src/*.rs` and confirm every file (other than `main.rs`) has a matching `mod` declaration. If a file is on disk but unreferenced, rustc silently skips it: zero warnings, but also zero compiled tests, and the public API is dead. Flag every orphan in `### Drift found` with the `mod` line that's missing. The mechanical complement is `tooling/check_orphan_files.py`, invoked by `validate_specs.py`; this Step 0 bullet is the agent-side guard for the case where a Coder ships a new module-file but leaves `main.rs` out of scope (PR #10).
+
+Only proceed to Step 1 once warnings have been triaged into "spec drift" / "cfg-test-only / needs gate" / "expected wave-cascade noise" / "orphan-file" buckets and recorded in the report.
 
 ### Step 1: Scan code for constants
 

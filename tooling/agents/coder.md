@@ -110,10 +110,16 @@ When you see such a scope override:
 
 - Read specs / knowledge / IR for full context, but **only write to**
   `generated/game/src/<module>.rs` for modules in the listed set.
-- Do **not** touch other module files, `main.rs`, or `Cargo.toml`. The harness
-  snapshots `generated/game/src/` before you run and machine-reverts any
-  out-of-scope edits afterward — spending tokens on those files is pure waste,
-  and the revert will silently undo your work.
+- `main` is a regular module name in this scope model: when it appears in
+  the listed set, you write to `generated/game/src/main.rs`. It contracts
+  CLI flag parsing, `mod <name>;` declarations, and the render loop (see
+  `ir/module_contracts.yaml § main_cli`). When `main` is NOT in the listed
+  set, you do not edit `main.rs` — same rule as any other out-of-scope
+  module.
+- Do **not** touch module files outside the listed set or `Cargo.toml`. The
+  harness snapshots `generated/game/src/` before you run and machine-reverts
+  any out-of-scope edits afterward — spending tokens on those files is pure
+  waste, and the revert will silently undo your work.
 - If a listed module's spec implies a contract change for a non-listed module
   (signature change, new shared type, etc.), STOP and write a blocker note to
   `artifacts/blocker.md` describing the contract delta. Do not silently

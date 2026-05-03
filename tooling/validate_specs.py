@@ -120,6 +120,8 @@ def validate_module_plan(path: Path) -> List[ValidationIssue]:
         return [ValidationIssue(path, "`modules` must be a non-empty list.")]
 
     seen_names = set()
+    main_depends_on: List[str] = []
+    main_present = False
     for idx, module in enumerate(modules):
         if not isinstance(module, dict):
             issues.append(
@@ -145,6 +147,43 @@ def validate_module_plan(path: Path) -> List[ValidationIssue]:
             issues.append(
                 ValidationIssue(
                     path, f"modules[{idx}] missing string `responsibility`."
+                )
+            )
+
+        if name == "main":
+            main_present = True
+            deps = module.get("depends_on", []) or []
+            if isinstance(deps, list):
+                main_depends_on = [d for d in deps if isinstance(d, str)]
+
+    # If `main` is in the plan, it must list every other module in depends_on.
+    # Rationale: partial_regen.py's reverse-dep closure relies on main being a
+    # universal sink so any triggered module pulls main into the regen scope.
+    # Forgetting to add a new module to main.depends_on creates a silent gap
+    # — the new module would regenerate without main.rs being re-emitted to
+    # declare it, reproducing the orphan-file bug from PR #10. This invariant
+    # makes that mistake a hard validation error.
+    if main_present:
+        expected = seen_names - {"main"}
+        listed = set(main_depends_on)
+        missing = expected - listed
+        extra = listed - expected
+        if missing:
+            issues.append(
+                ValidationIssue(
+                    path,
+                    f"main.depends_on is missing modules: {sorted(missing)}. "
+                    f"main is the universal sink in partial_regen.py's "
+                    f"reverse-dep closure; every module must be listed.",
+                )
+            )
+        if extra:
+            issues.append(
+                ValidationIssue(
+                    path,
+                    f"main.depends_on lists unknown modules: {sorted(extra)}. "
+                    f"Either add the module to ir/module_plan.yaml or remove "
+                    f"the entry from main.depends_on.",
                 )
             )
 
@@ -270,6 +309,7 @@ def validate_reference_knowledge_integrity() -> List[ValidationIssue]:
 # pass the gate clean).
 
 CHECK_SANITIZATION_SCRIPT = REPO_ROOT / "tooling" / "check_sanitization.py"
+CHECK_ORPHAN_FILES_SCRIPT = REPO_ROOT / "tooling" / "check_orphan_files.py"
 
 
 def _run_sanitization(paths: Sequence[Path]) -> int:
@@ -331,6 +371,35 @@ def validate_knowledge_sanitization() -> List[ValidationIssue]:
     return []
 
 
+def validate_orphan_files() -> List[ValidationIssue]:
+    """Run the orphan-file gate over generated/game/src/.
+
+    A `*.rs` file in src/ that has no matching `mod <name>;` in main.rs is
+    silently omitted from the crate by rustc — zero warnings, zero compiled
+    tests. The Reconciler agent learned to flag this manually after PR #10;
+    this is the mechanical complement.
+    """
+    if not CHECK_ORPHAN_FILES_SCRIPT.exists():
+        return []
+    result = subprocess.run(
+        [sys.executable, str(CHECK_ORPHAN_FILES_SCRIPT)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    if result.returncode == 0:
+        return []
+    return [
+        ValidationIssue(
+            REPO_ROOT / "generated" / "game" / "src",
+            "orphan source files present — see tooling/check_orphan_files.py "
+            "output above.",
+        )
+    ]
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Validate specs, knowledge, and IR files."
@@ -353,6 +422,7 @@ def main() -> None:
     issues.extend(validate_module_plan(REPO_ROOT / "ir" / "module_plan.yaml"))
     issues.extend(validate_reference_knowledge_integrity())
     issues.extend(validate_knowledge_sanitization())
+    issues.extend(validate_orphan_files())
 
     if issues:
         print("Validation failed:", file=sys.stderr)
