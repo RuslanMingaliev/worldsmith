@@ -43,7 +43,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KNOWLEDGE_DIR = REPO_ROOT / "knowledge"
@@ -87,6 +87,14 @@ PROPER_NOUN_LITERALS: List[Tuple[str, str]] = [
     ("mobjtype", "source-code identifier (thing-type enum)"),
     ("ammotype", "source-code identifier (ammo-type enum)"),
     ("weapontype", "source-code identifier (weapon-type enum)"),
+    # Source-code identifier prefixes — match anywhere in a token. These are
+    # the named, pre-known reference prefixes; keeping them explicit means
+    # `release-notes` mode (which drops the generic SCREAMING_SNAKE fallback)
+    # still rejects e.g. `MT_PLAYER`, `MF_SPECIAL`, `SPR_STIM`, `MN_GAMEMSG`.
+    ("mt_", "source-code identifier prefix (thing-type macro)"),
+    ("mf_", "source-code identifier prefix (mobj-flag macro)"),
+    ("spr_", "source-code identifier prefix (sprite enum)"),
+    ("mn_", "source-code identifier prefix (menu enum)"),
     # Cheat code strings — strong proper-noun risk.
     ("idkfa", "source-game cheat code"),
     ("iddqd", "source-game cheat code"),
@@ -116,7 +124,20 @@ REGEX_PATTERNS: List[Tuple[str, str]] = [
 ]
 
 
-def build_compiled_patterns() -> List[Tuple[re.Pattern, str]]:
+# The generic SCREAMING_SNAKE fallback regex is the last entry in REGEX_PATTERNS.
+# It is broad on purpose — for `knowledge/`, anything that looks like a C
+# macro is suspect. For `artifacts/release-notes.md` it over-fires on
+# worldsmith's *own* legitimate constants (e.g. `PLAYER_RADIUS_TILES` cited
+# from `specs/25`). The release-notes mode drops this one regex but keeps
+# every literal + the year-range regex — which means real source-game leaks
+# (`MT_PLAYER`, `stimpack`, `1993`) are still rejected, only via their
+# specific prefixes rather than the generic shape match.
+GENERIC_SCREAMING_SNAKE_KIND = "generic source-code macro/identifier"
+
+
+def build_compiled_patterns(
+    *, drop_generic_fallback: bool = False
+) -> List[Tuple[re.Pattern, str]]:
     compiled: List[Tuple[re.Pattern, str]] = []
     for literal, kind in PROPER_NOUN_LITERALS:
         # Word-boundary-ish match: we use case-insensitive substring search.
@@ -124,12 +145,17 @@ def build_compiled_patterns() -> List[Tuple[re.Pattern, str]]:
         pattern = re.compile(re.escape(literal), re.IGNORECASE)
         compiled.append((pattern, kind))
     for raw, kind in REGEX_PATTERNS:
+        if drop_generic_fallback and kind == GENERIC_SCREAMING_SNAKE_KIND:
+            continue
         pattern = re.compile(raw)
         compiled.append((pattern, kind))
     return compiled
 
 
-COMPILED = build_compiled_patterns()
+# Module-level COMPILED keeps the strict default for callers that import
+# `scan_file` without going through the CLI (currently none, but cheap to
+# preserve). The CLI rebuilds the list per --mode.
+COMPILED: List[Tuple[re.Pattern, str]] = build_compiled_patterns()
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +180,13 @@ def is_allowed_false_positive(line: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def scan_file(path: Path) -> List[Tuple[int, str, str, str]]:
+def scan_file(
+    path: Path,
+    compiled: Optional[List[Tuple[re.Pattern, str]]] = None,
+) -> List[Tuple[int, str, str, str]]:
     """Return list of (line_no, line, matched_text, kind) for forbidden hits."""
+    if compiled is None:
+        compiled = COMPILED
     hits: List[Tuple[int, str, str, str]] = []
     try:
         text = path.read_text(encoding="utf-8")
@@ -174,7 +205,7 @@ def scan_file(path: Path) -> List[Tuple[int, str, str, str]]:
         # the "reference/" prefix.
         if line.lstrip().startswith("- reference/") or line.startswith("reference_paths:"):
             continue
-        for pattern, kind in COMPILED:
+        for pattern, kind in compiled:
             for match in pattern.finditer(line):
                 hits.append((line_no, line.rstrip(), match.group(0), kind))
                 # one hit per pattern per line is enough
@@ -182,10 +213,13 @@ def scan_file(path: Path) -> List[Tuple[int, str, str, str]]:
     return hits
 
 
-def scan_paths(paths: List[Path]) -> int:
+def scan_paths(
+    paths: List[Path],
+    compiled: Optional[List[Tuple[re.Pattern, str]]] = None,
+) -> int:
     total_leaks = 0
     for path in paths:
-        hits = scan_file(path)
+        hits = scan_file(path, compiled=compiled)
         if not hits:
             continue
         total_leaks += len(hits)
@@ -220,6 +254,20 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Scan every *.md file in knowledge/ (excluding README.md).",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["strict", "release-notes"],
+        default="strict",
+        help=(
+            "strict (default): apply every pattern incl. the generic "
+            "SCREAMING_SNAKE fallback — appropriate for knowledge/ where any "
+            "C-shaped identifier is suspect. "
+            "release-notes: drop the generic fallback but keep all literals "
+            "and the year-range regex — appropriate for artifacts/release-notes.md "
+            "where worldsmith may legitimately cite its own constants while "
+            "real source-game leaks are still rejected via their named prefixes."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -235,12 +283,16 @@ def main() -> None:
         print("error: no files to scan (pass paths or --all)", file=sys.stderr)
         sys.exit(2)
 
-    total_leaks = scan_paths(paths)
+    compiled = build_compiled_patterns(
+        drop_generic_fallback=(args.mode == "release-notes"),
+    )
+
+    total_leaks = scan_paths(paths, compiled=compiled)
 
     if total_leaks > 0:
         print(
             f"\nSanitization FAILED: {total_leaks} forbidden token(s) across "
-            f"{sum(1 for p in paths if scan_file(p))} file(s).",
+            f"{sum(1 for p in paths if scan_file(p, compiled=compiled))} file(s).",
             file=sys.stderr,
         )
         sys.exit(1)
