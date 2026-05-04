@@ -246,7 +246,7 @@ This specification defines the player movement system for the retro shooter. Mov
 - Distance unit is one wall tile (`Tile::Wall` cells in `level_data`); the current level is approximately 20x20 tiles.
 - Tick rate: 60 FPS; THRUST_FACTOR and FRICTION are applied per frame (not scaled by delta-time).
 - Steady-state forward speed under continuous input is approximately 0.1 tiles/frame (~6 tiles/sec). MAX_SPEED leaves ~3x headroom above steady state.
-- Earlier extracted values (THRUST_FACTOR=2048, MAX_SPEED=30) assumed a 35 Hz tick rate and fixed-point units; they were rescaled for tile units at 60 FPS — see Decision 20.
+- Earlier extracted values (THRUST_FACTOR=2048, MAX_SPEED=30) assumed a 35 Hz tick rate and fixed-point units; they were rescaled for tile units at 60 FPS — see `work/decisions.md` § Decision 20 (private log; gitignored).
 
 ## Test Scenarios
 

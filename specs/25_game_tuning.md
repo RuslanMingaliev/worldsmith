@@ -8,9 +8,10 @@ This spec captures all gameplay balance constants, visual parameters, and level 
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| Health | 100 | knowledge/player_movement.md |
+| Health | 100 | knowledge/combat_balance.md § Damage to Player (Armor and Damage Reduction) |
 | Movement model | thrust + friction | Constants (THRUST_FACTOR, FRICTION, MAX_SPEED, STOP_THRESHOLD) defined in `specs/21_player_movement.md` |
 | Turn speed | 2.0 rad/sec | Tuned for 60 FPS (original was 35 ticks/sec) |
+| PLAYER_RADIUS_TILES | 0.4375 | Derived from player visual radius 14 px / `TILE_SIZE` (32). Used by `player_state::collides` to size the four-corner overlap test against `level_data::is_wall`, and referenced by name in `specs/15_level_generator.md § LocalChaseObstacle` to verify gap traversability. Captured during reconcile pass — the IR contract already cited `specs/25 § Visual` as its source but no named row existed. |
 
 ## Enemy (Basic Hitscan Trooper)
 
@@ -122,6 +123,8 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 | Exit marker | X shape, 20px | #00FFFF cyan |
 | Direction line | 20px length | #FFFF00 yellow |
 | Game over border | 10px | green tint (win) / red tint (lose) |
+| GAME_OVER_BORDER_WIN_COLOR | inlined at `renderer.rs:261` (if-arm) | #00FF80 spring green — generation default captured during reconcile pass; not yet a named `pub const`. Spec described "green tint" qualitatively; this row pins the specific shade. Distinct from `COLOR_PLAYER` (`#00FF00`) and `HUD_HEALTH_COLOR_HIGH` (`#00C000`) so the border reads as a discrete UI band rather than as a player tile or HUD element. |
+| GAME_OVER_BORDER_LOSE_COLOR | inlined at `renderer.rs:261` (else-arm) | #FF4040 tomato red — generation default captured during reconcile pass; not yet a named `pub const`. Spec described "red tint" qualitatively; this row pins the specific shade. Lighter than `COLOR_ENEMY` (`#FF0000`) and `HUD_HEALTH_COLOR_LOW` (`#C00000`) so the lose border does not visually merge with a low-health HUD or with on-screen enemies. |
 | GAME_OVER_HOLD_SEC | 2.0 sec | Generation default — minimum visibility budget for the player to register the win/lose outcome before the loop exits. Rationale: without an explicit hold, the main-loop exits on the same tick the game-over flag is set, so the colored border renders for zero frames. 2 seconds is the standard retro-shooter hold; revisit if user feedback says it's too short or too long. See specs/20 § Game Over Flow. |
 
 ### Visual Feedback
@@ -217,7 +220,7 @@ Mapping: `level = ceil(pickup_tint_count * PICKUP_TINT_LEVEL_COUNT / PICKUP_TINT
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| TRACE_STEP | 0.1 tile | Ray-march step size used by `weapon_system::fire` to find a wall impact when the trace doesn't hit an enemy. Sub-tile resolution puts the puff close to the wall surface; a smaller step trades CPU for accuracy. Closed-form line-vs-grid intersection deferred (see ADR 22). |
+| TRACE_STEP | 0.1 tile | Ray-march step size used by `weapon_system::fire` to find a wall impact when the trace doesn't hit an enemy. Sub-tile resolution puts the puff close to the wall surface; a smaller step trades CPU for accuracy. Closed-form line-vs-grid intersection deferred (see `work/decisions.md` § Decision 22, private log; gitignored). |
 
 ## Pickups
 
@@ -339,6 +342,7 @@ The autopilot bot in `src/autopilot.rs` exposes a per-frame API always compiled,
 | BOT_APPROACH_DISTANCE | 8.0 tiles | specs/30 § Objectives (`approach: distance < 8.0`) |
 | BOT_STUCK_FRAMES | 30 | specs/30 § Stuck Detection |
 | BOT_REVERSE_STRAFE_FRAMES | 60 | specs/30 § Stuck Detection |
+| BOT_KILL_MIN_RANGE | 6.0 tiles | Generation default — no knowledge backing. Hold-and-fire threshold: bot stops advancing in kill mode and fires from this distance when line-of-sight to enemy is clear. 6 tiles keeps the bot outside contact range (0.8125 tiles) with enough standoff to fire 3–5 shots before enemy closes. Increasing this risks approach-phase geometry issues; decreasing below ~2 tiles causes spread shots to miss at typical engagement distances. |
 | BOT_FACING_THRESHOLD | 0.3 rad | Generation default — captured during a reconcile pass (was inlined as `BOT_FACING_THRESHOLD` in `autopilot.rs`). Defines "roughly facing" the target (specs/30 § Bot Behavior point 2): if `\|delta_angle\| < BOT_FACING_THRESHOLD`, the bot moves forward. ~17 degrees keeps the bot from swerving while still firing only when meaningfully aligned. |
 | BOT_TURN_THRESHOLD | 0.05 rad | Generation default — captured during a reconcile pass (was inlined as `BOT_TURN_THRESHOLD` in `autopilot.rs`). Below this angular delta the bot emits `turn = 0`, preventing oscillation around the target heading at high turn speed. ~3 degrees is one-frame-of-overshoot at `PLAYER_TURN_SPEED = 2.0 rad/sec` and 60 FPS. |
 

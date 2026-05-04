@@ -113,7 +113,7 @@ Before submitting:
 - [ ] Consistent with existing specs
 - [ ] IR matches spec structure
 - [ ] Cross-references are valid
-- [ ] Every spec has an `Implementation Status` section with both Implemented and Deferred buckets populated
+- [ ] Every *behavior* spec has an `Implementation Status` section with both Implemented and Deferred buckets populated. Process-level specs (vision, system architecture, generation rules — e.g. `specs/00_project_goal.md`, `specs/10_system_model.md`, `specs/80_generation_rules.md`) are exempt: the Implemented/Deferred bucket convention does not apply to them.
 - [ ] No dangling cross-references (e.g. "see ADR N" must point to an existing decision)
 - [ ] Every spec rule that EXPLICITLY contradicts a knowledge entry (e.g. spec uses circle distance where knowledge uses AABB; spec hardcodes a value where knowledge reads from asset; spec applies a coloring policy that knowledge says the reference does NOT do) is flagged at the rule site with an inline `*(Generation default — knowledge says X; we use Y because <rationale>.)*` AND surfaced to the run journal under `### ADR candidates` for the PostMortem to elevate. Rationale: deviations that accumulate unflagged become future re-extraction questions the journal-only parking lot will lose. See `tooling/agents/postmortem.md` for the elevation pipeline.
 - [ ] If you added a new module to `ir/module_plan.yaml`, you also added its name to `main.depends_on`. `tooling/validate_specs.py` will fail otherwise.

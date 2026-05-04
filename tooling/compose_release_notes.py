@@ -194,8 +194,13 @@ def load_optional_markdown(path: Optional[Path], fallback: str) -> str:
 
 
 def run_sanitizer(target: Path) -> int:
+    # `release-notes` mode keeps every literal + the year-range regex but
+    # drops the generic SCREAMING_SNAKE fallback — see check_sanitization.py
+    # for the rationale (knowledge/ and release notes have different threat
+    # models; the fallback over-fires on worldsmith's own constants cited
+    # from specs/).
     result = subprocess.run(
-        [sys.executable, str(SANITIZER), str(target)],
+        [sys.executable, str(SANITIZER), "--mode", "release-notes", str(target)],
         cwd=REPO_ROOT,
         check=False,
     )
