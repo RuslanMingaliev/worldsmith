@@ -53,7 +53,7 @@ jobs:
           CHANGED=$(git diff --name-only "origin/$BASE_REF...HEAD")
           echo "Changed files relative to origin/$BASE_REF:"
           echo "$CHANGED"
-          if printf '%s\n' "$CHANGED" | grep -E '^(specs/|knowledge/|ir/|tooling/agents/)' > /dev/null; then
+          if printf '%s\n' "$CHANGED" | python tooling/source_of_truth_paths.py; then
             echo "needs_regen=true" >> "$GITHUB_OUTPUT"
           else
             echo "needs_regen=false" >> "$GITHUB_OUTPUT"
@@ -138,20 +138,34 @@ jobs:
             exit 1
           fi
 
-      - name: Download last release's source archive as baseline
+      - name: Fetch baseline (generated-snapshot branch, fallback to last release)
         id: baseline
         run: |
           set -e
-          mkdir -p artifacts
-          LAST_TAG=$(gh release view --json tagName -q .tagName)
-          echo "Baseline tag: $LAST_TAG"
-          echo "last_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
-          gh release download "$LAST_TAG" -p 'worldsmith-game-*-src.zip' -D artifacts
-          unzip -q "artifacts/worldsmith-game-${LAST_TAG}-src.zip" -d artifacts/baseline-extract
-          mkdir -p generated/game
-          # Archive layout is `worldsmith-game-<TAG>/<files>` — flatten into generated/game/.
-          cp -R "artifacts/baseline-extract/worldsmith-game-${LAST_TAG}/." generated/game/
-          rm -rf artifacts/baseline-extract "artifacts/worldsmith-game-${LAST_TAG}-src.zip"
+          mkdir -p generated/game artifacts
+          if git ls-remote --exit-code origin generated-snapshot >/dev/null 2>&1; then
+            git fetch origin generated-snapshot --depth=1
+            git archive --format=tar refs/remotes/origin/generated-snapshot \
+              | tar -x -C generated/game
+            SOURCE_SHA="snapshot-branch"
+            if [ -f generated/game/SNAPSHOT.json ]; then
+              SOURCE_SHA=$(jq -r .source_sha generated/game/SNAPSHOT.json)
+              rm -f generated/game/SNAPSHOT.json
+            fi
+            echo "baseline=generated-snapshot@${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+            echo "Fetched baseline from generated-snapshot (source ${SOURCE_SHA})."
+          else
+            # First-run fallback: until the snapshot branch is created by the
+            # first regen-bearing merge under the new flow, fall back to the
+            # last published release's source zip.
+            LAST_TAG=$(gh release view --json tagName -q .tagName)
+            echo "Snapshot branch missing; falling back to release ${LAST_TAG}."
+            gh release download "$LAST_TAG" -p 'worldsmith-game-*-src.zip' -D artifacts
+            unzip -q "artifacts/worldsmith-game-${LAST_TAG}-src.zip" -d artifacts/baseline-extract
+            cp -R "artifacts/baseline-extract/worldsmith-game-${LAST_TAG}/." generated/game/
+            rm -rf artifacts/baseline-extract "artifacts/worldsmith-game-${LAST_TAG}-src.zip"
+            echo "baseline=release-${LAST_TAG}" >> "$GITHUB_OUTPUT"
+          fi
           ls generated/game/
 
       - name: Determine regeneration scope
@@ -194,6 +208,23 @@ jobs:
           set -e
           xvfb-run -a cargo build --release --manifest-path generated/game/Cargo.toml
           xvfb-run -a cargo test --release --manifest-path generated/game/Cargo.toml
+
+      - name: Package regenerated source for post-merge snapshot
+        if: steps.scope.outputs.module_count != '0'
+        run: |
+          set -e
+          mkdir -p artifacts
+          tar -czf artifacts/generated-src.tar.gz -C generated/game \
+            --exclude=target --exclude=.git .
+
+      - name: Upload regenerated source artifact
+        if: steps.scope.outputs.module_count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-src
+          path: artifacts/generated-src.tar.gz
+          retention-days: 90
+          if-no-files-found: error
 
       - name: Record gameplay GIF
         run: |
@@ -287,16 +318,16 @@ jobs:
           REPO: ${{ github.repository }}
           MODULE_COUNT: ${{ steps.scope.outputs.module_count }}
           TARGETS: ${{ steps.scope.outputs.targets }}
-          BASELINE_TAG: ${{ steps.baseline.outputs.last_tag }}
+          BASELINE: ${{ steps.baseline.outputs.baseline }}
           GIF_URL: ${{ steps.gif-push.outputs.raw_url }}
           STATUS: ${{ job.status }}
         run: |
           set -e
           ARTIFACTS_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}#artifacts"
           if [ "$MODULE_COUNT" = "0" ]; then
-            SCOPE_LINE="No module-specific targets identified by partial_regen.py (likely a manual-scope spec or pure agent-prompt edit). Skipped Coder/Reconciler/PostMortem; ran cargo build/test on baseline \`${BASELINE_TAG}\` as smoke check."
+            SCOPE_LINE="No module-specific targets identified by partial_regen.py (likely a manual-scope spec or pure agent-prompt edit). Skipped Coder/Reconciler/PostMortem; ran cargo build/test on baseline \`${BASELINE}\` as smoke check."
           else
-            SCOPE_LINE="Regenerated modules from baseline \`${BASELINE_TAG}\`: \`${TARGETS}\`"
+            SCOPE_LINE="Regenerated modules from baseline \`${BASELINE}\`: \`${TARGETS}\`"
           fi
           {
             echo "## PR Checks — \`${STATUS}\`"

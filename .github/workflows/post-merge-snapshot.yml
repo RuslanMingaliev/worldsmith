@@ -1,0 +1,151 @@
+name: Snapshot regenerated source after merge
+
+# Triggered on every push to main. If the push touches source-of-truth
+# paths (specs/, knowledge/, ir/, tooling/agents/), download the
+# `generated-src` artifact from the merged PR's pr.yml run and force-push
+# its contents to the long-lived `generated-snapshot` branch. The next PR's
+# regenerate-and-build job baselines from this branch.
+#
+# Verify-only merges (no source-of-truth changes) leave the snapshot
+# untouched — the previous regen-merge stays as the canonical baseline.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: generated-snapshot
+  cancel-in-progress: false   # queue, not last-writer-wins
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need HEAD^ for the regen-detection diff
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Detect whether this push contains regen
+        id: detect
+        run: |
+          set -e
+          if git diff --name-only HEAD^..HEAD \
+             | python tooling/source_of_truth_paths.py; then
+            echo "regen=true" >> "$GITHUB_OUTPUT"
+            echo "Push touches source-of-truth paths; will update snapshot."
+          else
+            echo "regen=false" >> "$GITHUB_OUTPUT"
+            echo "Verify-only push; snapshot unchanged."
+          fi
+
+      - name: Resolve source PR
+        if: steps.detect.outputs.regen == 'true'
+        id: pr
+        run: |
+          set -e
+          PR_NUM=$(gh api "/repos/${{ github.repository }}/commits/${GITHUB_SHA}/pulls" \
+                   --jq '.[0].number // empty')
+          if [ -z "$PR_NUM" ]; then
+            echo "::warning::Direct push to main (no PR found for ${GITHUB_SHA}). Snapshot not updated."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PR_HEAD_SHA=$(gh api "/repos/${{ github.repository }}/pulls/${PR_NUM}" \
+                        --jq '.head.sha')
+          echo "number=$PR_NUM"        >> "$GITHUB_OUTPUT"
+          echo "head_sha=$PR_HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "Source PR: #${PR_NUM} (head ${PR_HEAD_SHA})."
+
+      - name: Find pr.yml run for that PR head SHA
+        if: steps.detect.outputs.regen == 'true' && steps.pr.outputs.skip != 'true'
+        id: run
+        run: |
+          set -e
+          RUN_ID=$(gh run list --workflow pr.yml \
+                     --commit "${{ steps.pr.outputs.head_sha }}" \
+                     --status success --limit 1 \
+                     --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$RUN_ID" ]; then
+            echo "::warning::No successful pr.yml run for PR #${{ steps.pr.outputs.number }} head ${{ steps.pr.outputs.head_sha }}. Snapshot not updated."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Found pr.yml run #${RUN_ID}."
+
+      - name: Download regenerated source artifact
+        if: steps.detect.outputs.regen == 'true' && steps.pr.outputs.skip != 'true' && steps.run.outputs.skip != 'true'
+        id: download
+        run: |
+          set -e
+          if ! gh run download "${{ steps.run.outputs.id }}" \
+                  --name generated-src --dir snapshot-staging; then
+            echo "::warning::generated-src artifact missing or expired for run ${{ steps.run.outputs.id }}. Snapshot not updated."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p snapshot-content
+          tar -xzf snapshot-staging/generated-src.tar.gz -C snapshot-content
+          ls snapshot-content/
+
+      - name: Build SNAPSHOT.json
+        if: steps.detect.outputs.regen == 'true' && steps.pr.outputs.skip != 'true' && steps.run.outputs.skip != 'true' && steps.download.outputs.skip != 'true'
+        run: |
+          set -e
+          # The PR's regen_targets.json is in the reports artifact (uploaded
+          # under name `pr-<N>-reports` by pr.yml). Failure to fetch it is
+          # non-fatal — module list defaults to [].
+          MODULES='[]'
+          if gh run download "${{ steps.run.outputs.id }}" \
+                --name "pr-${{ steps.pr.outputs.number }}-reports" \
+                --dir reports-staging; then
+            if [ -f reports-staging/regen_targets.json ]; then
+              MODULES=$(cat reports-staging/regen_targets.json)
+            fi
+          fi
+          jq -n \
+            --arg sha    "$GITHUB_SHA" \
+            --arg pr     "${{ steps.pr.outputs.number }}" \
+            --arg run_id "${{ steps.run.outputs.id }}" \
+            --arg ts     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson mods "$MODULES" \
+            '{source_sha: $sha, source_pr: ($pr | tonumber), pr_workflow_run_id: $run_id, regenerated_modules: $mods, timestamp: $ts}' \
+            > snapshot-content/SNAPSHOT.json
+          cat snapshot-content/SNAPSHOT.json
+
+      - name: Force-push to generated-snapshot branch
+        if: steps.detect.outputs.regen == 'true' && steps.pr.outputs.skip != 'true' && steps.run.outputs.skip != 'true' && steps.download.outputs.skip != 'true'
+        run: |
+          set -e
+          cd snapshot-content
+          git init -q -b generated-snapshot
+          git config user.name  "worldsmith-snapshot-bot"
+          git config user.email "noreply@github.com"
+          git add -A
+          git commit -q -m "snapshot: source ${GITHUB_SHA} (PR #${{ steps.pr.outputs.number }})"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git push --force origin HEAD:refs/heads/generated-snapshot
+          echo "Pushed snapshot for ${GITHUB_SHA} (PR #${{ steps.pr.outputs.number }})."
+
+      - name: Workflow summary
+        if: always()
+        run: |
+          {
+            echo "### Snapshot result"
+            echo
+            echo "- regen detected: \`${{ steps.detect.outputs.regen }}\`"
+            echo "- source PR: \`${{ steps.pr.outputs.number || 'n/a' }}\`"
+            echo "- pr.yml run: \`${{ steps.run.outputs.id || 'n/a' }}\`"
+            echo "- artifact downloaded: \`${{ steps.download.outputs.skip != 'true' && steps.detect.outputs.regen == 'true' && 'yes' || 'no' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

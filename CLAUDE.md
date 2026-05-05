@@ -113,14 +113,26 @@ Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ → C
 
 - **`validate`** — always runs. Validates specs/IR/knowledge integrity, checks `generated/` for manual edits, and computes whether the PR touches `specs/**`, `knowledge/**`, `ir/**`, or `tooling/agents/**` (the source-of-truth paths).
 - **`regenerate-and-build`** — runs only when (a) source-of-truth paths changed AND (b) the PR head is from this repo (fork PRs are skipped because the OAUTH secret is unavailable to forked workflows). Steps:
-  1. Download last release's `worldsmith-game-X-src.zip` as a baseline and unpack into `generated/game/`.
+  1. Fetch baseline from the long-lived `generated-snapshot` branch (force-pushed by `post-merge-snapshot.yml` after every regen-bearing merge). On first run before that branch exists, fall back to the last GitHub Release's `worldsmith-game-X-src.zip`.
   2. `tooling/partial_regen.py --json` — determine which modules need regeneration.
   3. Coder / Reconciler / PostMortem phases via `tooling/orchestrator_run.py --target-modules ...`. The harness snapshots `generated/game/src/` and reverts any file touched outside the listed modules — so Coder can't silently scope-creep.
   4. `cargo build/test --release` (under `xvfb-run` because autopilot tests need a display).
-  5. Record `release/demo.gif` via `tooling/record_autopilot.sh`.
-  6. Reconciler's edits to `specs/`, `knowledge/`, `ir/`, `tooling/agents/` and PostMortem's surgical edits to `tooling/agents/*.md` are captured as a unified diff and posted as **inline review suggestions** via `reviewdog/action-suggester` (only on lines this PR already touches; the rest of the diff is in the `agent_changes.diff` artifact).
-  7. PostMortem's narrative analysis (run summary, "what hurt", ADR drafts) is saved to `artifacts/postmortem.md` and linked from the PR comment.
-  8. The demo GIF is uploaded to a single shared `pr-assets` branch (auto-created on first run from `main`'s HEAD) as `pr-<N>-run-<run_id>-demo.gif`, then embedded inline in the PR status comment via its `raw.githubusercontent.com` URL. PR number + run id make filenames unique, so concurrent PR runs don't race. The branch is **never automatically pruned** — see Known Issues for cleanup.
+  5. Package the regenerated `generated/game/` into `generated-src.tar.gz` and upload it as a workflow artifact (90-day retention). `post-merge-snapshot.yml` consumes this after merge.
+  6. Record `release/demo.gif` via `tooling/record_autopilot.sh`.
+  7. Reconciler's edits to `specs/`, `knowledge/`, `ir/`, `tooling/agents/` and PostMortem's surgical edits to `tooling/agents/*.md` are captured as a unified diff and posted as **inline review suggestions** via `reviewdog/action-suggester` (only on lines this PR already touches; the rest of the diff is in the `agent_changes.diff` artifact).
+  8. PostMortem's narrative analysis (run summary, "what hurt", ADR drafts) is saved to `artifacts/postmortem.md` and linked from the PR comment.
+  9. The demo GIF is uploaded to a single shared `pr-assets` branch (auto-created on first run from `main`'s HEAD) as `pr-<N>-run-<run_id>-demo.gif`, then embedded inline in the PR status comment via its `raw.githubusercontent.com` URL. PR number + run id make filenames unique, so concurrent PR runs don't race. The branch is **never automatically pruned** — see Known Issues for cleanup.
+
+### Post-merge snapshot (`generated-snapshot` branch)
+
+`.github/workflows/post-merge-snapshot.yml` triggers on every push to `main`. Flow:
+
+1. Diff `HEAD^..HEAD` against source-of-truth prefixes via `tooling/source_of_truth_paths.py`. Verify-only merges (no spec/knowledge/IR/agent changes) exit early — the previous regen-merge stays as the canonical baseline.
+2. Resolve the source PR via `gh api commits/<sha>/pulls`. Direct pushes to `main` (no PR) are skipped with a warning.
+3. Find the latest successful `pr.yml` run for the PR's head SHA, download the `generated-src` artifact.
+4. Force-push the artifact contents (loose `Cargo.toml`, `Cargo.lock`, `src/`, `assets/`, …) plus a `SNAPSHOT.json` (`source_sha`, `source_pr`, `pr_workflow_run_id`, `regenerated_modules`, `timestamp`) to the `generated-snapshot` branch as an orphan commit — no history accumulated. Concurrency is `group: generated-snapshot, cancel-in-progress: false` so two near-simultaneous merges land in commit order.
+
+The next PR's `regenerate-and-build` step 1 fetches from this branch, so each PR baselines from the most recent regen-bearing merge instead of from the last manual release. `tooling/source_of_truth_paths.py` is the single source of truth used by both `pr.yml` impact-analysis and this workflow's regen detection — keep them in sync via the helper, never duplicate the prefix list.
 
 ### Branch protection (one-time setup)
 
@@ -171,3 +183,4 @@ Local helper: the project-level skill `/create-agent-task` (`.claude/skills/crea
 
 - Top-down view, not raycasting
 - The shared `pr-assets` branch grows by one file per PR run and is never pruned automatically. Periodic cleanup is needed — either a cron workflow that drops files older than N days, or a `pull_request: types: [closed]` workflow that deletes `pr-<N>-*.gif` for the closed PR. Not implemented yet.
+- The `generated-snapshot` branch is force-pushed and orphan-committed each time, so historical snapshots are not retained — only the latest regen-merge baseline lives there. If you need a previous baseline, fall back to the corresponding GitHub Release's `worldsmith-game-X-src.zip`. If a PR sits open for more than 90 days, its `generated-src` artifact expires and the post-merge snapshot can no longer pick it up — `post-merge-snapshot.yml` warns and skips, leaving the previous snapshot in place; refresh manually via `release.yml` if needed.
