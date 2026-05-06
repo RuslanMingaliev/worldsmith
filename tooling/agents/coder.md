@@ -15,7 +15,9 @@ You are the Coder — you generate Rust code from specifications and IR.
 
 You receive:
 - Specs from `specs/`
-- IR from `ir/`
+- IR from `ir/`. The contracts are sharded:
+  - `ir/contracts/_shared.yaml` — cross-module types (Vec2, Tile, PickupKind, Pickup, InputState), `main_cli`, `frame_update_order`, `service_emit_decisions`, `coder_degrees_of_freedom`, `intentionally_unspecified`, `spec_conflicts_resolved`. Read this every run.
+  - `ir/contracts/<module>.yaml` — one shard per module. Read only the shard for your target module; do not read other modules' shards unless you're explicitly checking a cross-module signature.
 - Generation rules from `specs/80_generation_rules.md`
 - Specific module to generate/repair
 
@@ -113,7 +115,7 @@ When you see such a scope override:
 - `main` is a regular module name in this scope model: when it appears in
   the listed set, you write to `generated/game/src/main.rs`. It contracts
   CLI flag parsing, `mod <name>;` declarations, and the render loop (see
-  `ir/module_contracts.yaml § main_cli`). When `main` is NOT in the listed
+  `ir/contracts/_shared.yaml § main_cli`). When `main` is NOT in the listed
   set, you do not edit `main.rs` — same rule as any other out-of-scope
   module.
 - Do **not** touch module files outside the listed set or `Cargo.toml`. The

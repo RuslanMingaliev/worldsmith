@@ -129,7 +129,7 @@ Source: [`knowledge/pickups.md`](../knowledge/pickups.md). Spec values that are 
 
 ### With Game Loop
 - `game_loop::update` adds Step 2.5 between `apply_input` (Step 2) and the enemy update (Step 3): scan `state.level.pickups` for the first active pickup within `PICKUP_RADIUS_TILES` of `state.player.pos` whose acceptance condition holds, and consume it.
-- The frame-update-order list in `ir/module_contracts.yaml § frame_update_order` gains the new step.
+- The frame-update-order list in `ir/contracts/_shared.yaml § frame_update_order` gains the new step.
 
 ### With Renderer
 - `renderer::draw` adds Step 2.5 (between exit/corpses and blood/puffs) drawing active pickups.

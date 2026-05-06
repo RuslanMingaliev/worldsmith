@@ -1,0 +1,132 @@
+# enemy_logic module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: enemy_logic
+file: src/enemy_logic.rs
+depends_on: [level_data, player_state, visual_effects]
+public_types:
+  - name: EnemyState
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq)]
+      pub enum EnemyState {
+          Idle,    // pre-reaction-delay
+          Chase,   // moving toward player
+          Pain,    // briefly stunned
+          Dead,    // health <= 0; corpse fade in progress or done
+      }
+  - name: Enemy
+    definition: |
+      pub struct Enemy {
+          pub pos: Vec2,
+          pub health: i32,
+          pub alive: bool,
+          pub state: EnemyState,
+          pub time_in_state: f32,    // seconds since entering current state
+          pub pain_flash_remaining: f32,  // 0.0 = no flash; counts down each tick
+          pub time_since_attack: f32,     // seconds since last contact hit (cooldown gate)
+          pub death_fade_remaining: f32,  // > 0 while in death fade; 0 when corpse should spawn
+          pub corpse_spawned: bool,       // true once spawn_enemy_corpse has fired
+      }
+public_constants:
+  - { name: ENEMY_MAX_HEALTH,         type: i32, value: "20",     source: "specs/25 § Enemy" }
+  - { name: ENEMY_SPEED_TILES_PER_SEC,type: f32, value: "2.0",    source: "specs/25 § Enemy" }
+  - { name: ENEMY_RADIUS_TILES,       type: f32, value: "0.375",  source: "specs/25 § Visual (12 px / 32 px) -- used for hit detection by weapon_system" }
+  - { name: ENEMY_REACTION_DELAY,     type: f32, value: "0.23",   source: "specs/25 § Enemy" }
+  - { name: ENEMY_ATTACK_COOLDOWN,    type: f32, value: "0.54",   source: "specs/25 § Enemy" }
+  - { name: ENEMY_PAIN_DURATION,      type: f32, value: "0.17",   source: "specs/25 § Enemy" }
+  - { name: ENEMY_PAIN_CHANCE,        type: f32, value: "0.78",   source: "specs/25 § Enemy (200/255)" }
+  - { name: ENEMY_CONTACT_RANGE_TILES,type: f32, value: "0.8125", source: "specs/25 § Enemy (player 14 + enemy 12 px = 26 px / 32 px)" }
+  - { name: ENEMY_ATTACK_DAMAGE_VALUES, type: "[i32; 5]", value: "[3, 6, 9, 12, 15]", source: "specs/25 § Enemy (formula (rand(0..4)+1)*3)" }
+public_methods:
+  - signature: "pub fn new(spawn: Vec2) -> Enemy"
+    notes: |
+      health = ENEMY_MAX_HEALTH, alive = true, state = Idle,
+      time_in_state = 0.0, pain_flash_remaining = 0.0,
+      time_since_attack = ENEMY_ATTACK_COOLDOWN (so the *first*
+      attack can fire immediately after the reaction delay),
+      death_fade_remaining = 0.0, corpse_spawned = false.
+  - signature: |
+      pub fn update(
+          enemy: &mut Enemy,
+          player: &mut Player,
+          level: &Level,
+          fx: &mut VisualEffects,
+          dt: f32,
+      )
+    notes: |
+      Per-frame AI tick. Order:
+        1. enemy.time_in_state += dt; enemy.time_since_attack += dt;
+           enemy.pain_flash_remaining = (pain_flash_remaining - dt)
+                                        .max(0.0).
+        2. Match on enemy.state:
+             Idle:
+               - if time_in_state >= ENEMY_REACTION_DELAY:
+                   transition to Chase (reset time_in_state = 0).
+             Chase:
+               - if !player.alive: do nothing.
+               - dx = player.pos - enemy.pos; dist = dx.length().
+               - if dist <= ENEMY_CONTACT_RANGE_TILES and
+                 time_since_attack >= ENEMY_ATTACK_COOLDOWN:
+                   dmg = ENEMY_ATTACK_DAMAGE_VALUES[rand_idx];
+                   player_state::take_damage(player, dmg);
+                   time_since_attack = 0.0;
+                   (no console message required; specs/20 mentions
+                    existing stdout messages but flagging their fate
+                    is a Coder decision per specs/40 line 156).
+               - else: move toward player at
+                   ENEMY_SPEED_TILES_PER_SEC * dt, blocked by
+                   level::is_wall (use axis-aligned slide identical
+                   to player_state::apply_input).
+             Pain:
+               - if time_in_state >= ENEMY_PAIN_DURATION:
+                   transition to Chase (reset time_in_state = 0).
+             Dead:
+               - if !corpse_spawned and death_fade_remaining > 0:
+                   death_fade_remaining = (death_fade_remaining
+                                           - dt).max(0.0).
+               - if !corpse_spawned and death_fade_remaining == 0:
+                   fx.spawn_enemy_corpse(enemy.pos);
+                   corpse_spawned = true;
+               - return early (do not chase/attack while dead).
+      take_damage is a SEPARATE method below; update() does not
+      call it. update() is the per-frame AI hook, so spec/80 §
+      API Surface permits direct &mut Player and &mut VisualEffects
+      (resolution A).
+  - signature: |
+      pub fn take_damage(
+          enemy: &mut Enemy,
+          amount: i32,
+          fx: &mut VisualEffects,
+      )
+    notes: |
+      Called by weapon_system::fire when the ray-march hits this
+      enemy. Behavior:
+        1. if !enemy.alive: return (already dead).
+        2. enemy.health -= amount.
+        3. if enemy.health <= 0:
+             enemy.alive = false;
+             enemy.state = EnemyState::Dead;
+             enemy.time_in_state = 0.0;
+             enemy.death_fade_remaining = ENEMY_DEATH_FADE_DURATION;
+             fx.spawn_enemy_death_fade(enemy.pos);
+             // corpse spawns later in update() per spec/40 line 100.
+        4. else if rand_f32() < ENEMY_PAIN_CHANCE:
+             enemy.state = EnemyState::Pain;
+             enemy.time_in_state = 0.0;
+             enemy.pain_flash_remaining = ENEMY_PAIN_FLASH_DURATION;
+             // spec/40 § Enemy Pain Flash: re-arm flash on every
+             // *successful* pain check, not on every hit.
+      take_damage is invoked from inside weapon_system::fire which
+      is itself the combat per-frame hook; the &mut VisualEffects
+      is therefore part of the combat tick borrow graph.
+      Spec/80 exception A applies transitively.
+cross_module_borrows:
+  - "&mut Player (apply contact damage in update)"
+  - "&Level (immutable read in update for collision)"
+  - "&mut VisualEffects (spawn pain flash, death fade, corpse) -- spec/80 exception A"
+notes: |
+  ENEMY_PAIN_FLASH_DURATION is imported from visual_effects (it is
+  a visual constant; the enemy struct just holds the current
+  remaining timer). Random helper -- enemy may use a tiny LCG;
+  Coder can share a module-private RNG with weapon_system or
+  duplicate. Coder degree of freedom.

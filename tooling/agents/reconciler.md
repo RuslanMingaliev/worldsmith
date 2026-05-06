@@ -16,7 +16,14 @@ You are the Reconciler — you compare generated code with specs and bring them 
 You receive:
 - Generated code in `generated/game/src/`
 - Specs from `specs/`
-- IR from `ir/`
+- IR from `ir/`. The contracts are sharded:
+  - `ir/contracts/_shared.yaml` — cross-module types and orchestration sections.
+    When a contract update introduces a type consumed by ≥2 modules, edit
+    `_shared.yaml` (under `shared_types`) and reference it from each consumer's
+    shard via a `note:` line.
+  - `ir/contracts/<module>.yaml` — one shard per module. Edit only the shard
+    for the affected module; do not propagate the same change across shards
+    when a single edit to `_shared.yaml` would do.
 - Knowledge from `knowledge/`
 
 ## Process

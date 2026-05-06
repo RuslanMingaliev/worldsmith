@@ -25,7 +25,17 @@ Note: Read from `knowledge/`, which contains sanitized findings without source r
 
 Produce or update:
 - Spec files in `specs/`
-- IR files in `ir/`
+- IR files in `ir/`. The contracts are sharded:
+  - `ir/contracts/_shared.yaml` — cross-module types (`shared_types`) and
+    orchestration sections (`main_cli`, `frame_update_order`,
+    `service_emit_decisions`, `coder_degrees_of_freedom`,
+    `intentionally_unspecified`, `spec_conflicts_resolved`). When a new type
+    is consumed by ≥2 modules, define it here under `shared_types` and add a
+    `note:` reference in each consumer's shard.
+  - `ir/contracts/<module>.yaml` — one shard per module entry in
+    `ir/module_plan.yaml`. When you add or modify a module's contract, edit
+    that module's shard only. When you add a new module, create the
+    corresponding shard (`tooling/validate_specs.py` enforces presence).
 - Design notes in `work/`
 - **Test-fixture YAML files under `tests/`** when a spec references them by
   filename (e.g. `tests/level/local_chase_obstacle.yaml`). Fixtures are part

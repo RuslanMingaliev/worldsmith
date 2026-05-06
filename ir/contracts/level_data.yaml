@@ -1,0 +1,55 @@
+# level_data module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: level_data
+file: src/level_data.rs
+depends_on: []
+public_types:
+  - name: Vec2
+    note: "Defined here; see shared_types.Vec2."
+  - name: Tile
+    note: "Defined here; see shared_types.Tile."
+  - name: PickupKind
+    note: "Defined here; see shared_types.PickupKind."
+  - name: Pickup
+    note: "Defined here; see shared_types.Pickup."
+  - name: Level
+    definition: |
+      pub struct Level {
+          pub width: usize,                 // GRID_WIDTH (20)
+          pub height: usize,                // GRID_HEIGHT (15)
+          pub tiles: Vec<Vec<Tile>>,        // tiles[y][x]
+          pub player_spawn: Vec2,           // tile coords (specs/25 § Level Layout)
+          pub enemy_spawns: Vec<Vec2>,      // single entry today
+          pub exit: Vec2,                   // tile coords
+          pub pickups: Vec<Pickup>,         // static pickups (specs/60)
+      }
+public_constants:
+  - { name: TILE_SIZE,    type: f32,   value: "32.0", source: "specs/25 § Visual" }
+  - { name: GRID_WIDTH,   type: usize, value: "20",   source: "specs/25 § Level Layout" }
+  - { name: GRID_HEIGHT,  type: usize, value: "15",   source: "specs/25 § Level Layout" }
+  - { name: EXIT_RADIUS,  type: f32,   value: "1.0",  source: "specs/25 § Win/Lose" }
+  - { name: PICKUP_RADIUS_TILES, type: f32, value: "1.0", source: "specs/25 § Pickups (knowledge-backed: § Pickup Touch Detection 16+16=32 units = 1 tile)" }
+public_methods:
+  - signature: "pub fn build_default() -> Level"
+    notes: |
+      Hardcoded layout from specs/25 § Level Layout: 20x15, all-edge wall
+      border, vertical interior wall x=10 y=3..8, horizontal interior wall
+      y=7 x=4..9. Player spawn (2.5, 2.5), enemy spawn (17.5, 12.5),
+      exit (17.5, 2.5). No I/O.
+      Pickups (specs/25 § Pickups § Default Level Placement):
+        pickups: vec![
+          Pickup { kind: PickupKind::Health, pos: Vec2::new(5.5, 12.5), active: true },
+          Pickup { kind: PickupKind::Ammo,   pos: Vec2::new(15.5, 7.5), active: true },
+        ]
+  - signature: "pub fn is_wall(level: &Level, tile_x: i32, tile_y: i32) -> bool"
+    notes: |
+      Boundary-safe. Out-of-bounds (negative or >= width/height) returns
+      true (treats outside the grid as solid wall). Used by player
+      collision (player_state) and weapon ray-march (weapon_system).
+cross_module_borrows: []
+notes: |
+  Owner of Vec2 and Tile shared types. No deps; first to generate.
+  EXIT_RADIUS lives here because game_loop's win check is `player.pos
+  .distance_to(level.exit) < EXIT_RADIUS` -- the level owns the exit
+  geometry, not the loop.

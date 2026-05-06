@@ -49,7 +49,7 @@ When `--autopilot <path>` is passed, `main.rs` reads the file via `std::fs::read
 
 The test runner (`#[test] fn run_all_scenarios`) and the offline `run_scenario` driver remain `#[cfg(test)]`-gated — only the per-frame primitives (`parse_scenario`, `bot_step`, `BotState`, `BotProgress`) are promoted to release.
 
-See `ir/module_contracts.yaml` § autopilot for the exact split.
+See `ir/contracts/autopilot.yaml` for the exact split.
 
 ## Frame Recording Format
 

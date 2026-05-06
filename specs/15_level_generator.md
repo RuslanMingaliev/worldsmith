@@ -30,7 +30,7 @@ The generator is consumed only by `main.rs` after CLI argument parsing (specs/35
 
 ## Demo Level Catalog
 
-The generator owns a small `DemoLevelKind` enum. Each variant maps to one builder function that returns a fully-populated `Level`. The `Level` type itself is unchanged (`ir/module_contracts.yaml § level_data.Level`, `specs/25 § Level Layout`) — same struct, same fields, same `Vec<Vec<Tile>>` grid, same `Vec<Pickup>`.
+The generator owns a small `DemoLevelKind` enum. Each variant maps to one builder function that returns a fully-populated `Level`. The `Level` type itself is unchanged (`ir/contracts/level_data.yaml § Level`, `specs/25 § Level Layout`) — same struct, same fields, same `Vec<Vec<Tile>>` grid, same `Vec<Pickup>`.
 
 | Variant | YAML name | Purpose | Implemented |
 |---------|-----------|---------|-------------|
@@ -157,7 +157,7 @@ The spec asserts that the PR workflow's "Record gameplay GIF" step (`.github/wor
 ## Constraints
 
 - **No procedural generation.** Each demo level is a hand-written builder function. No grammar, no PCG seed, no algorithmic placement. Adding a new demo level means adding one enum variant and one function.
-- **`Level` representation is unchanged.** The generator returns the same `Level` struct that `level_data::build_default` returns. No new fields, no new tile types, no new entity records. (`ir/module_contracts.yaml § level_data.Level` is unmodified.)
+- **`Level` representation is unchanged.** The generator returns the same `Level` struct that `level_data::build_default` returns. No new fields, no new tile types, no new entity records. (`ir/contracts/level_data.yaml § Level` is unmodified.)
 - **Generator is not part of gameplay runtime.** The only call sites are `main.rs` (once at startup) and the public `DemoLevelKind` type referenced by `autopilot::Scenario.level`. Per-frame paths never reference `level_generator`.
 - **Pure builder functions.** Each builder is a `fn(...) -> Level` with no I/O, no randomness, no global state. Repeated calls return byte-equal `Level` structs.
 - **Backwards compatible.** Scenarios without a `level:` field continue to use `level_data::build_default`. No existing test fixture is modified.
@@ -170,7 +170,7 @@ The spec asserts that the PR workflow's "Record gameplay GIF" step (`.github/wor
 - Spec defines the `game_loop::new(level: Level)` signature change and `main.rs`'s call-site decision.
 - Test fixture `tests/level/local_chase_obstacle.yaml` exists on disk and uses the `level: local_chase_obstacle` field plus the `approach: enemy` / `kill: enemy` objectives.
 - IR module `level_generator` is added to `ir/module_plan.yaml` (universal-sink rule applied: `main.depends_on` lists `level_generator`).
-- IR contract for `level_generator` and the autopilot / `game_loop` extensions live in `ir/module_contracts.yaml`.
+- IR contract for `level_generator` and the autopilot / `game_loop` extensions live in `ir/contracts/level_generator.yaml`, `ir/contracts/autopilot.yaml`, and `ir/contracts/game_loop.yaml`.
 - `.github/workflows/pr.yml` and `.github/workflows/release.yml` record the demo GIF using `tests/level/local_chase_obstacle.yaml` as the canonical PR-preview scenario.
 
 **Deferred:**
@@ -185,4 +185,4 @@ The spec asserts that the PR workflow's "Record gameplay GIF" step (`.github/wor
 - `specs/25_game_tuning.md § Level Layout` — the default level's dimensions and layout (kept for backwards compatibility; this spec adds an alternative builder, not a replacement).
 - `knowledge/level_scenarios.md` — knowledge basis for "scenario = tiny geometry + entity list, hand-authored, no procedural generation" and the obstacle-aware chase behavior the demo level is designed to expose.
 - `ir/module_plan.yaml` — module-graph entry for `level_generator`.
-- `ir/module_contracts.yaml § level_generator` — the public API of the generator; § autopilot — the extended `Scenario` shape; § game_loop — the new `new(level)` signature.
+- `ir/contracts/level_generator.yaml` — the public API of the generator; `ir/contracts/autopilot.yaml` — the extended `Scenario` shape; `ir/contracts/game_loop.yaml` — the new `new(level)` signature.

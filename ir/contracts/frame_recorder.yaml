@@ -1,0 +1,56 @@
+# frame_recorder module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: frame_recorder
+file: src/frame_recorder.rs
+cfg_test_only_module: false
+depends_on: [presentation]
+public_types:
+  - name: FrameRecorder
+    definition: |
+      pub struct FrameRecorder {
+          file: std::fs::File,
+          frames_written: u64,
+      }
+    notes: |
+      Owns a buffered writer over a target file. `frames_written` is
+      public so main.rs can log "recorded N frames to <path>" on exit
+      without re-stat-ing the file. Coder may add a private
+      BufWriter wrapper internally.
+public_constants: []
+public_methods:
+  - signature: "pub fn open(path: &str) -> std::io::Result<FrameRecorder>"
+    notes: |
+      Opens `path` for write (truncate-create). Wraps in a
+      BufWriter::with_capacity(WINDOW_WIDTH * WINDOW_HEIGHT * 4)
+      so each frame is at most one syscall.
+  - signature: "pub fn write_frame(rec: &mut FrameRecorder, framebuffer: &[u32]) -> std::io::Result<()>"
+    notes: |
+      Writes the framebuffer as raw bytes (native endian) to the file.
+      Length is checked: framebuffer.len() must equal
+      WINDOW_WIDTH * WINDOW_HEIGHT, panic with a clear message
+      otherwise (this is a programming error, not a runtime failure).
+      Increments rec.frames_written by 1 on success.
+      Implementation: `rec.file.write_all(unsafe-free reinterpret
+      via bytemuck-not-allowed)` — use the safe form
+      `for px in framebuffer { rec.file.write_all(&px.to_ne_bytes())?; }`
+      OR build a `&[u8]` slice via `framebuffer.as_ptr() as *const u8`
+      inside `unsafe { std::slice::from_raw_parts(...) }` -- the
+      latter is forbidden (specs/80 § Safety: no unsafe). Use the
+      per-pixel write_all loop; the BufWriter coalesces.
+  - signature: "pub fn close(rec: FrameRecorder) -> std::io::Result<()>"
+    notes: |
+      Explicit close so main.rs can surface flush errors instead of
+      swallowing them in Drop. Calls flush, returns the result.
+      Drop is also implemented (default — File flushes on drop) but
+      callers should prefer explicit close in --record-frames mode.
+cross_module_borrows:
+  - "&[u32] framebuffer (read-only); &mut self for write_frame"
+notes: |
+  Consumed only by main.rs when --record-frames is passed. No other
+  module references frame_recorder.
+
+  The Vec<u32> framebuffer this writes is the same object renderer::draw
+  filled. Order in main.rs: draw -> window.update_with_buffer ->
+  frame_recorder::write_frame. Capturing AFTER the window update means
+  we record what the user sees, not an off-by-one frame.

@@ -185,7 +185,9 @@ Step 1: Delete generated/game/src/*.rs
 
 Step 1.5: Architect (contracts pass)
   INPUT:  specs/, ir/module_plan.yaml, knowledge/
-  OUTPUT: ir/module_contracts.yaml — for each module being regenerated:
+  OUTPUT: ir/contracts/<module>.yaml shards (one per module being regenerated)
+          and ir/contracts/_shared.yaml (cross-module types and orchestration
+          sections). Each per-module shard pins:
           - exact public type signatures (struct names + field types)
           - exact public method signatures (name + full argument list,
             including any `&mut OtherModuleType` parameter)
@@ -193,19 +195,25 @@ Step 1.5: Architect (contracts pass)
             MUST be listed with the service `&mut` parameter pinned, OR
             flagged as "returns description, orchestrator emits" per
             spec/80 § API Surface.
-  CHECK:  every module in module_plan.yaml has a contract entry; every
-          cross-module `&mut` parameter is named.
+          When a new type is shared by ≥2 modules, write its definition to
+          ir/contracts/_shared.yaml under `shared_types` and reference it
+          from each consuming module's shard via a `note:` line.
+  CHECK:  every module in module_plan.yaml has a corresponding
+          ir/contracts/<name>.yaml shard; every cross-module `&mut` parameter
+          is named. tooling/validate_specs.py enforces shard presence.
   REQUIRED: when ≥2 modules will be generated in any single Coder wave
           (i.e. parallel waves) OR when shared types cross module boundaries.
           Skipping the contracts pass forces Coders back to Opus per
           Decision 27's fallback rule.
 
 Step 2: Coder (all modules, in dependency order from ir/module_plan.yaml)
-  INPUT:  specs/, ir/ (incl. module_contracts.yaml), knowledge/
+  INPUT:  specs/, ir/ (each Coder reads ir/contracts/_shared.yaml plus its
+          own ir/contracts/<module>.yaml), knowledge/
   OUTPUT: all modules + main.rs
   CHECK:  cargo check, cargo test pass; if Coder needs to deviate from a
-          signature in module_contracts.yaml, escalate to Orchestrator —
-          do NOT silently change the signature.
+          signature in its ir/contracts/<module>.yaml shard or in
+          ir/contracts/_shared.yaml, escalate to Orchestrator — do NOT
+          silently change the signature.
 
 Step 3: Reconciler
   INPUT:  all generated code, all specs
