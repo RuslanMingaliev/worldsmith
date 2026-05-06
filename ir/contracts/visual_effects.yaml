@@ -38,7 +38,11 @@ public_constants:
   - { name: MUZZLE_OFFSET,         type: f32, value: "0.5",  source: "specs/25 § Visual Feedback / Muzzle Flash (tile units)" }
   # Tracer
   - { name: TRACER_DURATION,  type: f32, value: "0.06", source: "specs/25 § Visual Feedback / Hit-Scan Tracer" }
-  - { name: TRACER_THICKNESS, type: f32, value: "1.0",  source: "specs/25 § Visual Feedback / Hit-Scan Tracer (px)" }
+  # TRACER_THICKNESS is documentation-only; the renderer draws single-pixel
+  # Bresenham lines and consumes no runtime constant. Removed from public
+  # surface per spec/80 § API Surface "no dead pub exports" during reconcile
+  # pass. The 1-px design value lives as a comment at visual_effects.rs:16
+  # and is documented in specs/25 § Hit-Scan Tracer.
   # Puff
   - { name: PUFF_DURATION, type: f32, value: "0.30", source: "specs/25 § Visual Feedback / Wall Puff" }
   - { name: PUFF_RADIUS,   type: f32, value: "4.0",  source: "specs/25 § Visual Feedback / Wall Puff (px)" }

@@ -118,8 +118,11 @@ public_types:
       }
     cfg_test_only: true
 public_constants:
-  # Always-compiled bot tunables (consumed by bot_step in both paths)
-  - { name: BOT_FRAME_RATE,         type: f32, value: "60.0",   source: "specs/30 § Execution Rules", cfg_test_only: false }
+  # Always-compiled bot tunables (consumed by bot_step in both paths).
+  # BOT_FRAME_RATE is module-private (no cross-module consumer) per spec/80
+  # § API Surface "no dead pub exports" — only BOT_FRAME_TIME (which is
+  # 1.0 / BOT_FRAME_RATE) crosses the module boundary, consumed by main.rs
+  # in --autopilot mode. Reconciled during reconcile pass.
   - { name: BOT_FRAME_TIME,         type: f32, value: "0.01666667", source: "specs/30 § Execution Rules (1/60)", cfg_test_only: false }
   - { name: BOT_MAX_FRAMES,         type: u32, value: "3600",   source: "specs/30 § Execution Rules (60 sec)", cfg_test_only: false }
   - { name: BOT_REACH_DISTANCE,     type: f32, value: "1.0",    source: "specs/30 § Objectives (reach)", cfg_test_only: false }
