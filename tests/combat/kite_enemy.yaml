@@ -1,0 +1,11 @@
+scenario: kite_enemy
+description: Bot kites an enemy spawned inside BOT_KITE_RANGE — back-pedals while firing and avoids contact damage
+level: kite_melee
+
+objectives:
+  - kill: enemy
+
+assertions:
+  - player.alive: true
+  - enemy.alive: false
+  - player.health: "> 80"

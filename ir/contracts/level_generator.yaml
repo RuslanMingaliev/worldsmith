@@ -11,15 +11,16 @@ public_types:
       #[serde(rename_all = "snake_case")]
       pub enum DemoLevelKind {
           LocalChaseObstacle,
+          KiteMelee,
       }
     notes: |
       Public because autopilot::Scenario.level holds
       Option<DemoLevelKind> (specs/15 § Scenario YAML Extension), so
       serde_yaml can deserialize the YAML name directly into the
       enum. `rename_all = "snake_case"` maps `LocalChaseObstacle`
-      -> `local_chase_obstacle` for YAML readability. Adding a new
-      demo level: add one variant here and one match arm in build()
-      below; nothing else changes.
+      -> `local_chase_obstacle` and `KiteMelee` -> `kite_melee`
+      for YAML readability. Adding a new demo level: add one variant
+      here and one match arm in build() below; nothing else changes.
 public_constants: []
 public_methods:
   - signature: "pub fn build(kind: DemoLevelKind) -> Level"
@@ -32,9 +33,10 @@ public_methods:
       Implementation pattern (one match arm per variant):
         match kind {
             DemoLevelKind::LocalChaseObstacle => build_local_chase_obstacle(),
+            DemoLevelKind::KiteMelee          => build_kite_melee(),
         }
-      where build_local_chase_obstacle() is a private helper that
-      returns the Level layout pinned in specs/15 § LocalChaseObstacle.
+      where each helper is a private function returning the Level
+      layout pinned in specs/15 § <variant>.
   - signature: "fn build_local_chase_obstacle() -> Level"
     notes: |
       Module-private. Builds the LocalChaseObstacle layout from
@@ -51,6 +53,23 @@ public_methods:
       introduce new constants. Coder may inline the layout (one
       double-loop over the grid is the obvious form) or use a small
       helper -- the *Level* it produces is what matters.
+  - signature: "fn build_kite_melee() -> Level"
+    notes: |
+      Module-private. Builds the KiteMelee layout from specs/15 §
+      KiteMelee. Concretely:
+        width = GRID_WIDTH (20); height = GRID_HEIGHT (15);
+        tiles[y][x] = Wall iff (x == 0 || x == 19 || y == 0 || y == 14)
+                      else Floor;
+        player_spawn = Vec2::new(4.5, 7.5);
+        enemy_spawns = vec![Vec2::new(6.0, 7.5)];
+        exit         = Vec2::new(1.5, 1.5);
+        pickups      = vec![];   // no pickups
+      No interior walls. Distance from player_spawn to the lone
+      enemy_spawn is 1.5 tiles -- inside BOT_KITE_RANGE (2.0,
+      specs/25 § Autopilot) so the bot enters kite mode on frame 1,
+      and outside ENEMY_CONTACT_RANGE_TILES (0.8125, specs/25 §
+      Enemy) so the bot has buffer to back-pedal before contact
+      damage starts.
 cross_module_borrows: []
 notes: |
   Consumed by main.rs at startup (one call per --autopilot launch

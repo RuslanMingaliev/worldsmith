@@ -35,6 +35,7 @@ The generator owns a small `DemoLevelKind` enum. Each variant maps to one builde
 | Variant | YAML name | Purpose | Implemented |
 |---------|-----------|---------|-------------|
 | `LocalChaseObstacle` | `local_chase_obstacle` | Demonstrates obstacle-aware enemy chase: one wall between player and enemy, valid path around. | yes |
+| `KiteMelee` | `kite_melee` | Demonstrates the bot's kite policy: enemy spawns within `BOT_KITE_RANGE`, bot must back-pedal while firing (specs/30 § Bot Behavior). | yes |
 
 ### LocalChaseObstacle
 
@@ -63,6 +64,26 @@ The generator owns a small `DemoLevelKind` enum. Each variant maps to one builde
 Either gap is wide enough for both the player (radius `0.4375` tile per `PLAYER_RADIUS_TILES`) and the enemy (radius `0.375` tile per `ENEMY_RADIUS_TILES`) to traverse with margin. The reference's chase routine (knowledge/level_scenarios.md § Obstacle-Aware Chase) prefers a direct diagonal toward the target; with the obstacle blocking that diagonal, the routine falls through to perpendicular alternates and then "continue old direction" — producing the characteristic "skim along the wall" path that this demo is meant to show.
 
 **Visual reading of the GIF.** With both player and enemy moving toward each other, the enemy hits the obstacle first (because the bot stops when it reaches firing range, while the enemy continues to close to contact range). The enemy then takes a perpendicular along the wall, rounds the corner at one of the gaps, and resumes the chase. The bot, separately, navigates around the same obstacle to close the distance for `kill: enemy`. The chase path is visible for several seconds before the engagement begins.
+
+### KiteMelee
+
+**Purpose.** A short scenario that demonstrates the bot's kite policy (specs/30 § Bot Behavior). The enemy spawns inside `BOT_KITE_RANGE` of the player, so on the very first frame the bot enters kite mode (`forward = -1.0`) and back-pedals while continuing to fire. The level is otherwise empty so the back-pedal motion and falling enemy health are the only things on screen — the test verifies that the kite branch is wired up, not that the bot can also navigate.
+
+**Layout** (20 × 15 grid — same dimensions and `TILE_SIZE` as the default level):
+
+- All edges are walls (border): `x = 0`, `x = 19`, `y = 0`, `y = 14`.
+- No interior walls. The room is one open rectangle.
+
+**Spawns:**
+
+| Entity | Position | Rationale |
+|--------|----------|-----------|
+| Player spawn | `(4.5, 7.5)` | West side, vertically centered. Player faces `+X` (default heading) so the enemy lies directly along the firing line. |
+| Enemy spawn | `(6.0, 7.5)` | 1.5 tiles east of the player. Inside `BOT_KITE_RANGE` (2.0) so the bot enters kite mode on frame 1, but outside `ENEMY_CONTACT_RANGE_TILES` (0.8125) so the bot can back-pedal one or two frames before contact damage starts. |
+| Exit | `(1.5, 1.5)` | Far top-left corner; the `kill: enemy` objective never directs the bot toward the exit, so the win-condition check is not triggered. |
+| Pickups | (none) | Empty `Vec<Pickup>`. Pickups would distract from the kite visualization and would also let the bot recover health during the test, which would dilute the `player.health > 80` assertion. |
+
+**Behavior to observe.** The bot starts inside kite range with the enemy directly east. On frame 1 the bot fires (LoS clear, `dist = 1.5 < BOT_FIRE_MAX_RANGE`, roughly facing) and emits `forward = -1.0` (kite mode). The bot retreats westward; the enemy chases at 2.0 tiles/sec. The pistol kills the enemy in 2–4 shots (mean 10 dmg vs 20 HP); during those ~1.0–2.0 seconds the bot may take one or two contact hits if the enemy briefly closes inside contact range, but `player.health > 80` should hold across the run because (a) first-shot accuracy lands the first hit, (b) 78% pain chance interrupts the enemy's chase frequently, and (c) the bot's max speed exceeds the enemy's 2.0 tiles/sec.
 
 ## Scenario YAML Extension
 
@@ -165,16 +186,18 @@ The spec asserts that the PR workflow's "Record gameplay GIF" step (`.github/wor
 ## Implementation Status
 
 **Implemented:**
-- Spec defines the `DemoLevelKind` enum, the `level_generator::build` function, and the `LocalChaseObstacle` variant.
+- Spec defines the `DemoLevelKind` enum, the `level_generator::build` function, and two variants: `LocalChaseObstacle` and `KiteMelee`.
 - Spec defines the `level:` scenario YAML field and its fall-back semantics.
 - Spec defines the `game_loop::new(level: Level)` signature change and `main.rs`'s call-site decision.
 - Test fixture `tests/level/local_chase_obstacle.yaml` exists on disk and uses the `level: local_chase_obstacle` field plus the `approach: enemy` / `kill: enemy` objectives.
+- `KiteMelee` is exercised by `level_generator` unit tests (`test_kite_melee_*` in `src/level_generator.rs`) which cover dimensions, spawn placement, the open-arena layout, the no-pickup invariant, and the within-`BOT_KITE_RANGE` distance assertion.
+- Test fixture `tests/combat/kite_enemy.yaml` exists on disk and uses the `level: kite_melee` field, the `kill: enemy` objective, and the `player.health > 80` assertion. `autopilot::run_all_scenarios` exercises the kite policy end-to-end alongside the unit tests above.
 - IR module `level_generator` is added to `ir/module_plan.yaml` (universal-sink rule applied: `main.depends_on` lists `level_generator`).
 - IR contract for `level_generator` and the autopilot / `game_loop` extensions live in `ir/contracts/level_generator.yaml`, `ir/contracts/autopilot.yaml`, and `ir/contracts/game_loop.yaml`.
 - `.github/workflows/pr.yml` and `.github/workflows/release.yml` record the demo GIF using `tests/level/local_chase_obstacle.yaml` as the canonical PR-preview scenario.
 
 **Deferred:**
-- Additional demo level variants beyond `LocalChaseObstacle` (e.g. corridor chase, multi-enemy fan-out, pickup-scavenge tutorial). Add a variant to `DemoLevelKind` and a builder function as the need arises.
+- Additional demo level variants beyond `LocalChaseObstacle` and `KiteMelee` (e.g. corridor chase, multi-enemy fan-out, pickup-scavenge tutorial). Add a variant to `DemoLevelKind` and a builder function as the need arises.
 - Authoring fixtures for additional demo levels.
 - Allowing scenarios to override the default level's *contents* (e.g. a scenario that uses the default geometry but adds an extra enemy) — this would require either splitting `Level` into geometry-vs-entities or adding a separate "scenario overlay" concept. Not needed for the current PR-preview goal.
 

@@ -75,8 +75,11 @@ jobs:
 
       - name: Install Claude CLI
         run: |
-          curl -fsSL https://claude.ai/install.sh | bash
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          set -e
+          # See pr.yml — claude.ai/install.sh native installer is currently
+          # broken. npm install bypasses it.
+          sudo npm install -g @anthropic-ai/claude-code
+          claude --version
 
       - name: Run pipeline
         env:
@@ -271,8 +274,10 @@ jobs:
 
       - name: Install Claude CLI (for release_editor phase)
         run: |
-          curl -fsSL https://claude.ai/install.sh | bash
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          set -e
+          # See pr.yml — claude.ai/install.sh is broken; npm install bypasses.
+          sudo npm install -g @anthropic-ai/claude-code
+          claude --version
 
       - name: Download generation artifacts
         uses: actions/download-artifact@v4

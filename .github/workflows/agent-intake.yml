@@ -63,8 +63,14 @@ jobs:
 
       - name: Install Claude CLI
         run: |
-          curl -fsSL https://claude.ai/install.sh | bash
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          set -e
+          # `claude.ai/install.sh` (native installer) regressed: it downloads
+          # the binary, runs its `install` subcommand which silently fails to
+          # place the launcher anywhere, and then `rm -f`s the download — so
+          # nothing ends up on disk. npm install lands the same CLI via the
+          # standard package mechanism, bypassing the broken native flow.
+          sudo npm install -g @anthropic-ai/claude-code
+          claude --version
 
       - name: Assert OAUTH secret is present
         run: |
