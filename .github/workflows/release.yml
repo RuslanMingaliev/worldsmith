@@ -76,38 +76,10 @@ jobs:
       - name: Install Claude CLI
         run: |
           set -e
-          # Installer (Claude Code 2.1.129+) sometimes fails to place its
-          # launcher at ~/.local/bin/claude even when the directory exists.
-          # Locate the binary defensively after install and add its dir to PATH.
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL https://claude.ai/install.sh | bash
-
-          CLAUDE_BIN=""
-          for candidate in \
-              "$HOME/.local/bin/claude" \
-              "$HOME/.claude/local/claude" \
-              "$HOME/.claude/bin/claude" \
-              ; do
-            if [ -x "$candidate" ]; then
-              CLAUDE_BIN="$candidate"
-              break
-            fi
-          done
-
-          if [ -z "$CLAUDE_BIN" ]; then
-            echo "::error::claude binary not found at any expected location after install"
-            echo "--- find $HOME (maxdepth 7) ---"
-            find "$HOME" -maxdepth 7 \( -name claude -o -name 'claude.*' \) 2>/dev/null | head -30 || true
-            echo "--- ls -la \$HOME/.claude (if exists) ---"
-            ls -la "$HOME/.claude" 2>/dev/null || true
-            echo "--- ls -la \$HOME/.local (if exists) ---"
-            ls -la "$HOME/.local" 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "Found claude at: $CLAUDE_BIN"
-          dirname "$CLAUDE_BIN" >> "$GITHUB_PATH"
-          "$CLAUDE_BIN" --version
+          # See pr.yml — claude.ai/install.sh native installer is currently
+          # broken. npm install bypasses it.
+          sudo npm install -g @anthropic-ai/claude-code
+          claude --version
 
       - name: Run pipeline
         env:
@@ -303,32 +275,9 @@ jobs:
       - name: Install Claude CLI (for release_editor phase)
         run: |
           set -e
-          # See pr.yml's matching step — installer sometimes fails to place
-          # claude at ~/.local/bin/claude. Locate defensively.
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL https://claude.ai/install.sh | bash
-
-          CLAUDE_BIN=""
-          for candidate in \
-              "$HOME/.local/bin/claude" \
-              "$HOME/.claude/local/claude" \
-              "$HOME/.claude/bin/claude" \
-              ; do
-            if [ -x "$candidate" ]; then
-              CLAUDE_BIN="$candidate"
-              break
-            fi
-          done
-
-          if [ -z "$CLAUDE_BIN" ]; then
-            echo "::error::claude binary not found at any expected location after install"
-            find "$HOME" -maxdepth 7 \( -name claude -o -name 'claude.*' \) 2>/dev/null | head -30 || true
-            exit 1
-          fi
-
-          echo "Found claude at: $CLAUDE_BIN"
-          dirname "$CLAUDE_BIN" >> "$GITHUB_PATH"
-          "$CLAUDE_BIN" --version
+          # See pr.yml — claude.ai/install.sh is broken; npm install bypasses.
+          sudo npm install -g @anthropic-ai/claude-code
+          claude --version
 
       - name: Download generation artifacts
         uses: actions/download-artifact@v4
