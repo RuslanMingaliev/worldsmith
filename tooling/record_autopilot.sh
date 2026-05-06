@@ -5,7 +5,7 @@
 #   tooling/record_autopilot.sh <scenario.yaml> [output.gif]
 #
 # Defaults:
-#   scenario  = tests/combat/kill_enemy.yaml
+#   scenario  = tests/level/scavenge_run.yaml
 #   output    = release/demo.gif
 #
 # Behavior:
@@ -41,7 +41,7 @@ readonly PIXEL_FORMAT="bgr0"   # minifb framebuffer is 0x00RRGGBB native-endian 
 # ---------------------------------------------------------------------------
 # Args
 # ---------------------------------------------------------------------------
-readonly SCENARIO="${1:-tests/combat/kill_enemy.yaml}"
+readonly SCENARIO="${1:-tests/level/scavenge_run.yaml}"
 readonly OUTPUT="${2:-release/demo.gif}"
 # Sibling mp4: same basename, .mp4 extension. Encoded from the same raw
 # stream as the gif, so both artifacts are frame-aligned.

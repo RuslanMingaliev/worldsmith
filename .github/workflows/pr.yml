@@ -236,7 +236,7 @@ jobs:
         run: |
           set -e
           mkdir -p release
-          xvfb-run -a tooling/record_autopilot.sh tests/level/local_chase_obstacle.yaml release/demo.gif
+          xvfb-run -a tooling/record_autopilot.sh tests/level/scavenge_run.yaml release/demo.gif
           ls -la release/
 
       - name: Push demo GIF to shared pr-assets branch (for inline embed)

@@ -114,10 +114,25 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 | Grid size | 20 x 15 tiles |
 | Tile size | 32 px |
 | Player spawn | (2.5, 2.5) |
-| Enemy spawn | (17.5, 12.5) |
 | Exit position | (17.5, 2.5) |
 | Border | All edges are walls |
-| Interior walls | Vertical segment x=10, y=3..8; horizontal y=7, x=4..9 |
+
+### Enemy spawns
+
+`level_data::build_default()` populates two basic-trooper enemies (`Vec<Vec2>` order matters — `Scenario` targets resolve to the first alive enemy in this list):
+
+| Order | Position (tile coords) | Rationale |
+|-------|------------------------|-----------|
+| 1 | (17.5, 12.5) | Existing SE-corner spawn. Kept first so `tests/combat/kill_enemy.yaml`, `tests/level/{complete_level,scavenge_run}.yaml` and any other fixture that expects "the enemy" at this position keeps working. Generation default — no knowledge backing. |
+| 2 | (4.5, 11.5) | SW spawn — geographically isolated from the spawn → enemy 1 → ammo → exit corridor used by `scavenge_run.yaml`, so it does not chase down the primary trajectory. Provides multi-enemy combat in `tests/level/local_chase_obstacle.yaml`-equivalents that target this position explicitly, and gives the recorded demo a second engagement. Generation default — no knowledge backing. |
+
+### Interior walls
+
+| Segment | Coordinates | Rationale |
+|---------|-------------|-----------|
+| Central divider (north half) | x=10, y=3..8 | Existing. Forces NS traversal in the upper half via columns 1-9 at y<3 OR columns 11-18 at y<3. |
+| Mid-left horizontal | y=7, x=4..9 | Existing. Separates the lower-left pocket (around the SW health pickup) from the upper region; bot must go around via x<4 or x>9. |
+| SE pocket cover | y=10, x=13..15 | New — three-tile horizontal cover north of the SE enemy. The bot's BFS path approaches the SE enemy from the east via column 16+ (open) rather than a straight diagonal, giving the demo a visible "round the corner" beat without changing the column-1-to-19 connectivity. Generation default — no knowledge backing. |
 
 ## Visual
 
@@ -251,11 +266,12 @@ Behavior spec: [`60_pickups.md`](60_pickups.md). Knowledge: [`knowledge/pickups.
 
 ### Default Level Placement
 
-Two pickups in `level_data::build_default()`:
+Three pickups in `level_data::build_default()`:
 
 | Pickup | Position (tile coords) | Rationale |
 |--------|------------------------|-----------|
 | Health | (5.5, 12.5) | Generation default — south corridor, off the direct path from spawn → enemy → exit. Rationale: rewards exploration; player must detour from the optimal kill-then-exit path to find it. Tests the refused-at-cap rule because at full health the player can intentionally skip it. |
+| Health | (12.5, 4.5) | Generation default — north of the central wall divider, on the natural BFS path between spawn and the SE enemy at (17.5, 12.5). With two enemies in the default level the bot is more likely to take damage during the run; this pickup sits on a low-detour line so `BOT_HEALTH_PICKUP_THRESHOLD`-triggered routing fires when HP drops below 50%. Generation default — no knowledge backing. |
 | Ammo | (15.5, 7.5) | Generation default — east of the interior horizontal wall, on a natural approach line toward the enemy at (17.5, 12.5). Rationale: lies on the path the player will most likely take; reinforces the "ammo replenish before combat" loop. Sized so a player who fired wastefully on the way still has ammo for the encounter. |
 
 ### Sprite Visual

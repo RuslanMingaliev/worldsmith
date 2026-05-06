@@ -86,6 +86,10 @@ TRIGGER_CONFIG = {
             # specs/60 § Pickup Entity: Pickup type + pickups field live here.
             "specs/60_pickups.md",
             "knowledge/pickups.md",
+            # specs/25 § Level Layout + § Default Level Placement pin the
+            # default level's grid/spawns/walls/pickups consumed by
+            # `level_data::build_default()`. Edits there must regenerate.
+            "specs/25_game_tuning.md",
         ],
         "game_loop": [
             # specs/60 § Per-Frame Pickup Check: Step 2.5 lives in game_loop::update.
