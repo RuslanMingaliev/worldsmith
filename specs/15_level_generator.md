@@ -191,12 +191,12 @@ The spec asserts that the PR workflow's "Record gameplay GIF" step (`.github/wor
 - Spec defines the `game_loop::new(level: Level)` signature change and `main.rs`'s call-site decision.
 - Test fixture `tests/level/local_chase_obstacle.yaml` exists on disk and uses the `level: local_chase_obstacle` field plus the `approach: enemy` / `kill: enemy` objectives.
 - `KiteMelee` is exercised by `level_generator` unit tests (`test_kite_melee_*` in `src/level_generator.rs`) which cover dimensions, spawn placement, the open-arena layout, the no-pickup invariant, and the within-`BOT_KITE_RANGE` distance assertion.
+- Test fixture `tests/combat/kite_enemy.yaml` exists on disk and uses the `level: kite_melee` field, the `kill: enemy` objective, and the `player.health > 80` assertion. `autopilot::run_all_scenarios` exercises the kite policy end-to-end alongside the unit tests above.
 - IR module `level_generator` is added to `ir/module_plan.yaml` (universal-sink rule applied: `main.depends_on` lists `level_generator`).
 - IR contract for `level_generator` and the autopilot / `game_loop` extensions live in `ir/contracts/level_generator.yaml`, `ir/contracts/autopilot.yaml`, and `ir/contracts/game_loop.yaml`.
 - `.github/workflows/pr.yml` and `.github/workflows/release.yml` record the demo GIF using `tests/level/local_chase_obstacle.yaml` as the canonical PR-preview scenario.
 
 **Deferred:**
-- Test fixture `tests/combat/kite_enemy.yaml` (would use `level: kite_melee`, `kill: enemy`, and assert `player.health > 80`). Not yet authored — `tests/` is outside the regen scope of the Coder phase, so the YAML must be added by a maintainer or a follow-up agent task. Until then `KiteMelee` is exercised only by unit tests, not by `autopilot::run_all_scenarios`.
 - Additional demo level variants beyond `LocalChaseObstacle` and `KiteMelee` (e.g. corridor chase, multi-enemy fan-out, pickup-scavenge tutorial). Add a variant to `DemoLevelKind` and a builder function as the need arises.
 - Authoring fixtures for additional demo levels.
 - Allowing scenarios to override the default level's *contents* (e.g. a scenario that uses the default geometry but adds an extra enemy) — this would require either splitting `Level` into geometry-vs-entities or adding a separate "scenario overlay" concept. Not needed for the current PR-preview goal.
