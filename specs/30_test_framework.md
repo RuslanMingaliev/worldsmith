@@ -59,7 +59,8 @@ Objectives are executed sequentially. Each must complete before the next begins.
 | Objective | Behavior |
 |-----------|----------|
 | `kill: <target>` | Navigate to target, attack until dead |
-| `reach: <target>` | Navigate to target position (distance < 1.0) |
+| `reach: <position-target>` | Navigate to target position. Completes when `distance(player.pos, target_pos) < BOT_REACH_DISTANCE` (1.0). Position targets: `exit`, `spawn`. |
+| `reach: pickup_<kind>` | Travel to and **consume** the first active `<kind>` pickup. Completes when `resolve_target_pos` returns `None` — i.e. no active pickup of that kind remains, because the bot collected it (or the level had none). The proximity check is intentionally NOT used for pickup targets: the bot's BFS path runs over a tile grid and "within `BOT_REACH_DISTANCE`" can be satisfied by the bot's continuous position without it actually walking onto the pickup tile, which is what `game_loop` uses to flip `pickup.active = false`. Without this rule the objective completes on proximity, the bot moves on, and the BFS path away from the pickup orbits without ever consuming it. |
 | `approach: <target>` | Get within weapon range of target (distance < 8.0) |
 | `wait: <frames>` | Do nothing for N frames |
 
@@ -70,10 +71,10 @@ Objectives are executed sequentially. Each must complete before the next begins.
 | `enemy` | First alive enemy position; falls back to first enemy's last position, then to `exit`, if no enemies are alive. |
 | `exit` | Level exit position |
 | `spawn` | Player spawn position |
-| `pickup_health` | First active health pickup position (specs/60). Falls back to player's current position when no active health pickup remains, so a `reach: pickup_health` objective trivially completes once all health pickups are consumed. **Partial drift**: current code in `resolve_pos_target` uses `find(kind == Health)` without filtering `active`, so a consumed (inactive) pickup's position is still returned instead of falling back to the player's position. |
-| `pickup_ammo` | First active ammo pickup position (specs/60). Same fallback rule as `pickup_health`. Same partial drift as above. |
+| `pickup_health` | First active health pickup (filtered by `kind == Health` AND `active == true`, per `specs/60 § Pickup Entity § Transitions`). Returns `None` when no active health pickup remains; combined with the `reach: pickup_<kind>` completion rule above, this means the objective completes (rather than stalls) once the bot has collected the pickup or the level had none to begin with. |
+| `pickup_ammo` | First active ammo pickup. Same filter and completion semantics as `pickup_health`. |
 
-The fallback semantics for pickup targets are deliberate: a scavenge-style scenario like `reach: pickup_health → reach: pickup_ammo → reach: exit` should not stall when a pickup is missing or already consumed — it should treat that objective as already satisfied and move on. The `active` filter and fallback are not yet enforced in code (flagged as drift; fix in next Coder pass).
+The "first active" filter is critical to the `reach: pickup_<kind>` semantics: it must distinguish between "pickup still on the floor" (objective unmet, keep routing toward it) and "pickup already collected" (objective satisfied, advance to next). Pickups can only deactivate, never reactivate within a run (`specs/60 § Pickup Entity § Transitions`), so the active filter encodes exactly the binary the objective check needs.
 
 ## Assertions
 
@@ -315,17 +316,11 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 - **Not yet implemented** (return "unknown assertion field" error at runtime): `player.position.x`, `player.position.y`, `enemy.health`, `game.running`.
 - Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
 - Bot behavior: turn-toward objective, BFS pathfinding with periodic replan and bee-line fallback, kite at `BOT_KITE_RANGE`, range-gated firing at `BOT_FIRE_MAX_RANGE`, LoS-gated firing via tile-grid ray-cast, stuck detection with strafe recovery as fallback.
+- Pickup-seeking path modifiers — HP-threshold health routing (`BOT_HEALTH_PICKUP_THRESHOLD`) and ammo opportunism with detour-budget (`BOT_PICKUP_DETOUR_BUDGET`), per § Pickup-Seeking. Layered on top of the existing BFS path-follow logic; kite mode and combat firing decisions are unchanged.
+- `reach: pickup_<kind>` completes on actual pickup consumption (`pickup.active == false`), not on proximity, per § Objectives.
 - Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, 3600-frame max.
 - Per-frame API (`parse_scenario`, `BotState`, `BotProgress`, `bot_step`) always compiled for `--autopilot` mode (specs/35).
 - Batch driver (`run_scenario`, `run_all_scenarios`) gated behind `#[cfg(test)]`.
-
-**Pending Coder pass (specified, not yet generated):**
-- Pickup-seeking path modifiers — HP-threshold health routing
-  (`BOT_HEALTH_PICKUP_THRESHOLD`) and ammo opportunism with detour-budget
-  (`BOT_PICKUP_DETOUR_BUDGET`). Both layered on top of the existing
-  BFS path-follow logic; kite mode and combat firing decisions are
-  unchanged. Modifier priority pinned in § Pickup-Seeking § Modifier
-  priority.
 
 **Deferred:**
 - Objectives that require game features not yet implemented (e.g., `kill: boss`, multi-enemy targeting).
