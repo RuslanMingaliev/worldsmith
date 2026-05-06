@@ -53,7 +53,14 @@ Read each generated module. For every numeric constant, struct field default, or
 - Is it derived from a knowledge file?
 - Or was it invented during generation?
 
-If invented → add to `specs/25_game_tuning.md` with source marked as "generation default — needs extraction".
+If invented → split the entry into TWO writes:
+
+1. **Canonical row in `specs/25_game_tuning.md`**: `Constant | Value | Brief rationale (≤1 sentence). (see reconcile_log#<anchor>)`. Keep this terse — it is the row downstream Coder/PostMortem phases will re-read every regen, and it must stay stable across the pass.
+2. **Audit-trail entry in `work/reconcile_history.md`** (gitignored): the full provenance — where the constant was inlined in code, what alternatives were considered, the run that captured it, any "captured during reconcile pass" / "was inlined as X in <file>.rs" notes, and the cross-references to other constants. Anchor each entry with `## <CONSTANT_NAME>` so the spec row's `(see reconcile_log#<anchor>)` resolves.
+
+Why split? The canonical row is read N times per regen (once per Coder invocation). The audit trail is read 0 times by agents — it exists for human review across runs. Inlining the audit trail invalidates the prompt cache for every downstream phase whenever a new constant is captured. See `tooling/orchestrator_run.py` § FROZEN_CONTEXT_FILES for why cache stability matters.
+
+`work/` is gitignored, so the audit log accumulates locally and is included in the run journal artifact via PostMortem; do not try to commit it.
 
 ### Step 2: Check spec coverage
 
@@ -96,7 +103,7 @@ Produce a summary:
 - [warning]: [drift / pre-existing noise / fixed]
 
 ### Values captured
-- [constant]: [value] → added to specs/25_game_tuning.md
+- [constant]: [value] → canonical row added to specs/25_game_tuning.md; provenance appended to work/reconcile_history.md#<anchor>
 
 ### Specs updated
 - [spec file]: marked [feature] as deferred
@@ -112,7 +119,8 @@ The report must also be appended to `work/pipeline_run_<tag>.md` (the run journa
 
 ## Output
 
-- Updated `specs/25_game_tuning.md` (new constants)
+- Updated `specs/25_game_tuning.md` (new constants — canonical row only: value + ≤1-sentence rationale + `(see reconcile_log#<anchor>)`)
+- Appended `work/reconcile_history.md` (gitignored audit trail — full provenance for each new constant)
 - Updated spec files (implementation status sections)
 - Reconcile report (printed to conversation)
 
