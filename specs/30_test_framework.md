@@ -103,17 +103,50 @@ Checked after the simulation ends (all objectives complete or timeout).
 
 ## Bot Behavior
 
-The bot is a simple agent that:
-1. Turns toward the current objective target
-2. Moves forward when roughly facing the target
-3. Fires when in weapon range and aligned with enemy
-4. Detects stuck situations and strafes to unstick
+The bot is a deterministic per-frame controller that derives `InputState` from the current `GameState` plus the active scenario objective. It implements four explicit policies — **LoS-gated firing**, **range-gated firing**, **kiting**, and **BFS pathfinding** — so scenarios can stress combat behavior alongside navigation. Stuck detection remains as a backstop for cases the BFS planner cannot resolve (e.g. a dynamic occupant on a tile the planner treats as walkable).
 
-The bot does not need to be smart — it needs to be reliable enough to complete simple scenarios. Complex AI is not a goal.
+The bot is narrow-purpose. It drives scenario validation and the PR-preview demo, not general gameplay; it is autopilot tooling, not reference-derived gameplay AI. Constants below are project-internal tuning defaults — none are knowledge-backed (see [`25_game_tuning.md § Autopilot`](25_game_tuning.md#autopilot-bot-tuning)).
 
-### Stuck Detection
+### Per-frame Decision
 
-If the bot's position hasn't changed for 30 frames, it begins strafing. After 60 frames stuck, it reverses strafe direction. This handles simple obstacle situations.
+Each frame the bot resolves the active objective's target position, computes `dist = player.pos.distance_to(target_pos)`, and emits an `InputState`:
+
+1. **Turn toward target.** Emit `turn` with sign matching the angular delta and magnitude 1.0, except when `|delta_angle| < BOT_TURN_THRESHOLD` (emit `turn = 0` to suppress oscillation around the target heading).
+2. **Pick a movement mode:**
+   - **Kite mode** — when the active objective targets an enemy (`kill: enemy` or `approach: enemy`) AND `dist < BOT_KITE_RANGE`: emit `forward = -1.0` (back-pedal). The bot keeps facing the target so LoS for firing is preserved while the player position retreats.
+   - **Path-follow mode** — otherwise: follow the next waypoint from the BFS path (see § Pathfinding). The bot turns toward the waypoint's center and emits `forward = +1.0` once roughly facing it.
+3. **Decide whether to fire** (combat objectives only, i.e. `kill`):
+   - `dist < BOT_FIRE_MAX_RANGE`,
+   - AND `has_line_of_sight(player.pos, target_pos, &level)` returns true,
+   - AND `|delta_angle| < BOT_FACING_THRESHOLD`.
+
+   The previous gate (`roughly_facing && dist < BOT_APPROACH_DISTANCE + ENEMY_RADIUS_TILES`) is retired. Range and LoS replace it. `BOT_APPROACH_DISTANCE` is no longer a fire gate; it remains the success threshold for the `approach:` objective only.
+
+### Line-of-sight Test
+
+`has_line_of_sight(from, to, &level)` is a tile-grid ray-cast. It samples points along the line segment from `from` to `to` at step `BOT_FIRE_LOS_RAY_STEP` (in tile units) and returns `false` as soon as a sampled point lands inside a `Tile::Wall`; otherwise `true`. Step size is a CPU/accuracy tradeoff — sized so a one-tile-wide gap reliably reads as transparent at all reasonable angles. A closed-form 2D DDA is allowed (`coder_degrees_of_freedom` covers the implementation choice) provided the wall-hit semantics match.
+
+### Pathfinding
+
+`find_path(from, to, &level) -> Vec<(usize, usize)>` runs a breadth-first search over the tile grid:
+
+- Graph nodes are walkable tiles (`Tile::Floor`).
+- Edges are **4-connected** (N/S/E/W). Diagonals are not edges. This keeps path geometry compatible with the existing axis-aligned wall-slide behavior used by `player_state` and `enemy_logic`.
+- BFS starts at the tile containing `from` (floor of `from.x`, `from.y`) and ends at the tile containing `to`, returning the tile sequence including both endpoints.
+- The first tile after `from` is the next waypoint. The bot turns toward the waypoint center and moves forward; once within one tile's worth of progress to that waypoint, the bot consumes it and advances to the next.
+- **Replan cadence.** Recomputation runs every `BOT_PATH_REPLAN_FRAMES` frames OR whenever the objective's target position has moved by more than one tile since the last plan. BFS over the 20×15 grid is cheap but still allocates; per-frame replanning is wasteful.
+- **Fallback.** If BFS finds no path (target unreachable, or `to` is inside a wall on this frame), the bot falls back to bee-lining toward the straight-line target. This preserves behavior for objectives whose target resolves to a position not on the walkable graph (e.g. a transient frame where the enemy's tile-rounded position lands inside a wall).
+
+The pathfinding internals (turn-toward, waypoint-consume distance, kite vs path-follow precedence when both apply) are listed under `coder_degrees_of_freedom` in `ir/contracts/_shared.yaml`.
+
+### Stuck Detection (Fallback)
+
+Stuck detection remains as a backstop for cases BFS cannot resolve:
+
+- Another agent (typically an enemy) standing on the bot's next waypoint.
+- A path that the bot cannot physically traverse due to player-radius collision near a corner.
+
+If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. After `BOT_REVERSE_STRAFE_FRAMES`, it reverses strafe direction. Behavior is unchanged from earlier revisions; what changed is its role — primary navigation is BFS, strafing only kicks in when BFS-driven motion is itself blocked.
 
 ## Execution Rules
 
@@ -143,7 +176,7 @@ If the bot's position hasn't changed for 30 frames, it begins strafing. After 60
 - Assertion fields: `player.alive`, `player.health`, `enemy.alive`, `game.won`, `game.frames` — these five are implemented in `autopilot::eval_assertion`.
 - **Not yet implemented** (return "unknown assertion field" error at runtime): `player.position.x`, `player.position.y`, `enemy.health`, `game.running`.
 - Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
-- Bot behavior: turn-toward objective, move-forward when roughly facing, fire when aligned and in range, stuck detection with strafe recovery.
+- Bot behavior: turn-toward objective, BFS pathfinding with periodic replan and bee-line fallback, kite at `BOT_KITE_RANGE`, range-gated firing at `BOT_FIRE_MAX_RANGE`, LoS-gated firing via tile-grid ray-cast, stuck detection with strafe recovery as fallback.
 - Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, 3600-frame max.
 - Per-frame API (`parse_scenario`, `BotState`, `BotProgress`, `bot_step`) always compiled for `--autopilot` mode (specs/35).
 - Batch driver (`run_scenario`, `run_all_scenarios`) gated behind `#[cfg(test)]`.
