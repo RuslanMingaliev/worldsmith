@@ -45,6 +45,38 @@ AGENTS_DIR = REPO_ROOT / "tooling" / "agents"
 DEFAULT_USAGE = REPO_ROOT / "artifacts" / "usage.jsonl"
 GENERATED_SRC_DIR = REPO_ROOT / "generated" / "game" / "src"
 
+# Read-only inputs that are stable across all phases of a regen pass. Inlined
+# verbatim at the top of every agent prompt so the Anthropic prompt-cache
+# matches their prefix across consecutive `claude -p` calls — agents can still
+# Read these via tool call, but the inlined copy is what the cache keys off.
+#
+# STRICT ALLOWLIST: only files that the regen pass DOES NOT mutate may appear
+# here. specs/25_game_tuning.md (Reconciler writes to it) and the per-module
+# ir/contracts/<module>.yaml shards (Architect writes to them) are deliberately
+# excluded. The assertion below guards against accidental additions.
+FROZEN_CONTEXT_FILES: List[str] = [
+    "specs/00_project_goal.md",
+    "specs/10_system_model.md",
+    "specs/80_generation_rules.md",
+    "ir/game_ir.yaml",
+    "ir/module_plan.yaml",
+    "ir/contracts/_shared.yaml",
+]
+
+_FROZEN_FORBIDDEN_PREFIXES = (
+    "specs/25_game_tuning.md",  # Reconciler writes
+    "ir/contracts/",            # per-module shards (only _shared.yaml allowed)
+)
+for _path in FROZEN_CONTEXT_FILES:
+    for _bad in _FROZEN_FORBIDDEN_PREFIXES:
+        if _path.startswith(_bad) and _path != "ir/contracts/_shared.yaml":
+            raise AssertionError(
+                f"FROZEN_CONTEXT_FILES contains mutable file `{_path}`. "
+                f"Only stable, regen-pass-immutable files belong here — agents "
+                f"that write to a file must NOT see it inlined as frozen "
+                f"context (the cache key would invalidate every time)."
+            )
+
 PHASES = ["extractor", "architect", "coder", "reconciler", "postmortem", "release_editor"]
 
 # Tools each phase is permitted to invoke. Conservative defaults — broaden
@@ -73,6 +105,34 @@ class PhaseUsage:
     notes: List[str] = field(default_factory=list)
 
 
+def build_frozen_context() -> str:
+    """Inline every file in FROZEN_CONTEXT_FILES verbatim. Missing files are
+    skipped with a sentinel line so the prompt is still well-formed (e.g. on
+    a checkout that predates the file)."""
+    sections: List[str] = []
+    for rel_path in FROZEN_CONTEXT_FILES:
+        path = REPO_ROOT / rel_path
+        sections.append(f"### {rel_path}\n")
+        if path.exists():
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                sections.append(f"_(read error: {exc})_\n")
+                continue
+            sections.append(f"```\n{content}\n```\n")
+        else:
+            sections.append("_(file not present in this checkout)_\n")
+    body = "\n".join(sections)
+    header = (
+        "## Frozen context\n\n"
+        "The files below are read-only inputs for this regen pass. They are "
+        "inlined here so the prompt cache hits across consecutive agent "
+        "invocations. You may still re-read them via the Read tool; the "
+        "inlined copy is for cache stability, not for restricting your access."
+    )
+    return f"{header}\n\n{body}"
+
+
 def build_prompt(phase: str, mode: str, scope: Optional[str]) -> str:
     role_prompt_path = AGENTS_DIR / f"{phase}.md"
     if not role_prompt_path.exists():
@@ -96,7 +156,10 @@ def build_prompt(phase: str, mode: str, scope: Optional[str]) -> str:
         "`artifacts/blocker.md` and exit. When you are done, exit normally."
     )
 
-    return "\n\n".join([framing, scope_block, "---", role_prompt])
+    # Order matters for prompt-cache prefix matching: most-stable content first.
+    # frozen_context is identical across every phase + scope combination, so it
+    # forms the largest cacheable prefix.
+    return "\n\n".join([build_frozen_context(), framing, scope_block, "---", role_prompt])
 
 
 # Pin per-phase. CLI default is Sonnet 4.6 (200K) which blew up on issue #6.
