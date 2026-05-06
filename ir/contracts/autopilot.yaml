@@ -135,6 +135,8 @@ public_constants:
   - { name: BOT_FIRE_MAX_RANGE,      type: f32, value: "10.0",   source: "specs/25 § Autopilot (Generation default — no knowledge backing; max distance at which the bot fires)", cfg_test_only: false }
   - { name: BOT_FIRE_LOS_RAY_STEP,   type: f32, value: "0.1",    source: "specs/25 § Autopilot (Generation default — no knowledge backing; step size for has_line_of_sight tile-grid ray-cast in tile units)", cfg_test_only: false }
   - { name: BOT_PATH_REPLAN_FRAMES,  type: u32, value: "30",     source: "specs/25 § Autopilot (Generation default — no knowledge backing; cap on BFS replan cadence)", cfg_test_only: false }
+  - { name: BOT_HEALTH_PICKUP_THRESHOLD, type: f32, value: "0.5", source: "specs/25 § Autopilot (Generation default — no knowledge backing; HP fraction of PLAYER_MAX_HEALTH below which the bot routes via the nearest active health pickup before resuming the current objective)", cfg_test_only: false }
+  - { name: BOT_PICKUP_DETOUR_BUDGET, type: u32, value: "4",      source: "specs/25 § Autopilot (Generation default — no knowledge backing; max extra BFS path tiles the bot will detour to grab an opportunistic ammo pickup)", cfg_test_only: false }
   - { name: BOT_RNG_SEED,           type: u64, value: "0xC0FFEE", source: "specs/35 § Determinism (Generation default — Coder may pick any fixed constant; record in work/decisions.md)", cfg_test_only: false }
 public_methods:
   # ---- Always compiled
@@ -177,11 +179,44 @@ public_methods:
              dist(player.pos, target_pos) < BOT_KITE_RANGE;
            - else path-follow: take the next waypoint from the BFS
              plan, turn toward it, emit forward = +1.0 once roughly
-             facing it.
+             facing it. Path destination may be redirected via a
+             pickup tile by step 3a (pickup-seeking modifiers).
+        3a. Pickup-seeking modifiers (specs/30 § Pickup-Seeking) —
+            evaluated only on path replan, only in path-follow mode,
+            only when kite mode is NOT active. At most one modifier
+            applies per replan; HP-threshold wins over ammo opportunism.
+            - HP-threshold health routing: if
+                player.health < BOT_HEALTH_PICKUP_THRESHOLD
+                                * PLAYER_MAX_HEALTH
+              AND any Pickup with kind == Health, active == true exists,
+              the BFS path destination is redirected to the nearest such
+              pickup (Manhattan over BFS graph; index-tie-break).
+              Once the bot's tile-position equals the pickup tile and
+              game_loop has flipped active to false, the next replan
+              re-evaluates and (now that no active health pickup at the
+              same index satisfies the trigger) routes to the original
+              objective target.
+            - Ammo opportunism: when HP-threshold did NOT activate,
+                player.ammo < PLAYER_AMMO_MAX
+              AND any Pickup with kind == Ammo, active == true exists,
+              compute detour = via_pickup_len - direct_len for each
+              candidate over the BFS graph. The candidate with smallest
+              detour <= BOT_PICKUP_DETOUR_BUDGET wins (index tie-break).
+              Two-segment path (player → pickup → target) is followed
+              for the next BOT_PATH_REPLAN_FRAMES; on the next replan
+              after pickup consumption the modifier deactivates.
+            Both modifiers are PATH MODIFIERS — they redirect the BFS
+            path destination, but the active objective and its success
+            condition are unchanged. Firing decisions in step 4 still
+            gate off objective_target, not pickup_target.
         4. Fire iff the active objective is `kill:` AND
              dist < BOT_FIRE_MAX_RANGE
              AND has_line_of_sight(player.pos, target_pos, &level)
              AND |delta_angle| < BOT_FACING_THRESHOLD.
+           Note: dist and target_pos are the OBJECTIVE target (the
+           enemy), not the pickup-seeking modifier's intermediate
+           target. While routing toward a pickup the bot may still
+           fire at an enemy along the way if all four gates hold.
         5. Stuck-detect fallback (BOT_STUCK_FRAMES /
            BOT_REVERSE_STRAFE_FRAMES) is unchanged in mechanics;
            strafe activates when BFS-driven motion is itself blocked.
@@ -197,6 +232,15 @@ public_methods:
             Replan cadence per BOT_PATH_REPLAN_FRAMES OR target moved
             > 1 tile since last plan. Empty Vec on no-path; bot
             falls back to bee-lining the straight-line target.
+        - pickup-seeking selection helpers — Coder-internal. The
+          shape of these helpers (a single fn that returns
+          Option<(usize_pickup_index, Vec2_pickup_pos)>, vs. two
+          separate fns for health vs ammo, vs. inlined logic in
+          bot_step) is unspecified; pinning the public surface to
+          the modifier behavior in specs/30 § Pickup-Seeking
+          suffices. Whichever helper shape the Coder picks must be
+          private (module-internal) to avoid spec/80 § "no dead pub
+          exports".
 
       Bot RNG (used for stuck-detection strafe direction picks etc.)
       is module-private and seeded from BOT_RNG_SEED in BotState::new(),

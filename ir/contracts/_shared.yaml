@@ -268,6 +268,8 @@ coder_degrees_of_freedom:
   - "Whether weapon_system and enemy_logic share an RNG seed via a small private helper module or each carry their own."
   - "Internal struct ordering / field layout details that do not change the public API."
   - "Bot pathfinding internals in autopilot (turn-toward, stuck-detect, strafe heuristic). The public Scenario / Objective shape is pinned; the bot logic is not."
+  - "Bot pickup-seeking helper shape in autopilot — single fn returning Option<(usize, Vec2)> vs. separate health/ammo selectors vs. inlined logic in bot_step. Whichever shape is picked, it MUST stay module-private (specs/80 § API Surface). The behavior is pinned in specs/30 § Pickup-Seeking; the helper shape is not."
+  - "Whether the ammo-opportunism two-segment path is computed as one concatenated BFS or as two replans (player→pickup, then pickup→target after consumption). Both meet the spec; option (b) reuses single-target BFS without modification."
   - "Choice of slide algorithm in player_state and enemy_logic (axis-aligned per spec/21; the per-axis order and the integer-vs-float of the radius check are Coder-internal)."
   - "Whether VisualEffect lifetime decay uses retain() or a manual swap_remove loop -- both meet the spec."
 

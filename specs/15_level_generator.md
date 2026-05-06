@@ -175,6 +175,55 @@ The default level (no `level:` field) remains the right choice for regression-st
 
 The spec asserts that the PR workflow's "Record gameplay GIF" step (`.github/workflows/pr.yml`) and `tooling/record_autopilot.sh`'s default scenario should both name `tests/level/local_chase_obstacle.yaml`. Updating those files is a workflow concern; see `work/pipeline_run_2026-05-03.md § Run-level follow-ups` for the maintainer task list (the agent-intake commit scope does not cover `.github/` or `tooling/` outside `tooling/agents/`, so the workflow swap ships separately).
 
+## Variant policy
+
+When `level_generator::DemoLevelKind` gains a new variant, the same PR
+(or a linked agent-task issue created before merge) MUST either:
+
+1. Land a paired `tests/<category>/<variant>.yaml` scenario that exercises
+   the variant end-to-end via `autopilot::run_all_scenarios`, OR
+2. Mark the variant in this spec's § Implementation Status table as
+   `Deferred — YAML follow-up: <issue link>`. The issue link is required
+   (not just the literal word "Deferred") so the follow-up is trackable
+   rather than silently carried.
+
+**Rationale.** A `DemoLevelKind` variant without an end-to-end fixture
+ships dead-code-shaped public API: the builder function compiles and
+the enum variant exists, but no `tests/**/*.yaml` exercises the resulting
+`Level`. The next regen pass cannot detect drift because no scenario
+asserts on the variant's behavior. Worse, if the variant is added with
+the intent of being used as a future demo target, a maintainer reading
+the catalog has no way to tell which variants are wired through the
+autopilot path and which are awaiting fixtures.
+
+Captured from PR #25 PostMortem run 2: when `KiteMelee` was first added,
+its builder shipped without a paired `tests/combat/kite_enemy.yaml` and
+the variant was effectively unreachable from `run_all_scenarios` until a
+follow-up commit (`6aa25e8` — "tests: author tests/combat/kite_enemy.yaml
+end-to-end fixture") landed the missing fixture. The commit gap was a
+silent regression-coverage hole in the intervening days. This policy
+prevents the same shape of gap recurring.
+
+**Enforcement.** The policy is editorial — neither `tooling/validate_specs.py`
+nor `cargo test` mechanically checks that every `DemoLevelKind` variant
+has a fixture (`run_all_scenarios` only iterates the existing fixtures, so
+an orphan variant simply doesn't get exercised — no error fires). The
+Architect agent is responsible for upholding the policy when proposing a
+new variant, and the Reconciler agent is responsible for flagging an
+orphan variant in the post-Coder review pass. Reviewers (human or
+ultrareview-bot) should reject a PR that adds a variant without one of
+the two outcomes above.
+
+**Fixture authoring.** When the policy chooses outcome (1), the fixture
+file is part of the spec — the Architect authors it alongside the spec
+edit (per `tooling/agents/architect.md` § Output: "Test-fixture YAML files
+under `tests/` when a spec references them by filename"). The Coder does
+not author fixtures (its scope is `generated/`). The agent-intake
+workflow's `git add` scope (`specs knowledge ir tooling/agents`) does NOT
+include `tests/`, so a fixture authored during agent-intake must ship in
+a follow-up maintainer commit — same workflow gap as the demo-GIF swap
+described in § PR Preview Integration.
+
 ## Constraints
 
 - **No procedural generation.** Each demo level is a hand-written builder function. No grammar, no PCG seed, no algorithmic placement. Adding a new demo level means adding one enum variant and one function.

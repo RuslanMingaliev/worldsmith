@@ -114,7 +114,7 @@ Each frame the bot resolves the active objective's target position, computes `di
 1. **Turn toward target.** Emit `turn` with sign matching the angular delta and magnitude 1.0, except when `|delta_angle| < BOT_TURN_THRESHOLD` (emit `turn = 0` to suppress oscillation around the target heading).
 2. **Pick a movement mode:**
    - **Kite mode** — when the active objective targets an enemy (`kill: enemy` or `approach: enemy`) AND `dist < BOT_KITE_RANGE`: emit `forward = -1.0` (back-pedal). The bot keeps facing the target so LoS for firing is preserved while the player position retreats.
-   - **Path-follow mode** — otherwise: follow the next waypoint from the BFS path (see § Pathfinding). The bot turns toward the waypoint's center and emits `forward = +1.0` once roughly facing it.
+   - **Path-follow mode** — otherwise: follow the next waypoint from the BFS path (see § Pathfinding). The path's destination is normally the objective target tile, but may be temporarily redirected via a pickup tile by the pickup-seeking modifiers (see § Pickup-Seeking). The bot turns toward the waypoint's center and emits `forward = +1.0` once roughly facing it.
 3. **Decide whether to fire** (combat objectives only, i.e. `kill`):
    - `dist < BOT_FIRE_MAX_RANGE`,
    - AND `has_line_of_sight(player.pos, target_pos, &level)` returns true,
@@ -138,6 +138,144 @@ Each frame the bot resolves the active objective's target position, computes `di
 - **Fallback.** If BFS finds no path (target unreachable, or `to` is inside a wall on this frame), the bot falls back to bee-lining toward the straight-line target. This preserves behavior for objectives whose target resolves to a position not on the walkable graph (e.g. a transient frame where the enemy's tile-rounded position lands inside a wall).
 
 The pathfinding internals (turn-toward, waypoint-consume distance, kite vs path-follow precedence when both apply) are listed under `coder_degrees_of_freedom` in `ir/contracts/_shared.yaml`.
+
+### Pickup-Seeking (Path Modifier)
+
+Pickup-seeking is a **path modifier** layered on top of the existing
+objective system. The active objective (`kill:` / `approach:` / `reach:` /
+`wait:`) does NOT change when pickup-seeking activates — the bot still
+evaluates objective completion against the original objective target.
+What changes is the BFS path's destination tile: the bot routes via a
+pickup tile, then resumes routing toward the objective target.
+
+Two distinct modifiers exist; both feed into the same underlying BFS
+mechanism.
+
+#### HP-threshold health routing
+
+**Trigger.** On any path replan (per `BOT_PATH_REPLAN_FRAMES`, or when the
+objective target moves > 1 tile), if the bot is in path-follow mode AND
+`player.health < BOT_HEALTH_PICKUP_THRESHOLD * PLAYER_MAX_HEALTH` AND there
+exists at least one `Pickup` in `level.pickups` with
+`kind == PickupKind::Health` and `active == true`, the modifier activates.
+
+**Effect.** The "intermediate target" tile is set to the nearest active
+health pickup's tile (Manhattan distance over the BFS graph; ties broken
+by the pickup's index in `level.pickups` for determinism). The BFS path
+is computed from `player.pos` to this intermediate tile. The bot follows
+that path. Once the bot's tile-position equals the pickup's tile (by which
+point `game_loop`'s per-frame pickup check has consumed the pickup, flipping
+its `active` flag to `false`), the next replan re-evaluates: the trigger
+fails (no `active == true` pickup at that index any more), the modifier
+deactivates, and the BFS path retargets the original objective.
+
+**Edge cases.**
+- **Pickup unreachable.** If BFS to the intermediate target returns an
+  empty path (the pickup is enclosed in walls), the modifier no-ops for
+  this replan and the bot routes directly to the objective target.
+  Re-evaluated on the next replan.
+- **Pickup consumed before bot arrives.** Cannot happen in the prototype:
+  only the bot can consume pickups (the basic-trooper enemy ignores them
+  per `specs/60`). For a future multi-pickup-consumer world, the
+  same edge case as "unreachable" applies — the next replan re-evaluates.
+- **Health restored above threshold mid-route.** The modifier deactivates
+  on the next replan (HP check fails) and the bot retargets the original
+  objective. The bot does NOT immediately abandon its current waypoint;
+  it finishes the in-flight waypoint then replans.
+- **`reach: pickup_health` objective active.** No special interaction —
+  the trigger condition still fires if HP is low and the objective's
+  pickup target equals the modifier's intermediate target, the BFS path
+  is computed once toward that single tile, and the original objective
+  completes when the bot reaches it. If the objective targets a *different*
+  pickup, both targets are in `level.pickups`; the modifier picks the
+  nearest active health pickup, which may or may not be the objective's
+  target. The objective's target wins for objective completion; the
+  modifier's target wins for movement.
+
+**Concurrent-objective interaction.** The modifier is a path modifier, NOT
+an objective. It does not pause `kill:` / `approach:` / `reach:` / `wait:`
+progression. While routing toward the health pickup, the bot still:
+- evaluates firing decisions against the original objective target
+  (kill/approach combat objectives — the bot may fire at an enemy along
+  the route to the pickup if LoS, range, and facing all hold);
+- counts frames toward `wait:` countdowns;
+- checks `reach:` distance against the original objective target.
+
+#### Ammo opportunism
+
+**Trigger.** On any path replan, if the bot is in path-follow mode AND the
+HP-threshold modifier did NOT activate this replan AND
+`player.ammo < PLAYER_AMMO_MAX` AND there exists at least one `Pickup` in
+`level.pickups` with `kind == PickupKind::Ammo` and `active == true`, the
+modifier evaluates the detour cost.
+
+**Effect.** For each candidate active ammo pickup, compute:
+- `direct_len = len(find_path(player.pos, objective_target))`
+- `via_pickup_len = len(find_path(player.pos, pickup.pos))
+                  + len(find_path(pickup.pos, objective_target))`
+- `detour = via_pickup_len - direct_len`
+
+If any candidate has `detour <= BOT_PICKUP_DETOUR_BUDGET`, the candidate
+with the smallest `detour` (ties broken by index in `level.pickups`) is
+chosen. The BFS path the bot follows for the next `BOT_PATH_REPLAN_FRAMES`
+is the `player.pos → pickup.pos → objective_target` two-segment path.
+The bot consumes the first segment, the pickup is collected on arrival
+(per `game_loop`'s per-frame check), the pickup goes inactive, and on
+the next replan the trigger fails (this pickup no longer counts) so the
+bot retargets the original objective directly.
+
+**Edge cases.**
+- **Two-segment path implementation.** The contract is that the bot's
+  next waypoint is the next tile along the `player → pickup → target`
+  joined path. The Coder may either (a) compute both BFS segments
+  separately and concatenate, or (b) treat the pickup tile as a forced
+  intermediate via two replans (first replan: `player → pickup`; on
+  arrival, second replan: `pickup → target`). Both meet the spec; option
+  (b) is simpler and reuses the existing single-target BFS.
+- **No active ammo pickup, or all detours exceed budget.** The modifier
+  no-ops and the bot routes directly to the objective target.
+- **Multiple candidates with `detour <= budget`.** Cheapest detour wins.
+  Index-order tie-break keeps two candidates with equal detour
+  deterministic.
+- **Pickup blocks the direct path.** If the ammo pickup's tile already
+  lies on the direct BFS path (`detour == 0`), the modifier still fires
+  and the bot collects the pickup as part of its normal traversal — same
+  behavior as without the modifier, which is fine.
+
+**Concurrent-objective interaction.** Same as HP-threshold: the modifier
+is a path modifier, not an objective. Firing, `wait:` countdowns, and
+objective completion checks all run against the original objective target.
+
+#### Modifier priority
+
+When multiple modifiers could apply, the priority is:
+
+1. **Kite mode wins over both modifiers.** Kite mode (specs/30 § Per-frame
+   Decision step 2) activates when the active objective targets an enemy
+   AND `dist < BOT_KITE_RANGE`. While kiting, the bot back-pedals (`forward
+   = -1.0`) and does not follow a BFS path at all — pickup-seeking is moot.
+2. **HP-threshold wins over ammo opportunism.** When path-follow mode is
+   active and both modifiers' triggers fire, only the HP-threshold modifier
+   activates; ammo opportunism is skipped this replan. Health is more
+   critical than ammo: a dead bot can't grab any pickup, but an
+   under-armed bot can still kite or close to contact range.
+3. **At most one modifier per replan.** A single replan never produces a
+   three-segment `player → health → ammo → target` path. The next replan
+   re-evaluates and a different modifier may apply.
+
+#### Replan triggering
+
+Pickup-seeking modifiers piggyback on the existing replan cadence: every
+`BOT_PATH_REPLAN_FRAMES` frames OR on objective-target movement > 1 tile.
+A pickup that becomes active (impossible in this prototype but defined for
+future-proofing — pickups can only deactivate, never reactivate, within a
+run, per `specs/60 § Pickup Entity § Transitions`) does NOT trigger a
+replan; the next scheduled replan sees the new state.
+
+The on-arrival pickup consumption (player tile equals pickup tile, pickup
+flips to inactive) does NOT itself trigger a replan — the bot continues
+on the in-flight path. The next scheduled replan deactivates the now-stale
+modifier and retargets the original objective.
 
 ### Stuck Detection (Fallback)
 
@@ -180,6 +318,14 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 - Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, 3600-frame max.
 - Per-frame API (`parse_scenario`, `BotState`, `BotProgress`, `bot_step`) always compiled for `--autopilot` mode (specs/35).
 - Batch driver (`run_scenario`, `run_all_scenarios`) gated behind `#[cfg(test)]`.
+
+**Pending Coder pass (specified, not yet generated):**
+- Pickup-seeking path modifiers — HP-threshold health routing
+  (`BOT_HEALTH_PICKUP_THRESHOLD`) and ammo opportunism with detour-budget
+  (`BOT_PICKUP_DETOUR_BUDGET`). Both layered on top of the existing
+  BFS path-follow logic; kite mode and combat firing decisions are
+  unchanged. Modifier priority pinned in § Pickup-Seeking § Modifier
+  priority.
 
 **Deferred:**
 - Objectives that require game features not yet implemented (e.g., `kill: boss`, multi-enemy targeting).
