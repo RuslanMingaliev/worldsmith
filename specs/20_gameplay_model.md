@@ -124,7 +124,7 @@ Two pickup types exist in the level: health and ammo. Walking the player onto a 
 
 ### Game Over Flow
 
-When the player either reaches the exit (`won = true`) or dies (`alive = false`), the engine MUST continue to render for at least `GAME_OVER_HOLD_SEC` seconds before exiting the main loop. The game-over colored border (green for win, red for lose; spec/50 § Render Order Update) and the HUD remain visible during the hold. The implementation MUST NOT exit on the same tick that the win/lose state is detected — that produces a zero-frame render of the game-over overlay and the player never sees the outcome.
+**Interactive mode (no `--autopilot` flag).** When the player either reaches the exit (`won = true`) or dies (`alive = false`), the engine MUST continue to render for at least `GAME_OVER_HOLD_SEC` seconds before exiting the main loop. The game-over colored border (green for win, red for lose; spec/50 § Render Order Update) and the HUD remain visible during the hold. The implementation MUST NOT exit on the same tick that the win/lose state is detected — that produces a zero-frame render of the game-over overlay and the player never sees the outcome.
 
 Concretely, this requires the loop-exit *decision* and the loop-exit *action* to be separated:
 - The decision (game over reached) flips a "game_over since" timestamp in the game state.
@@ -134,6 +134,8 @@ Concretely, this requires the loop-exit *decision* and the loop-exit *action* to
 `GAME_OVER_HOLD_SEC` is defined in [`25_game_tuning.md`](25_game_tuning.md#visual). After the hold elapses the loop may exit immediately or wait for player input — the latter is **deferred**.
 
 (Rationale: an earlier generated game flipped `running = false` on the same tick that the win/lose flag was set, then the `while window.is_open() && game.running` loop in `main.rs` exited before the next `draw()` call. The colored border rendered for zero frames. The fix is the decision/action separation described above.)
+
+**Autopilot mode (`--autopilot <path>`).** The bot's `BotProgress::AllObjectivesComplete` signal terminates the loop on the next iteration, per `ir/contracts/_shared.yaml § main_cli`. The colored game-over border therefore renders for one frame in autopilot recordings — short enough that no human-perceptible hold occurs, which is intentional: specs/35 § Tooling Contract caps demo length below the 2-second hold duration so demo GIFs stay under the recording-time budget. The decision/action separation above still applies inside `game_loop::update`, but `main.rs`'s autopilot branch flips `running = false` on `AllObjectivesComplete` regardless of `game_over_at`, overriding the hold for this mode only.
 
 ## Implementation Status
 
