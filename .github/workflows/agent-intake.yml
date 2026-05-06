@@ -64,19 +64,40 @@ jobs:
       - name: Install Claude CLI
         run: |
           set -e
-          # Installer (Claude Code 2.1.129+) tries to symlink its launcher into
-          # ~/.local/bin/claude but does NOT create the directory if missing —
-          # on fresh ubuntu-latest runners ~/.local/bin doesn't exist by
-          # default, the symlink silently fails, and the installer still
-          # exits 0. Pre-create the dir so the symlink lands.
+          # Installer (Claude Code 2.1.129+) sometimes fails to place its
+          # launcher at ~/.local/bin/claude even when the directory exists.
+          # Be defensive: pre-create the dir, run the installer, then locate
+          # the actual claude binary regardless of where it landed and add
+          # whichever directory contains it to PATH.
           mkdir -p "$HOME/.local/bin"
           curl -fsSL https://claude.ai/install.sh | bash
-          if [ ! -x "$HOME/.local/bin/claude" ]; then
-            echo "::error::claude binary still missing after install"
-            find "$HOME" -maxdepth 5 -name claude -type f 2>/dev/null | head
+
+          CLAUDE_BIN=""
+          for candidate in \
+              "$HOME/.local/bin/claude" \
+              "$HOME/.claude/local/claude" \
+              "$HOME/.claude/bin/claude" \
+              ; do
+            if [ -x "$candidate" ]; then
+              CLAUDE_BIN="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$CLAUDE_BIN" ]; then
+            echo "::error::claude binary not found at any expected location after install"
+            echo "--- find $HOME (maxdepth 7) ---"
+            find "$HOME" -maxdepth 7 \( -name claude -o -name 'claude.*' \) 2>/dev/null | head -30 || true
+            echo "--- ls -la \$HOME/.claude (if exists) ---"
+            ls -la "$HOME/.claude" 2>/dev/null || true
+            echo "--- ls -la \$HOME/.local (if exists) ---"
+            ls -la "$HOME/.local" 2>/dev/null || true
             exit 1
           fi
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+          echo "Found claude at: $CLAUDE_BIN"
+          dirname "$CLAUDE_BIN" >> "$GITHUB_PATH"
+          "$CLAUDE_BIN" --version
 
       - name: Assert OAUTH secret is present
         run: |
