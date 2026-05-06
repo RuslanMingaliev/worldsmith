@@ -1,0 +1,107 @@
+# visual_effects module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: visual_effects
+file: src/visual_effects.rs
+depends_on: [level_data, player_state]
+public_types:
+  - name: EffectKind
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq)]
+      pub enum EffectKind {
+          MuzzleFlash,
+          Tracer,        // uses (start, end) line; renderer reads end_pos
+          WallPuff,
+          BloodSplat,
+          EnemyDeathFade,
+          EnemyCorpse,
+      }
+  - name: Effect
+    definition: |
+      pub struct Effect {
+          pub kind: EffectKind,
+          pub pos: Vec2,                 // primary world position
+          pub end_pos: Vec2,             // tracer endpoint; ignored for non-tracer kinds
+          pub lifetime_remaining: f32,   // seconds; PERSISTENT_LIFETIME (f32::INFINITY) for corpses
+          pub initial_lifetime: f32,     // for fade interpolation in renderer
+      }
+  - name: VisualEffects
+    definition: |
+      pub struct VisualEffects {
+          pub effects: Vec<Effect>,
+          pub pickup_tint_count: f32,  // accumulates on pickup consumption, decays per tick
+      }
+public_constants:
+  # Muzzle flash
+  - { name: MUZZLE_FLASH_DURATION, type: f32, value: "0.10", source: "specs/25 § Visual Feedback / Muzzle Flash" }
+  - { name: MUZZLE_FLASH_RADIUS,   type: f32, value: "6.0",  source: "specs/25 § Visual Feedback / Muzzle Flash (px)" }
+  - { name: MUZZLE_OFFSET,         type: f32, value: "0.5",  source: "specs/25 § Visual Feedback / Muzzle Flash (tile units)" }
+  # Tracer
+  - { name: TRACER_DURATION,  type: f32, value: "0.06", source: "specs/25 § Visual Feedback / Hit-Scan Tracer" }
+  # TRACER_THICKNESS is documentation-only; the renderer draws single-pixel
+  # Bresenham lines and consumes no runtime constant. Removed from public
+  # surface per spec/80 § API Surface "no dead pub exports" during reconcile
+  # pass. The 1-px design value lives as a comment at visual_effects.rs:16
+  # and is documented in specs/25 § Hit-Scan Tracer.
+  # Puff
+  - { name: PUFF_DURATION, type: f32, value: "0.30", source: "specs/25 § Visual Feedback / Wall Puff" }
+  - { name: PUFF_RADIUS,   type: f32, value: "4.0",  source: "specs/25 § Visual Feedback / Wall Puff (px)" }
+  # Blood
+  - { name: BLOOD_DURATION, type: f32, value: "0.50", source: "specs/25 § Visual Feedback / Blood Splat" }
+  - { name: BLOOD_RADIUS,   type: f32, value: "6.0",  source: "specs/25 § Visual Feedback / Blood Splat (px)" }
+  # Enemy pain flash (timer lives on Enemy; duration constant homed here)
+  - { name: ENEMY_PAIN_FLASH_DURATION, type: f32, value: "0.10", source: "specs/25 § Visual Feedback / Enemy Pain Flash" }
+  # Player damage tint
+  - { name: DAMAGE_TINT_CAP,           type: f32,   value: "100.0", source: "specs/25 § Visual Feedback / Player Damage Tint" }
+  - { name: DAMAGE_TINT_DECAY_PER_SEC, type: f32,   value: "35.0",  source: "specs/25 § Visual Feedback / Player Damage Tint" }
+  - { name: DAMAGE_TINT_LEVELS,        type: u32,   value: "8",     source: "specs/25 § Visual Feedback / Player Damage Tint" }
+  # Enemy death visual
+  - { name: ENEMY_DEATH_FADE_DURATION, type: f32, value: "0.40", source: "specs/25 § Visual Feedback / Enemy Death Visual" }
+  - { name: ENEMY_CORPSE_RADIUS,       type: f32, value: "8.0",  source: "specs/25 § Visual Feedback / Enemy Death Visual (px)" }
+  # Pickup tint (specs/25 § Visual Feedback / Pickup Tint)
+  - { name: PICKUP_TINT_PER_PICKUP,    type: f32, value: "6.0",  source: "specs/25 § Visual Feedback / Pickup Tint (knowledge-backed: knowledge/visual_feedback.md § Player Damage Screen Tint, line 96)" }
+  - { name: PICKUP_TINT_LEVEL_COUNT,   type: u32, value: "4",    source: "specs/25 § Visual Feedback / Pickup Tint (knowledge-backed: knowledge/visual_feedback.md § Player Damage Screen Tint, line 97)" }
+  - { name: PICKUP_TINT_CAP,           type: f32, value: "6.0",  source: "specs/25 § Visual Feedback / Pickup Tint (Generation default — one pickup fills the counter)" }
+  - { name: PICKUP_TINT_DECAY_PER_SEC, type: f32, value: "35.0", source: "specs/25 § Visual Feedback / Pickup Tint (Generation default — 1 unit per reference tick at 35 Hz, matching DAMAGE_TINT_DECAY_PER_SEC)" }
+  # Effect-list housekeeping
+  - { name: EFFECT_LIST_INITIAL_CAPACITY, type: usize, value: "16", source: "specs/25 § Effect List" }
+  - { name: PERSISTENT_LIFETIME, type: f32, value: "f32::INFINITY", source: "specs/25 § Effect List" }
+public_methods:
+  - signature: "pub fn new() -> VisualEffects"
+    notes: "Empty list, Vec::with_capacity(EFFECT_LIST_INITIAL_CAPACITY)."
+  - signature: "pub fn spawn_muzzle_flash(fx: &mut VisualEffects, muzzle_pos: Vec2)"
+    notes: "Pushes Effect { kind: MuzzleFlash, pos: muzzle_pos, end_pos: Vec2::default(), lifetime_remaining: MUZZLE_FLASH_DURATION, initial_lifetime: MUZZLE_FLASH_DURATION }."
+  - signature: "pub fn spawn_tracer(fx: &mut VisualEffects, start: Vec2, end: Vec2)"
+    notes: "Effect.pos = start, Effect.end_pos = end, lifetime = TRACER_DURATION."
+  - signature: "pub fn spawn_wall_puff(fx: &mut VisualEffects, pos: Vec2)"
+    notes: "lifetime = PUFF_DURATION."
+  - signature: "pub fn spawn_blood_splat(fx: &mut VisualEffects, pos: Vec2)"
+    notes: "lifetime = BLOOD_DURATION."
+  - signature: "pub fn spawn_enemy_death_fade(fx: &mut VisualEffects, pos: Vec2)"
+    notes: "lifetime = ENEMY_DEATH_FADE_DURATION. The corpse marker is spawned later by enemy.update once the fade timer expires (per spec/40 line 100)."
+  - signature: "pub fn spawn_enemy_corpse(fx: &mut VisualEffects, pos: Vec2)"
+    notes: "lifetime_remaining = PERSISTENT_LIFETIME; tick() never decreases non-finite values."
+  - signature: "pub fn increment_pickup_tint(fx: &mut VisualEffects)"
+    notes: |
+      Called by game_loop on successful pickup consumption (specs/40
+      § Pickup Tint Screen Flash, specs/60 § With Visual Effects).
+      Implementation: fx.pickup_tint_count =
+          (fx.pickup_tint_count + PICKUP_TINT_PER_PICKUP).min(PICKUP_TINT_CAP).
+  - signature: "pub fn tick(fx: &mut VisualEffects, dt: f32)"
+    notes: |
+      For each effect: if lifetime_remaining.is_finite() then
+      lifetime_remaining -= dt. Then retain effects with
+      (!lifetime_remaining.is_finite() || lifetime_remaining > 0.0).
+      Also decays pickup_tint_count:
+        fx.pickup_tint_count =
+            (fx.pickup_tint_count - PICKUP_TINT_DECAY_PER_SEC * dt).max(0.0).
+      Called once per frame from game_loop.
+cross_module_borrows:
+  - "Reads Vec2 (level_data) by value; no &mut other-module-types."
+notes: |
+  `depends_on: [level_data, player_state]` from module_plan -- this
+  module references Vec2 from level_data. It does NOT import any
+  Player symbol; the player_state edge is regen-ordering metadata
+  from the original IR. Coder MUST NOT `use crate::player_state::*`
+  here. The damage_tint accumulator lives on Player (see
+  player_state); only the constants for it live here.

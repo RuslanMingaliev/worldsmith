@@ -1,0 +1,109 @@
+# player_state module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: player_state
+file: src/player_state.rs
+depends_on: [level_data]
+public_types:
+  - name: Player
+    definition: |
+      pub struct Player {
+          pub pos: Vec2,
+          pub vel: Vec2,
+          pub facing: f32,             // radians, wraps at 2*PI
+          pub health: i32,
+          pub alive: bool,
+          pub damage_count: f32,       // accumulator for player damage tint (specs/40)
+          pub time_since_fire: f32,    // seconds since last shot; tracked here so
+                                       // weapon_system can read & reset it for
+                                       // first-shot accuracy + IDLE_THRESHOLD_SEC
+                                       // (specs/25 § Weapon).
+          pub ammo: i32,               // pistol ammo (specs/60, knowledge/pickups.md §
+                                       // Ammo Gating of Firing). Bounded by
+                                       // PLAYER_AMMO_MAX; gated > 0 in weapon_system::fire.
+      }
+public_constants:
+  - { name: PLAYER_MAX_HEALTH, type: i32, value: "100",   source: "specs/25 § Player" }
+  - { name: PLAYER_AMMO_INITIAL, type: i32, value: "12",  source: "specs/25 § Pickups (Generation default — knowledge starting=50 too high for 1-enemy level)" }
+  - { name: PLAYER_AMMO_MAX,     type: i32, value: "30",  source: "specs/25 § Pickups (Generation default — knowledge cap=200 too high for prototype)" }
+  - { name: PICKUP_HEALTH_AMOUNT, type: i32, value: "25", source: "specs/25 § Pickups (knowledge-backed: § Health Pickup Tiers, large heal +25)" }
+  - { name: PICKUP_AMMO_AMOUNT,   type: i32, value: "10", source: "specs/25 § Pickups (knowledge-backed: § Ammo Pickup Tiers, 1 clip-load × clip_size 10 for Cat. A)" }
+  - { name: PLAYER_TURN_SPEED, type: f32, value: "2.0",   source: "specs/25 § Player (rad/sec @ 60FPS)" }
+  - { name: THRUST_FACTOR,     type: f32, value: "10.0",  source: "specs/21 § Thrust" }
+  - { name: FRICTION,          type: f32, value: "0.906", source: "specs/21 § Friction" }
+  - { name: STOP_THRESHOLD,    type: f32, value: "0.0625",source: "specs/21 § Friction" }
+  - { name: MAX_SPEED,         type: f32, value: "0.3",   source: "specs/21 § Speed Limiting" }
+  - { name: PLAYER_RADIUS_TILES, type: f32, value: "0.4375", source: "specs/25 § Visual (14 px / 32 px) — used for circle-vs-wall collision" }
+public_methods:
+  - signature: "pub fn new(spawn: Vec2) -> Player"
+    notes: |
+      health = PLAYER_MAX_HEALTH, alive = true, vel = (0,0), facing = 0.0,
+      damage_count = 0.0, time_since_fire = f32::INFINITY (so the first
+      shot of the game gets first-shot accuracy),
+      ammo = PLAYER_AMMO_INITIAL (specs/60).
+  - signature: "pub fn apply_input(player: &mut Player, input: &InputState, level: &Level, dt: f32)"
+    notes: |
+      Per-frame movement update from specs/21:
+        1. facing += input.turn * PLAYER_TURN_SPEED * dt (wraps at 2*PI).
+        2. forward thrust = input.forward * THRUST_FACTOR / 1000 (per
+           specs/21 § Thrust).
+        3. strafe thrust = input.strafe * THRUST_FACTOR / 1000 perpendicular
+           to facing.
+        4. vel += forward_vec + strafe_vec.
+        5. vel.x *= FRICTION; vel.y *= FRICTION.
+        6. Clamp vel.x and vel.y independently to +/- MAX_SPEED.
+        7. If |vel| < STOP_THRESHOLD * MAX_SPEED and no movement input,
+           set vel = (0,0) per specs/21 § Friction.
+        8. Attempt move: try (pos.x + vel.x * dt * 60, pos.y + vel.y * dt * 60).
+           Use axis-aligned slide on collision (specs/21 § Implementation
+           Status notes "wall collision with axis-aligned sliding").
+           Collision uses PLAYER_RADIUS_TILES against level::is_wall on
+           the four overlapping tile cells.
+        9. Increment player.time_since_fire by dt (weapon_system resets it
+           when the player fires).
+      Free function form (not `&mut self`) so this stays one-call from
+      game_loop and matches the orchestration style used elsewhere.
+  - signature: "pub fn take_damage(player: &mut Player, amount: i32)"
+    notes: |
+      Used by enemy_logic::update on contact damage. Mutates only the
+      player struct (no &mut VisualEffects param -- spec/80 § API
+      Surface forbids it on non-orchestration methods). Behavior:
+        health -= amount;
+        damage_count = (damage_count + amount as f32).min(DAMAGE_TINT_CAP);
+        if health <= 0 { alive = false; health = 0; }
+      Caller (enemy_logic) is responsible for any console message and any
+      direct pain-flash side effect on its own enemy. The damage tint is
+      DERIVED at draw time by renderer from player.damage_count; no
+      spawn into VisualEffects is required for it.
+  - signature: "pub fn decay_damage_tint(player: &mut Player, dt: f32)"
+    notes: |
+      Called once per frame by game_loop AFTER take_damage may have run
+      this tick. Implementation:
+        player.damage_count = (player.damage_count - DAMAGE_TINT_DECAY_PER_SEC * dt).max(0.0);
+      DAMAGE_TINT_DECAY_PER_SEC and DAMAGE_TINT_CAP live in
+      visual_effects (their other consumer is the renderer). Player
+      imports them via `use crate::visual_effects::{DAMAGE_TINT_CAP,
+      DAMAGE_TINT_DECAY_PER_SEC};`. This is the spec/80 acceptable
+      cross-module constant import.
+  - signature: "pub fn take_health_pickup(player: &mut Player, amount: i32)"
+    notes: |
+      specs/60 § Health Pickup Consumption. Adds `amount` to
+      player.health, clamps to PLAYER_MAX_HEALTH. Does not touch
+      damage_count or alive. Caller (game_loop) is responsible for
+      flipping the Pickup's active flag and for the refused-at-cap
+      guard (knowledge/pickups.md § Cap Behavior).
+  - signature: "pub fn take_ammo_pickup(player: &mut Player, amount: i32)"
+    notes: |
+      specs/60 § Ammo Pickup Consumption. Adds `amount` to
+      player.ammo, clamps to PLAYER_AMMO_MAX. Caller (game_loop)
+      flips the Pickup's active flag and applies the refused-at-cap
+      guard.
+cross_module_borrows:
+  - "&Level (immutable read in apply_input for collision)"
+  - "&InputState (immutable read in apply_input)"
+notes: |
+  Per spec/40 line 130, the damage_count accumulator may live in player
+  OR in visual_effects -- chosen to live in player here so take_damage
+  can update it in-place without grabbing &mut VisualEffects.
+  `time_since_fire` lives here for the same borrow-graph reason (the
+  weapon system needs to read it from the player it just fired with).

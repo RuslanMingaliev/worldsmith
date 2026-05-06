@@ -1,0 +1,23 @@
+# presentation module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: presentation
+file: src/presentation.rs
+depends_on: [player_state, enemy_logic]
+public_types: []
+public_constants:
+  - { name: WINDOW_WIDTH,  type: usize, value: "640", source: "specs/25 § Visual" }
+  - { name: WINDOW_HEIGHT, type: usize, value: "480", source: "specs/25 § Visual" }
+  - { name: TARGET_FPS,    type: u64,   value: "60",  source: "specs/25 § Frame Rate" }
+  - { name: DELTA_TIME_CAP, type: f32,  value: "0.1", source: "specs/25 § Frame Rate" }
+public_methods: []
+cross_module_borrows: []
+notes: |
+  With the renderer module sitting downstream of presentation in the
+  module_plan, this module now collapses to "window-and-frame
+  constants only". It deliberately ships NO functions: window
+  creation lives in main.rs (close to its `?` propagation), and the
+  framebuffer drawing lives in renderer.rs. Coder for presentation
+  only emits the four public_constants above.
+  `depends_on: [player_state, enemy_logic]` from module_plan is
+  regen-ordering metadata; presentation does not import either.

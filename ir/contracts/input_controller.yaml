@@ -1,0 +1,29 @@
+# input_controller module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: input_controller
+file: src/input_controller.rs
+depends_on: [player_state]
+public_types:
+  - name: InputState
+    note: "Defined here; see shared_types.InputState."
+public_methods:
+  - signature: "pub fn poll(window: &minifb::Window) -> InputState"
+    notes: |
+      Read the current keyboard state from the live window:
+        forward = (W ? 1.0 : 0.0) + (S ? -1.0 : 0.0)
+        strafe  = (D ? 1.0 : 0.0) + (A ? -1.0 : 0.0)
+        turn    = (Right ? 1.0 : 0.0) + (Left ? -1.0 : 0.0)
+        fire    = window.is_key_down(Key::Space)
+        quit    = window.is_key_down(Key::Escape)
+      Per CLAUDE.md § Controls. No persistent state -- caller invokes
+      once per frame.
+cross_module_borrows:
+  - "&minifb::Window (immutable read in poll)"
+notes: |
+  depends_on: [player_state] from module_plan reflects historical
+  "input that drives the player" framing; functionally this module
+  only needs minifb to read the window. It does NOT use any
+  player_state symbol. Coder for input_controller MUST NOT add
+  `use crate::player_state::*` -- the dependency edge is there for
+  regen ordering, not for symbols.

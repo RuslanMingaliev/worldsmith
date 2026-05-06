@@ -1,0 +1,111 @@
+# renderer module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: renderer
+file: src/renderer.rs
+depends_on: [presentation, visual_effects]
+public_types: []
+public_constants:
+  # RGB packed 0xRRGGBB; the renderer is the only consumer of these.
+  - { name: COLOR_WALL,                type: u32, value: "0x404040", source: "specs/25 § Visual" }
+  - { name: COLOR_FLOOR,               type: u32, value: "0x808080", source: "specs/25 § Visual" }
+  - { name: COLOR_PLAYER,              type: u32, value: "0x00FF00", source: "specs/25 § Visual" }
+  - { name: COLOR_ENEMY,               type: u32, value: "0xFF0000", source: "specs/25 § Visual" }
+  - { name: COLOR_EXIT,                type: u32, value: "0x00FFFF", source: "specs/25 § Visual" }
+  - { name: COLOR_DIRECTION_LINE,      type: u32, value: "0xFFFF00", source: "specs/25 § Visual" }
+  - { name: COLOR_MUZZLE_FLASH,        type: u32, value: "0xFFFF80", source: "specs/25 § Visual Feedback" }
+  - { name: COLOR_TRACER,              type: u32, value: "0xFFFFC0", source: "specs/25 § Visual Feedback" }
+  - { name: COLOR_PUFF,                type: u32, value: "0xB0B0B0", source: "specs/25 § Visual Feedback" }
+  - { name: COLOR_BLOOD,               type: u32, value: "0xC00000", source: "specs/25 § Visual Feedback" }
+  - { name: COLOR_PAIN_FLASH,          type: u32, value: "0xFFFFFF", source: "specs/25 § Visual Feedback" }
+  - { name: COLOR_CORPSE,              type: u32, value: "0x602020", source: "specs/25 § Visual Feedback" }
+  - { name: COLOR_DAMAGE_TINT,         type: u32, value: "0xFF0000", source: "specs/25 § Visual Feedback" }
+  - { name: COLOR_PICKUP_TINT,         type: u32, value: "0xFFCC00", source: "specs/25 § Visual Feedback / Pickup Tint (Generation default — golden-yellow; knowledge qualitative only)" }
+  - { name: PLAYER_RADIUS_PX,          type: i32, value: "14",  source: "specs/25 § Visual" }
+  - { name: ENEMY_RADIUS_PX,           type: i32, value: "12",  source: "specs/25 § Visual" }
+  - { name: EXIT_MARKER_SIZE_PX,       type: i32, value: "20",  source: "specs/25 § Visual" }
+  - { name: DIRECTION_LINE_LEN_PX,     type: i32, value: "20",  source: "specs/25 § Visual" }
+  - { name: GAME_OVER_BORDER_PX,       type: i32, value: "10",  source: "specs/25 § Visual" }
+  - { name: DAMAGE_TINT_MAX_ALPHA_PCT, type: u32, value: "50",  source: "specs/25 § Visual Feedback (~50%)" }
+  # Pickup sprite constants (specs/25 § Pickups, all generation defaults)
+  - { name: PICKUP_HEALTH_SIZE_PX,         type: i32, value: "12",        source: "specs/25 § Pickups (Generation default)" }
+  - { name: PICKUP_HEALTH_OUTER_COLOR,     type: u32, value: "0xFFFFFF",  source: "specs/25 § Pickups (Generation default)" }
+  - { name: PICKUP_HEALTH_INNER_COLOR,     type: u32, value: "0xFF2020",  source: "specs/25 § Pickups (Generation default)" }
+  - { name: PICKUP_HEALTH_INNER_THICKNESS_PX, type: i32, value: "4",      source: "specs/25 § Pickups (Generation default)" }
+  - { name: PICKUP_AMMO_SIZE_PX,           type: i32, value: "10",        source: "specs/25 § Pickups (Generation default)" }
+  - { name: PICKUP_AMMO_COLOR,             type: u32, value: "0xFFFF00",  source: "specs/25 § Pickups (Generation default)" }
+  # HUD ammo pane constants (specs/25 § HUD Ammo Pane, all generation defaults)
+  - { name: HUD_PANE_GAP_PX,               type: i32, value: "4",         source: "specs/25 § HUD Ammo Pane (Generation default)" }
+  - { name: HUD_AMMO_ICON_PX,              type: i32, value: "8",         source: "specs/25 § HUD Ammo Pane (Generation default)" }
+  - { name: HUD_AMMO_COLOR,                type: u32, value: "0xFFFF00",  source: "specs/25 § HUD Ammo Pane (Generation default)" }
+  # NOTE: HUD_* layout/font/band constants from the HUD workflow are
+  # renderer-private and NOT contracted here. Their authoritative source is
+  # `specs/25 § HUD`; the renderer module's source file is the wire-up
+  # checked by Reconciler against that section.
+public_methods:
+  - signature: |
+      pub fn draw(
+          framebuffer: &mut Vec<u32>,
+          level: &Level,
+          player: &Player,
+          enemies: &[Enemy],
+          fx: &VisualEffects,
+          game_over: Option<bool>,  // None = playing, Some(true) = won, Some(false) = lost
+      )
+    notes: |
+      Single render entry point invoked once per frame by game_loop.
+      Layer order (back to front, per spec/40 § Effect Layering and
+      spec/60 § Pickup Rendering / spec/50 § Render Order Update):
+        1. Floor + walls (level tiles).
+        2. Exit marker (cyan X) and corpses.
+        2.5. Active pickups (specs/60 § Pickup Rendering):
+              iterate level.pickups; skip !active. For Health draw a
+              filled square in PICKUP_HEALTH_OUTER_COLOR with a
+              centered cross in PICKUP_HEALTH_INNER_COLOR
+              (PICKUP_HEALTH_INNER_THICKNESS_PX wide). For Ammo draw
+              a filled square in PICKUP_AMMO_COLOR.
+        3. Blood splats and wall puffs.
+        4. Tracer lines.
+        5. Muzzle flashes.
+        6. Live enemies (pain-flashed body color when
+           enemy.pain_flash_remaining > 0, else COLOR_ENEMY).
+        7. Player disc + direction line.
+        8. Player damage tint overlay if level > 0:
+             level = ((player.damage_count * DAMAGE_TINT_LEVELS as f32)
+                      / DAMAGE_TINT_CAP).ceil() as u32;
+             level = level.min(DAMAGE_TINT_LEVELS);
+             alpha_pct = (DAMAGE_TINT_MAX_ALPHA_PCT * level)
+                          / DAMAGE_TINT_LEVELS;
+             software-blend COLOR_DAMAGE_TINT into framebuffer at
+             alpha_pct.
+        8.5. Pickup tint overlay if fx.pickup_tint_count > 0.0
+             (specs/40 § Pickup Tint Screen Flash):
+             pickup_level = ceil(fx.pickup_tint_count
+                                 * PICKUP_TINT_LEVEL_COUNT / PICKUP_TINT_CAP);
+             pickup_level = pickup_level.min(PICKUP_TINT_LEVEL_COUNT);
+             if pickup_level > 0: software-blend COLOR_PICKUP_TINT at
+             (PICKUP_TINT_MAX_ALPHA_PCT * pickup_level / PICKUP_TINT_LEVEL_COUNT).
+        9. HUD pane (specs/50 § Health Pane and § Ammo Pane):
+           health bar + digits in top-left corner, ammo pane
+           (icon + digits) directly below.
+        10. Game-over border if game_over.is_some()
+           (green tint for win, red for lose; thickness
+           GAME_OVER_BORDER_PX).
+      The renderer reads visual_effects (including fx.pickup_tint_count),
+      player.damage_count, player.health, player.ammo, level.pickups,
+      enemy.pain_flash_remaining, enemy.death_fade_remaining (for fade
+      interpolation), and enemy.alive (corpse vs. live). It does NOT
+      mutate any other module's state.
+  - signature: "pub fn make_framebuffer() -> Vec<u32>"
+    notes: |
+      Allocates Vec::from_iter([0u32; WINDOW_WIDTH * WINDOW_HEIGHT]).
+      Helper so main.rs doesn't need to import WINDOW_WIDTH etc.
+      itself.
+cross_module_borrows:
+  - "&mut Vec<u32> (the framebuffer is owned by main.rs/game_loop)"
+  - "&Level, &Player, &[Enemy], &VisualEffects (all read-only)"
+notes: |
+  Renderer owns the COLOR_* table to keep specs/25 § Visual values
+  from being duplicated (per intentionally_unspecified note below).
+  All RGB constants are declared local because the renderer is the
+  single consumer.

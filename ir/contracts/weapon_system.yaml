@@ -1,0 +1,78 @@
+# weapon_system module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: weapon_system
+file: src/weapon_system.rs
+depends_on: [player_state, visual_effects]
+public_types: []
+public_constants:
+  - { name: PISTOL_FIRE_CYCLE,    type: f32, value: "0.54", source: "specs/25 § Weapon (Pistol)" }
+  - { name: PISTOL_RANGE_TILES,   type: f32, value: "64.0", source: "specs/25 § Weapon (range 2048 map units / 32 px per tile = 64 tiles)" }
+  - { name: PISTOL_REFIRE_SPREAD_RAD, type: f32, value: "0.0977", source: "specs/25 § Weapon (5.6 deg in radians)" }
+  - { name: IDLE_THRESHOLD_SEC,   type: f32, value: "1.0",  source: "specs/25 § Weapon (Pistol) IDLE_THRESHOLD_SEC" }
+  - { name: TRACE_STEP,           type: f32, value: "0.1",  source: "specs/25 § Wall Hit Trace" }
+public_methods:
+  - signature: |
+      pub fn fire(
+          player: &mut Player,
+          enemies: &mut [Enemy],
+          level: &Level,
+          fx: &mut VisualEffects,
+      )
+    notes: |
+      Called by game_loop *once per frame* if (input.fire &&
+      player.time_since_fire >= PISTOL_FIRE_CYCLE) -- the cooldown
+      gate is checked in fire() itself so callers don't need a
+      separate flag. After firing:
+        1. Compute aim_angle:
+             - If player.time_since_fire >= IDLE_THRESHOLD_SEC:
+                 aim_angle = player.facing  (perfect first-shot)
+             - Else:
+                 aim_angle = player.facing + triangular_spread()
+                   where triangular_spread = (rand_f32() - rand_f32())
+                   * PISTOL_REFIRE_SPREAD_RAD
+        2. Reset player.time_since_fire = 0.0.
+        3. Compute muzzle_pos = player.pos + facing_unit_vector
+           * MUZZLE_OFFSET (uses MUZZLE_OFFSET from visual_effects).
+        4. Spawn muzzle_flash at muzzle_pos.
+        5. Ray-march from muzzle_pos along aim_angle in TRACE_STEP
+           increments up to PISTOL_RANGE_TILES:
+             - If step hits an enemy.alive within enemy radius
+               (ENEMY_RADIUS_TILES from enemy_logic): apply random
+               damage 5/10/15 to that enemy via enemy.take_damage,
+               spawn tracer (muzzle_pos -> hit_pos), spawn blood at
+               hit_pos, return.
+             - If is_wall(level, ...) at this step: spawn tracer
+               (muzzle_pos -> step_pos), spawn wall_puff at step_pos,
+               return.
+             - If range exceeded: spawn tracer (muzzle_pos ->
+               range_endpoint), no impact effect (per spec/40 § Impact
+               Effect Rules: "trace that hits nothing produces no
+               impact effect"), return.
+      fire() is the per-frame combat hook -- spec/80 § API Surface
+      permits direct &mut VisualEffects here (resolution A).
+
+      Ammo gate (specs/60 § Ammo-Gated Firing, knowledge/pickups.md §
+      Ammo Gating of Firing): order is (1) cooldown gate, (2) ammo
+      gate `if player.ammo == 0 { return; }` -- no side effects, no
+      time_since_fire reset, (3) reset time_since_fire and aim, (4)
+      all spawn/march/damage steps, (5) ammo -= 1.
+  - signature: "pub fn pistol_damage_roll() -> i32"
+    notes: |
+      Returns one of {5, 10, 15} uniformly at random per the
+      formula 5 * (rand(0..3) + 1) (specs/25 § Damage Randomization).
+      Public so unit tests in the same module can verify the
+      distribution; if no caller outside the module exists at
+      end-of-run, Reconciler should flag and Coder may downgrade
+      to private.
+cross_module_borrows:
+  - "&mut Player (write health via take_damage path; reset time_since_fire)"
+  - "&mut [Enemy] (apply damage)"
+  - "&Level (immutable read for is_wall during ray-march)"
+  - "&mut VisualEffects (spawn flash/tracer/puff/blood) -- spec/80 exception A"
+notes: |
+  Damage formula is 5 * (random(0..3) + 1) -> {5, 10, 15} per
+  specs/25. Use std::collections::hash_map::DefaultHasher or a small
+  explicit linear congruential generator for randomness; std lacks
+  a public RNG. Picking a tiny LCG keeps the dep list clean (no
+  `rand` crate). Coder owns this internal choice.

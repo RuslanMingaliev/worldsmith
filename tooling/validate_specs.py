@@ -108,6 +108,90 @@ def validate_game_ir(path: Path) -> List[ValidationIssue]:
     return issues
 
 
+def validate_contracts_shards(
+    contracts_dir: Path, module_plan_path: Path
+) -> List[ValidationIssue]:
+    """Verify the ir/contracts/ shard layout is intact.
+
+    Rules:
+    - `ir/contracts/_shared.yaml` exists, parses, and has a `shared_types` key.
+    - Every module listed in `ir/module_plan.yaml` has a matching
+      `ir/contracts/<name>.yaml` that parses and whose top-level `name` field
+      matches the file stem.
+    - No `ir/module_contracts.yaml` monolith remains (the shard layout
+      replaces it).
+    """
+    issues: List[ValidationIssue] = []
+    repo = module_plan_path.parents[1]
+    legacy = repo / "ir" / "module_contracts.yaml"
+    if legacy.exists():
+        issues.append(
+            ValidationIssue(
+                legacy,
+                "Legacy monolith ir/module_contracts.yaml is present. The "
+                "contracts moved to ir/contracts/_shared.yaml + per-module "
+                "ir/contracts/<name>.yaml. Delete the monolith.",
+            )
+        )
+
+    shared = contracts_dir / "_shared.yaml"
+    if not shared.exists():
+        issues.append(ValidationIssue(shared, "Missing ir/contracts/_shared.yaml."))
+    else:
+        try:
+            shared_data = load_yaml(shared)
+        except ValidationError as exc:
+            issues.append(ValidationIssue(shared, str(exc)))
+            shared_data = None
+        if shared_data is not None and "shared_types" not in shared_data:
+            issues.append(
+                ValidationIssue(
+                    shared,
+                    "ir/contracts/_shared.yaml missing required key `shared_types`.",
+                )
+            )
+
+    try:
+        plan_data = load_yaml(module_plan_path)
+    except ValidationError:
+        return issues  # already reported by validate_module_plan
+    modules = plan_data.get("modules") or []
+    expected_names: List[str] = []
+    for module in modules:
+        if isinstance(module, dict):
+            name = module.get("name")
+            if isinstance(name, str) and name != "main":
+                expected_names.append(name)
+
+    for name in expected_names:
+        shard = contracts_dir / f"{name}.yaml"
+        if not shard.exists():
+            issues.append(
+                ValidationIssue(
+                    shard,
+                    f"Missing contract shard for module `{name}`. Every entry in "
+                    f"ir/module_plan.yaml (except `main`) needs ir/contracts/<name>.yaml.",
+                )
+            )
+            continue
+        try:
+            shard_data = load_yaml(shard)
+        except ValidationError as exc:
+            issues.append(ValidationIssue(shard, str(exc)))
+            continue
+        shard_name = shard_data.get("name")
+        if shard_name != name:
+            issues.append(
+                ValidationIssue(
+                    shard,
+                    f"Shard top-level `name` is `{shard_name}` but file is `{name}.yaml`. "
+                    f"They must match.",
+                )
+            )
+
+    return issues
+
+
 def validate_module_plan(path: Path) -> List[ValidationIssue]:
     try:
         data = load_yaml(path)
@@ -420,6 +504,12 @@ def main() -> None:
     issues.extend(validate_required_files(REQUIRED_KNOWLEDGE_FILES))
     issues.extend(validate_game_ir(REPO_ROOT / "ir" / "game_ir.yaml"))
     issues.extend(validate_module_plan(REPO_ROOT / "ir" / "module_plan.yaml"))
+    issues.extend(
+        validate_contracts_shards(
+            REPO_ROOT / "ir" / "contracts",
+            REPO_ROOT / "ir" / "module_plan.yaml",
+        )
+    )
     issues.extend(validate_reference_knowledge_integrity())
     issues.extend(validate_knowledge_sanitization())
     issues.extend(validate_orphan_files())

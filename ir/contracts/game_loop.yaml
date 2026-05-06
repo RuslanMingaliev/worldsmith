@@ -1,0 +1,64 @@
+# game_loop module contract.
+# Shard of the previous ir/module_contracts.yaml; cross-module types and
+# orchestration sections live in ir/contracts/_shared.yaml.
+name: game_loop
+file: src/game_loop.rs
+depends_on:
+  - level_data
+  - player_state
+  - enemy_logic
+  - weapon_system
+  - input_controller
+  - visual_effects
+public_types:
+  - name: GameState
+    definition: |
+      pub struct GameState {
+          pub level: Level,
+          pub player: Player,
+          pub enemies: Vec<Enemy>,
+          pub fx: VisualEffects,
+          pub running: bool,           // false -> main loop exits
+          pub won: bool,               // true once player reaches exit
+          pub elapsed: f32,            // total seconds since game start; ticked by += dt in update.
+          pub game_over_at: Option<f32>, // timestamp (in `elapsed` units) at which the game-over state was reached. None until the player wins or dies. Drives the post-game-over hold (specs/20 § Game Over Flow + specs/25 § Visual GAME_OVER_HOLD_SEC).
+          #[cfg(test)]
+          pub frames: u64,             // tick counter; only autopilot reads this
+      }
+public_constants: []
+public_methods:
+  - signature: "pub fn new(level: Level) -> GameState"
+    notes: |
+      Constructs GameState from a caller-supplied Level. Caller is
+      responsible for choosing the level (default vs. demo); this
+      constructor is level-agnostic.
+        player = Player::new(level.player_spawn)
+        enemies = level.enemy_spawns.iter()
+                      .map(|&s| Enemy::new(s)).collect()
+        fx = VisualEffects::new()
+        running = true; won = false; (#[cfg(test)] frames = 0)
+        level (moved into GameState as state.level)
+      Per specs/15 § game_loop::new constructor signature, main.rs
+      picks the level via:
+        let level = match autopilot_scenario.as_ref().and_then(|s| s.level) {
+            Some(kind) => level_generator::build(kind),
+            None       => level_data::build_default(),
+        };
+        let mut game = game_loop::new(level);
+      Interactive play (no --autopilot) always passes
+      level_data::build_default(). The generator is never called from
+      inside game_loop or any other per-frame path.
+  - signature: "pub fn update(state: &mut GameState, input: &InputState, dt: f32)"
+    notes: |
+      ONE per-frame tick. Order is pinned by frame_update_order
+      below. Both main.rs and autopilot call update(...). Caller
+      (main.rs) handles minifb redraw and per-frame timing; caller
+      (autopilot) drives a fixed dt = 1.0/60.0.
+cross_module_borrows:
+  - "Owns Level, Player, Enemies, VisualEffects -- all by value."
+  - "Borrows &InputState for the duration of update()."
+notes: |
+  The `frames` field is `#[cfg(test)]` because the only consumer is
+  autopilot's `game.frames` assertion (specs/30). Per spec/80 §
+  API Surface "no dead pub exports", a release-build symbol with
+  no consumer must not be public.

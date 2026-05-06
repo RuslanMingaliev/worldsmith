@@ -1,0 +1,309 @@
+# -----------------------------------------------------------------------------
+# Shared low-level types
+# -----------------------------------------------------------------------------
+# Defined ONCE in their home module. All other modules `use crate::<home>::<T>`.
+# Coders MUST NOT redefine these in other modules.
+shared_types:
+  - name: Vec2
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug, Default, PartialEq)]
+      pub struct Vec2 {
+          pub x: f32,
+          pub y: f32,
+      }
+    public_methods: |
+      pub fn new(x: f32, y: f32) -> Self
+      pub fn length(self) -> f32
+      pub fn normalize(self) -> Vec2
+      pub fn dot(self, other: Vec2) -> f32
+      pub fn distance_to(self, other: Vec2) -> f32
+    notes: |
+      Coordinates are in tile units (one Tile::Wall cell = 1.0). See
+      specs/21 § Implementation Notes. normalize() of a near-zero vector
+      returns Vec2::default() (no NaN). distance_to is (a - b).length().
+
+  - name: Tile
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+      pub enum Tile {
+          Floor,
+          Wall,
+      }
+    notes: |
+      Two-state enum is sufficient for the current static level
+      (specs/25 § Level Layout). Door tiles are deferred. Pickups
+      are NOT modeled as tiles; they live as Pickup entities in
+      Level::pickups (see PickupKind / Pickup below).
+
+  - name: PickupKind
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+      pub enum PickupKind {
+          Health,
+          Ammo,
+      }
+    notes: |
+      Discriminator for Pickup. Source: specs/60_pickups.md,
+      knowledge/pickups.md. Renderer dispatches sprite drawing on
+      this; game_loop dispatches pickup application on this.
+
+  - name: Pickup
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug)]
+      pub struct Pickup {
+          pub kind: PickupKind,
+          pub pos: Vec2,
+          pub active: bool,
+      }
+    notes: |
+      One pickup entity in the level. `active` flips from true to
+      false exactly once on consumption (specs/60 § State). Pickups
+      are NOT removed from Level::pickups when consumed -- inactive
+      pickups are skipped by the renderer and the collision check.
+      This deviates from knowledge/pickups.md § Single-use Consumption
+      (which removes the entity entirely); we keep the slot for stable
+      iteration order in our Vec-based world (specs/60 § Health
+      Pickup Consumption rationale). Copy/Clone is fine because
+      Pickup is a tiny POD.
+
+  - name: InputState
+    home_module: input_controller
+    definition: |
+      #[derive(Clone, Copy, Debug, Default)]
+      pub struct InputState {
+          pub forward: f32,   // -1.0 .. 1.0 (W/S)
+          pub strafe: f32,    // -1.0 .. 1.0 (A/D)
+          pub turn: f32,      // -1.0 .. 1.0 (Left/Right arrow)
+          pub fire: bool,     // Space
+          pub quit: bool,     // ESC
+      }
+    notes: |
+      InputState is value-typed and trivially Copy so the autopilot bot
+      can build one per frame without managing lifetimes. Movement axes
+      use float magnitude per specs/21 § Thrust ("proportional to input
+      strength"); the keyboard implementation in input_controller emits
+      -1.0/0.0/+1.0. The bot in autopilot may emit any value in [-1, 1].
+
+
+# -----------------------------------------------------------------------------
+# main.rs CLI contract (specs/35 § CLI)
+# -----------------------------------------------------------------------------
+# main.rs is not a "module" in module_plan.yaml -- it's the binary entry point.
+# Its content was previously implicit ("just wire it up"); with --autopilot and
+# --record-frames it is now contracted explicitly.
+main_cli:
+  argv_parser:
+    notes: |
+      Use std::env::args (specs/80). No clap, no argh. Three positional/flag
+      states -- order does not matter, both flags can appear together:
+        --autopilot <path>      bot mode; reads scenario YAML at <path>
+        --record-frames <path>  raw BGRA dump to <path>
+      Unknown flag => print usage to stderr, exit code 2.
+      Missing argument to a flag => same.
+
+  modes:
+    interactive:
+      trigger: "no flags passed"
+      behavior: |
+        Existing behavior. minifb window opened, input_controller::poll
+        each frame, dt from Instant::now() deltas, RNGs seeded as today.
+        No frame_recorder used.
+        Level: always level_data::build_default(); the interactive path
+        does not parse scenarios so scenario.level is irrelevant here.
+            let level = level_data::build_default();
+            let mut game = game_loop::new(level);
+    autopilot_only:
+      trigger: "--autopilot <path>"
+      behavior: |
+        1. yaml = std::fs::read_to_string(path).expect("scenario file readable")
+        2. scenario = autopilot::parse_scenario(&yaml)
+        3. bot = autopilot::BotState::new()
+        4. Pick the level from scenario.level (specs/15):
+             let level = match scenario.level {
+                 Some(kind) => level_generator::build(kind),
+                 None       => level_data::build_default(),
+             };
+             let mut game = game_loop::new(level);
+        5. each frame:
+             (input, progress) = autopilot::bot_step(&game, &scenario, &mut bot);
+             game_loop::update(&mut game, &input, BOT_FRAME_TIME);  // fixed dt!
+             draw(&mut framebuffer, ..., &game, ...);
+             window.update_with_buffer(...);
+             match progress {
+                 BotProgress::Running => continue,
+                 BotProgress::AllObjectivesComplete => game.running = false,
+                 BotProgress::Failed(msg) => { eprintln!("autopilot failed: {msg}"); game.running = false; }
+             }
+        6. The window is still opened and updated -- the user sees the bot
+           play. ESC still quits (poll the window for the Escape key in
+           addition to the bot's input; OR is the running flag).
+        7. Determinism: dt is BOT_FRAME_TIME (fixed 1/60), NOT Instant
+           deltas. This is the critical difference from interactive mode.
+           specs/35 § Determinism.
+    record_only:
+      trigger: "--record-frames <path>  (without --autopilot)"
+      behavior: |
+        Interactive play, but every frame after window.update_with_buffer
+        also calls frame_recorder::write_frame. dt is Instant-based as in
+        interactive mode -- this mode is NOT deterministic; it captures
+        whatever the human plays. (Useful for ad-hoc captures, not for
+        release demos.)
+        Level: same as interactive (level_data::build_default()) — no
+        scenario is parsed in this mode.
+    autopilot_and_record:
+      trigger: "--autopilot <path> --record-frames <out>"
+      behavior: |
+        Combined: bot drives input, dt fixed at BOT_FRAME_TIME, every frame
+        dumped via frame_recorder::write_frame. THIS is the canonical
+        release-demo invocation. Two runs produce byte-identical files
+        (specs/35 § Acceptance Criteria).
+        Level selection follows autopilot_only (specs/15): scenario.level
+        Some(kind) => level_generator::build(kind), None => default.
+        The PR-preview scenario tests/level/local_chase_obstacle.yaml
+        sets level: local_chase_obstacle and is the canonical input here.
+
+  rng_seeding:
+    notes: |
+      When --autopilot is set, ALL module-private RNGs (weapon_system,
+      enemy_logic, autopilot bot) MUST initialize from fixed seeds.
+      Coder degrees of freedom: where the seed constants live and the
+      RNG choice (LCG/xorshift). The constraint is: same scenario =>
+      same byte-for-byte recording. Without --autopilot, RNGs may seed
+      from time as before. specs/35 § Determinism.
+
+      Implementation hint: a small `pub(crate) fn rng_mode() -> RngMode`
+      helper in main.rs that returns either Deterministic(seed) or
+      WallClock, set once during arg parsing, consumed by each module's
+      RNG init. Coder may pick a different mechanism; the contract is
+      the *behavior*, not the plumbing.
+
+  exit_handling:
+    notes: |
+      When --record-frames was passed, on loop exit call
+      frame_recorder::close(rec) and surface any io::Error to stderr.
+      Print one line: "recorded N frames to <path>" using
+      rec.frames_written. This makes the recording script's life easier
+      (no need to query file size).
+
+# -----------------------------------------------------------------------------
+# Per-frame orchestration order
+# -----------------------------------------------------------------------------
+# game_loop::update(state, input, dt) calls these in this exact sequence.
+# Pinned so (a) the Coder for game_loop has a canonical sequence, and
+# (b) Coders for each module know who calls them, when, with what borrow.
+frame_update_order:
+  - "if input.quit { state.running = false; return; }"
+  - "player_state::apply_input(&mut state.player, input, &state.level, dt)"
+  - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds (Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX), set pickup.active=false, call player_state::take_health_pickup or take_ammo_pickup based on pickup.kind, and call visual_effects::increment_pickup_tint(&mut state.fx) (specs/40 § Pickup Tint Screen Flash)."
+  - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)"
+  - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire. Ammo gate is also inside fire(): if player.ammo == 0, fire() returns without side effects after the cooldown gate."
+  - "player_state::decay_damage_tint(&mut state.player, dt)"
+  - "visual_effects::tick(&mut state.fx, dt)"
+  - "// specs/20 § Game Over Flow: the game-over DECISION (player alive becomes false; or pos.distance_to(level.exit) < EXIT_RADIUS) and the loop-EXIT ACTION (running = false) MUST be in separate iterations of the main loop. Implementation pattern: the decision sets `state.game_over_at = Some(elapsed_seconds)`. The exit action runs only when `now - game_over_at >= GAME_OVER_HOLD_SEC` from specs/25 § Visual. Until then, the loop continues to call update + draw with `game_over` set so the colored border keeps rendering. Without this separation, the implementation flips running=false on the same tick the win/lose state is detected and the colored border renders for zero frames."
+  - "if !state.player.alive: state.game_over_at = Some(state.elapsed)  // game over (lose) — DECISION ONLY; loop continues to draw"
+  - "if state.player.pos.distance_to(state.level.exit) < EXIT_RADIUS: state.won = true; state.game_over_at = Some(state.elapsed)  // game over (win) — DECISION ONLY"
+  - "if let Some(t0) = state.game_over_at: if state.elapsed - t0 >= GAME_OVER_HOLD_SEC: state.running = false  // exit ACTION after hold elapsed"
+  - "#[cfg(test)] state.frames += 1"
+
+# -----------------------------------------------------------------------------
+# Service-emit policy (spec/80 § API Surface)
+# -----------------------------------------------------------------------------
+# Per call-site decision: A = method takes &mut <Service> directly because it
+# is itself a per-frame orchestration hook; B = method returns a description
+# and game_loop emits.
+service_emit_decisions:
+  - call_site: "weapon_system::fire"
+    resolution: A
+    rationale: |
+      fire() is invoked from game_loop::update once per frame as the
+      combat tick. Spec/80 § API Surface explicitly carves out
+      `update`-style methods that take the full per-frame borrow graph.
+
+  - call_site: "enemy_logic::update"
+    resolution: A
+    rationale: |
+      Per-frame AI hook. Spec/40 § Implementation note line 100 even
+      pins the signature: "the corpse marker is spawned by
+      enemy.update()" -- exactly so update() owns the &mut VisualEffects
+      borrow rather than take_damage() pulling it transitively.
+
+  - call_site: "enemy_logic::take_damage"
+    resolution: A
+    rationale: |
+      take_damage is called from inside weapon_system::fire (which is
+      itself a per-frame hook). The &mut VisualEffects parameter is
+      simply forwarded along the existing combat-tick borrow chain --
+      no new "service borrow" introduced. Spawning the death-fade
+      effect synchronously avoids losing it if the Enemy is deallocated
+      before the next update tick (which can't happen today but is a
+      cheap correctness margin).
+
+  - call_site: "player_state::take_damage"
+    resolution: B
+    rationale: |
+      take_damage is NOT a per-frame hook. The damage tint is derived
+      in renderer from player.damage_count (which take_damage updates
+      directly on Player). No &mut VisualEffects parameter is needed
+      because the tint is an overlay, not a spawned effect. Keeps
+      player_state independent of visual_effects symbol-wise EXCEPT for
+      the two constants DAMAGE_TINT_CAP and DAMAGE_TINT_DECAY_PER_SEC
+      (constant import is fine; struct import is not).
+
+  - call_site: "renderer::draw"
+    resolution: B
+    rationale: |
+      Render is read-only. It reads VisualEffects and player.damage_count
+      and emits pixels into the framebuffer. No spawn API needed.
+
+# -----------------------------------------------------------------------------
+# Coder degrees of freedom (intentionally unpinned)
+# -----------------------------------------------------------------------------
+coder_degrees_of_freedom:
+  - "Internal helper functions inside any module (private fn body)."
+  - "Choice of small RNG implementation (simple LCG vs. xorshift) for damage rolls and pain checks; module-private."
+  - "Whether weapon_system and enemy_logic share an RNG seed via a small private helper module or each carry their own."
+  - "Internal struct ordering / field layout details that do not change the public API."
+  - "Bot pathfinding internals in autopilot (turn-toward, stuck-detect, strafe heuristic). The public Scenario / Objective shape is pinned; the bot logic is not."
+  - "Choice of slide algorithm in player_state and enemy_logic (axis-aligned per spec/21; the per-axis order and the integer-vs-float of the radius check are Coder-internal)."
+  - "Whether VisualEffect lifetime decay uses retain() or a manual swap_remove loop -- both meet the spec."
+
+# -----------------------------------------------------------------------------
+# Things intentionally NOT pinned (and flagged so Reconciler doesn't double-look)
+# -----------------------------------------------------------------------------
+intentionally_unspecified:
+  - "Renderer color values are listed in `renderer.public_constants` (the renderer is their single consumer). Specs/25 § Visual is the source; do NOT duplicate the same constants in any other module's contract."
+  - "Specific stuck-detection strafe heuristic in autopilot: spec/30 § Stuck Detection only specifies the trigger frames (30/60), not the strafe direction selection algorithm."
+  - "console-message fate from the prior generation (specs/20 line 67 calls these `Hit for X! ...` lines a separate Coder decision). Coders MAY emit them, MAY suppress them. Reconciler will capture whichever choice is made."
+
+# -----------------------------------------------------------------------------
+# Conflicts between spec sources (resolved here so Coders never have to)
+# -----------------------------------------------------------------------------
+spec_conflicts_resolved:
+  - issue: |
+      ir/game_ir.yaml lists enemy attack_damage_values as [3, 6, 9, 12, 15]
+      AND specs/25 § Enemy says "Attack damage 3, 6, 9, 12, or 15 per hit"
+      with formula "(random(0..4) + 1) * 3". Both agree. No conflict.
+    resolution: "Use the explicit array [3, 6, 9, 12, 15]."
+  - issue: |
+      Pistol damage: ir/game_ir.yaml says [5, 10, 15] mean 10. Specs/25
+      § Weapon agrees ("5, 10, or 15 per shot, formula 5 * (random(0..2) + 1)").
+      No conflict.
+    resolution: "Use formula 5 * (random(0..3) + 1) -> {5, 10, 15}."
+  - issue: |
+      ir/game_ir.yaml describes simplifications ("enemy_detection_is_immediate
+      _no_los", "weapon_spread_approximated_not_triangular"). Spec/25
+      describes the implemented (simplified) constants AND the target
+      (deferred) constants. Spec/25 takes precedence per CLAUDE.md
+      "Specs are the source of truth".
+    resolution: |
+      Coders implement the "Implemented" rows of specs/25 only. The
+      "Target (from knowledge, not yet implemented)" rows are carried
+      in spec/25 explicitly so they remain Reconciler-visible without
+      being implemented this run. Triangular spread IS implemented
+      (rand-rand) per the contract for weapon_system::fire above --
+      this is a partial uplift from the pre-existing approximation
+      and is consistent with specs/25 first-shot accuracy semantics.
