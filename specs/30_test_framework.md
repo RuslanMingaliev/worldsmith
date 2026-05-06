@@ -68,7 +68,7 @@ Objectives are executed sequentially. Each must complete before the next begins.
 
 | Name | Resolves to |
 |------|-------------|
-| `enemy` | First alive enemy position; falls back to first enemy's last position, then to `exit`, if no enemies are alive. |
+| `enemy` | Nearest alive enemy position (minimum `player.pos.distance_to(enemy.pos)` over `enemies.iter().filter(|e| e.alive)`; ties broken by index in `level.enemy_spawns`). Falls back to first enemy's last position, then to `exit`, if no enemies are alive. The "nearest" rule keeps single-enemy fixtures (`tests/combat/{kill_enemy,kite_enemy}.yaml`) bit-for-bit equivalent to the old "first alive" rule, while letting multi-enemy fixtures (`tests/level/{scavenge_run,local_chase_obstacle}.yaml`) target the immediate threat instead of an arbitrary index-zero enemy that may be flanked by a closer one. |
 | `exit` | Level exit position |
 | `spawn` | Player spawn position |
 | `pickup_health` | First active health pickup (filtered by `kind == Health` AND `active == true`, per `specs/60 § Pickup Entity § Transitions`). Returns `None` when no active health pickup remains; combined with the `reach: pickup_<kind>` completion rule above, this means the objective completes (rather than stalls) once the bot has collected the pickup or the level had none to begin with. |
@@ -114,14 +114,14 @@ Each frame the bot resolves the active objective's target position, computes `di
 
 1. **Turn toward target.** Emit `turn` with sign matching the angular delta and magnitude 1.0, except when `|delta_angle| < BOT_TURN_THRESHOLD` (emit `turn = 0` to suppress oscillation around the target heading).
 2. **Pick a movement mode:**
-   - **Kite mode** — when the active objective targets an enemy (`kill: enemy` or `approach: enemy`) AND `dist < BOT_KITE_RANGE`: emit `forward = -1.0` (back-pedal). The bot keeps facing the target so LoS for firing is preserved while the player position retreats.
+   - **Kite mode** — when the active objective targets an enemy (`kill: enemy` or `approach: enemy`) AND there exists at least one alive enemy `e` with `player.pos.distance_to(e.pos) < BOT_KITE_RANGE`: emit `forward = -1.0` (back-pedal). The bot keeps facing the objective target so LoS for firing on it is preserved while the player position retreats from the closest threat. The trigger evaluates over ALL alive enemies (not just the objective target) so that a closer flanking enemy correctly forces a back-pedal even when the objective target is far away.
    - **Path-follow mode** — otherwise: follow the next waypoint from the BFS path (see § Pathfinding). The path's destination is normally the objective target tile, but may be temporarily redirected via a pickup tile by the pickup-seeking modifiers (see § Pickup-Seeking). The bot turns toward the waypoint's center and emits `forward = +1.0` once roughly facing it.
-3. **Decide whether to fire** (combat objectives only, i.e. `kill`):
-   - `dist < BOT_FIRE_MAX_RANGE`,
-   - AND `has_line_of_sight(player.pos, target_pos, &level)` returns true,
-   - AND `|delta_angle| < BOT_FACING_THRESHOLD`.
+3. **Decide whether to fire** (combat objectives only, i.e. `kill`). The bot fires when there exists any alive enemy `e` such that **all three** gates hold for that enemy:
+   - `player.pos.distance_to(e.pos) < BOT_FIRE_MAX_RANGE`,
+   - AND `has_line_of_sight(player.pos, e.pos, &level)` returns true,
+   - AND `|angle_to(e.pos) - player.facing| < BOT_FACING_THRESHOLD`.
 
-   The previous gate (`roughly_facing && dist < BOT_APPROACH_DISTANCE + ENEMY_RADIUS_TILES`) is retired. Range and LoS replace it. `BOT_APPROACH_DISTANCE` is no longer a fire gate; it remains the success threshold for the `approach:` objective only.
+   The fire gate is keyed on "any alive enemy in range/LoS/facing", not on the objective target alone, so the bot can defend itself against a flanking enemy while routing toward the objective. Single-enemy fixtures behave identically because "the only alive enemy" and "the objective target" coincide. The previous gate (`roughly_facing && dist < BOT_APPROACH_DISTANCE + ENEMY_RADIUS_TILES`) is retired. Range and LoS replace it. `BOT_APPROACH_DISTANCE` is no longer a fire gate; it remains the success threshold for the `approach:` objective only.
 
 ### Line-of-sight Test
 

@@ -25,6 +25,7 @@ You receive:
     for the affected module; do not propagate the same change across shards
     when a single edit to `_shared.yaml` would do.
 - Knowledge from `knowledge/`
+- **`artifacts/coder_report.md`** (CI mode) or the in-session Coder report transcript (manual mode). The Coder writes a numbered "Issues found and resolved" list whenever it had to make a behavior decision the spec didn't cover (multi-enemy targeting, dependency-version surprises, mid-run integration fixes, etc.). Every numbered item is a drift candidate — see Step 3.
 
 ## Process
 
@@ -77,6 +78,14 @@ For key behaviors (movement, combat, AI), verify code matches spec:
 - Same edge cases handled?
 
 If code differs → decide: update spec to match code, or flag for Coder to fix.
+
+**Mandatory: walk the Coder's "Issues found and resolved" list.** Open `artifacts/coder_report.md` (CI) or the in-session Coder report. Every numbered "Issue" the Coder shipped is a place where the Coder made a behavior call the spec did not pin. For each:
+
+1. Read the spec passage the Coder's fix replaces (the report should cite it; if it does not, locate it yourself).
+2. Compare what the spec says against what the Coder shipped, in the regenerated code.
+3. Decide: (a) the Coder's behavior is the right one and the spec is underspecified — flag for spec update in `### Specs updated`, or (b) the Coder's behavior is wrong — flag in `### Drift found` for the next Coder pass to fix.
+
+Either decision is acceptable; **silently accepting** the Coder's change without recording it in `### Specs updated` or `### Drift found` is not. A previous Reconciler pass left three multi-enemy bot-AI changes in `autopilot.rs` (nearest-enemy targeting, kite-on-any, fire-on-any) unflagged because this walk was not part of the prompt; the next regen would have re-introduced them as drift. The walk closes that gap.
 
 ### Step 3.5: End-to-end behavioral verification
 
