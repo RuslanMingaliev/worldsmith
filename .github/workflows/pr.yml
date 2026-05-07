@@ -279,6 +279,20 @@ jobs:
           echo "raw_url=${RAW_URL}" >> "$GITHUB_OUTPUT"
           echo "Embeddable GIF URL: ${RAW_URL}"
 
+      - name: Capture agent-driven changes as a diff
+        id: capture-diff
+        if: always() && steps.scope.outputs.module_count != '0'
+        run: |
+          set -e
+          PATHS="specs knowledge ir tooling/agents"
+          git add -N $PATHS 2>/dev/null || true
+          git diff -- $PATHS > artifacts/agent_changes.diff || true
+          if [ -s artifacts/agent_changes.diff ]; then
+            echo "has_diff=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_diff=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -293,20 +307,6 @@ jobs:
             artifacts/agent_changes.diff
           retention-days: 14
           if-no-files-found: warn
-
-      - name: Capture agent-driven changes as a diff
-        id: capture-diff
-        if: always() && steps.scope.outputs.module_count != '0'
-        run: |
-          set -e
-          PATHS="specs knowledge ir tooling/agents"
-          git add -N $PATHS 2>/dev/null || true
-          git diff -- $PATHS > artifacts/agent_changes.diff || true
-          if [ -s artifacts/agent_changes.diff ]; then
-            echo "has_diff=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_diff=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Suggest changes inline (Reconciler / PostMortem)
         if: always() && steps.capture-diff.outputs.has_diff == 'true'

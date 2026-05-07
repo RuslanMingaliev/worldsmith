@@ -174,11 +174,30 @@ public_methods:
           scenarios that don't expect death).
 
       Decision policy (specs/30 § Bot Behavior):
-        1. Resolve target_pos from the active objective.
+        1. Resolve target_pos from the active objective. For
+           Objective::Kill("enemy") and Objective::Approach("enemy"),
+           "enemy" resolves to the NEAREST alive enemy by
+           player.pos.distance_to(enemy.pos) over
+           game.enemies.iter().filter(|e| e.alive), with ties broken
+           by index in level.enemy_spawns. Falls back to the first
+           enemy's last position, then to game.level.exit, when no
+           enemies are alive. Single-enemy fixtures behave identically
+           to the legacy "first alive" rule because there is only one
+           candidate. See spec/30 § Targets.
         2. Turn toward target_pos (apply BOT_TURN_THRESHOLD dead-zone).
         3. Movement mode:
-           - kite (forward = -1.0) if objective targets an enemy AND
-             dist(player.pos, target_pos) < BOT_KITE_RANGE;
+           - kite (forward = -1.0) if the active objective targets an
+             enemy (Kill or Approach with target "enemy") AND there
+             exists at least one alive enemy `e` such that
+             player.pos.distance_to(e.pos) < BOT_KITE_RANGE. The
+             trigger is "ANY alive enemy in range", not "the objective
+             target is in range" — so a flanking enemy correctly
+             forces back-pedal even when the objective target is far.
+             The bot still keeps facing the objective target while
+             kiting (LoS for firing on it is preserved). Single-enemy
+             fixtures behave identically because "the only alive
+             enemy" and "the objective target" coincide. See spec/30
+             § Per-frame Decision step 2.
            - else path-follow: take the next waypoint from the BFS
              plan, turn toward it, emit forward = +1.0 once roughly
              facing it. Path destination may be redirected via a
