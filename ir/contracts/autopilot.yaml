@@ -137,6 +137,8 @@ public_constants:
   - { name: BOT_PATH_REPLAN_FRAMES,  type: u32, value: "30",     source: "specs/25 § Autopilot (Generation default — no knowledge backing; cap on BFS replan cadence)", cfg_test_only: false }
   - { name: BOT_HEALTH_PICKUP_THRESHOLD, type: f32, value: "0.5", source: "specs/25 § Autopilot (Generation default — no knowledge backing; HP fraction of PLAYER_MAX_HEALTH below which the bot routes via the nearest active health pickup before resuming the current objective)", cfg_test_only: false }
   - { name: BOT_PICKUP_DETOUR_BUDGET, type: u32, value: "4",      source: "specs/25 § Autopilot (Generation default — no knowledge backing; max extra BFS path tiles the bot will detour to grab an opportunistic ammo pickup)", cfg_test_only: false }
+  - { name: BOT_WAYPOINT_REACHED_TILES, type: f32, value: "0.7",  source: "specs/25 § Autopilot (Generation default — no knowledge backing; distance under which the bot consumes the next BFS waypoint and steers toward the one after)", cfg_test_only: false }
+  - { name: BOT_STUCK_MOVE_EPSILON, type: f32, value: "0.02",     source: "specs/25 § Autopilot (Generation default — no knowledge backing; per-frame movement threshold below which the bot's stuck-counter increments toward BOT_STUCK_FRAMES)", cfg_test_only: false }
   - { name: BOT_RNG_SEED,           type: u64, value: "0xC0FFEE", source: "specs/35 § Determinism (Generation default — Coder may pick any fixed constant; record in work/decisions.md)", cfg_test_only: false }
 public_methods:
   # ---- Always compiled
