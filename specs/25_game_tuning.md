@@ -350,7 +350,7 @@ Fixed seeds used when `--autopilot` flag is passed (specs/35 § Determinism). Se
 
 | Constant | Value | Module | Source |
 |----------|-------|--------|--------|
-| WEAPON_RNG_SEED | `0xDEAD_BEEF_1234_5678` | `weapon_system` | Generation default — arbitrary distinctive hex value. Seeds weapon damage RNG for deterministic demo recording. |
+| WEAPON_RNG_SEED | `0xDEAD_BEEF_1234_5678` | consumed via `Player.weapon_rng` (player_state contract § Player); `main` passes this seed to `Player::new` in `--autopilot` mode | Generation default — arbitrary distinctive hex value. Seeds weapon damage RNG for deterministic demo recording. RNG state lives on `Player` so `weapon_system::fire` advances it through the existing `&mut Player` borrow — no module-private `static mut`, no `unsafe` (spec/80 § Safety). |
 | ENEMY_RNG_SEED | `0xCAFE_BABE_8765_4321` | `enemy_logic` | Generation default — arbitrary distinctive hex value. Seeds enemy pain-check and attack-damage RNG. |
 | BOT_RNG_SEED | `0x00C0_FFEE` | `autopilot` | Generation default — "coffee" mnemonic. Seeds bot stuck-detection strafe-direction RNG. |
 

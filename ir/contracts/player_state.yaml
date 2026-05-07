@@ -21,6 +21,19 @@ public_types:
           pub ammo: i32,               // pistol ammo (specs/60, knowledge/pickups.md §
                                        // Ammo Gating of Firing). Bounded by
                                        // PLAYER_AMMO_MAX; gated > 0 in weapon_system::fire.
+          pub weapon_rng: u64,         // weapon-firing RNG state (LCG seed +
+                                       // accumulator). Consumed by
+                                       // weapon_system::fire for triangular spread
+                                       // and damage roll (specs/25 § Weapon).
+                                       // Living on Player lets weapon_system
+                                       // advance state through the existing
+                                       // &mut Player borrow — no module-level
+                                       // static state, no `static mut`, no
+                                       // `unsafe` (spec/80 § Safety).
+                                       // Seeded from WEAPON_RNG_SEED (specs/25
+                                       // § RNG Seeds) when --autopilot is set
+                                       // for deterministic demo recording; from
+                                       // an OS-time-derived seed otherwise.
       }
 public_constants:
   - { name: PLAYER_MAX_HEALTH, type: i32, value: "100",   source: "specs/25 § Player" }
@@ -35,12 +48,20 @@ public_constants:
   - { name: MAX_SPEED,         type: f32, value: "0.3",   source: "specs/21 § Speed Limiting" }
   - { name: PLAYER_RADIUS_TILES, type: f32, value: "0.4375", source: "specs/25 § Visual (14 px / 32 px) — used for circle-vs-wall collision" }
 public_methods:
-  - signature: "pub fn new(spawn: Vec2) -> Player"
+  - signature: "pub fn new(spawn: Vec2, weapon_rng_seed: u64) -> Player"
     notes: |
       health = PLAYER_MAX_HEALTH, alive = true, vel = (0,0), facing = 0.0,
       damage_count = 0.0, time_since_fire = f32::INFINITY (so the first
       shot of the game gets first-shot accuracy),
-      ammo = PLAYER_AMMO_INITIAL (specs/60).
+      ammo = PLAYER_AMMO_INITIAL (specs/60),
+      weapon_rng = weapon_rng_seed.
+
+      The seed is supplied by the caller (main.rs): WEAPON_RNG_SEED in
+      --autopilot mode for deterministic demo recording, an OS-time-
+      derived seed (e.g. `SystemTime::now().duration_since(UNIX_EPOCH)`)
+      in interactive mode. Coder must NOT introduce a `static mut`-backed
+      module-private RNG in weapon_system to back this — spec/80 § Safety
+      forbids unsafe; the &mut Player borrow already covers the use case.
   - signature: "pub fn apply_input(player: &mut Player, input: &InputState, level: &Level, dt: f32)"
     notes: |
       Per-frame movement update from specs/21:
