@@ -211,14 +211,21 @@ public_methods:
             path destination, but the active objective and its success
             condition are unchanged. Firing decisions in step 4 still
             gate off objective_target, not pickup_target.
-        4. Fire iff the active objective is `kill:` AND
-             dist < BOT_FIRE_MAX_RANGE
-             AND has_line_of_sight(player.pos, target_pos, &level)
-             AND |delta_angle| < BOT_FACING_THRESHOLD.
-           Note: dist and target_pos are the OBJECTIVE target (the
-           enemy), not the pickup-seeking modifier's intermediate
-           target. While routing toward a pickup the bot may still
-           fire at an enemy along the way if all four gates hold.
+        4. Fire iff the active objective is `kill:` AND there exists
+           any alive enemy `e` such that ALL THREE gates hold for
+           that enemy:
+             player.pos.distance_to(e.pos) < BOT_FIRE_MAX_RANGE
+             AND has_line_of_sight(player.pos, e.pos, &level)
+             AND |angle_to(e.pos) - player.facing| < BOT_FACING_THRESHOLD.
+           The fire gate is keyed on "any alive enemy in
+           range/LoS/facing", not on the objective target alone, so
+           the bot can defend itself against a flanking enemy while
+           routing toward the objective. Single-enemy fixtures behave
+           identically because "the only alive enemy" and "the
+           objective target" coincide. While routing toward a pickup
+           the bot may still fire at an enemy along the way if all
+           three gates hold for that enemy. See spec/30 § Per-frame
+           Decision step 3.
         5. Stuck-detect fallback (BOT_STUCK_FRAMES /
            BOT_REVERSE_STRAFE_FRAMES) is unchanged in mechanics;
            strafe activates when BFS-driven motion is itself blocked.

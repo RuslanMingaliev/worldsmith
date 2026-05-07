@@ -87,6 +87,8 @@ If code differs → decide: update spec to match code, or flag for Coder to fix.
 
 Either decision is acceptable; **silently accepting** the Coder's change without recording it in `### Specs updated` or `### Drift found` is not. A previous Reconciler pass left three multi-enemy bot-AI changes in `autopilot.rs` (nearest-enemy targeting, kite-on-any, fire-on-any) unflagged because this walk was not part of the prompt; the next regen would have re-introduced them as drift. The walk closes that gap.
 
+**Contract-vs-spec cross-walk (added 2026.01 regen).** Read `ir/contracts/<module>.yaml` for every regenerated module side-by-side with the corresponding behavior spec. If the contract pins a decision policy / target-resolution / fire gate AND the spec describes a different policy, the contract is stale — the Coder will faithfully ship the contract's text and produce a drift cluster (the 2026.01 regen lost an entire regen on `autopilot::bot_step`'s single-target semantics for this reason). When you find a contract-vs-spec disagreement, update the contract shard *in this pass* (so the next regen lands correct code) AND log the disagreement under `### Drift found` so PostMortem can elevate the Architect-side process gap.
+
 ### Step 3.5: End-to-end behavioral verification
 
 For any spec entry tagged "renders" / "displays" / "shows" / "is visible" / "appears", verify that the rendered behavior actually appears at runtime — not just that the code path exists. Compile + grep for the symbol is INSUFFICIENT: a draw call inside a loop that has already exited is dead at runtime even if `cargo check` is green.
