@@ -16,12 +16,15 @@ shared_types:
       pub fn new(x: f32, y: f32) -> Self
       pub fn length(self) -> f32
       pub fn normalize(self) -> Vec2
-      pub fn dot(self, other: Vec2) -> f32
       pub fn distance_to(self, other: Vec2) -> f32
     notes: |
       Coordinates are in tile units (one Tile::Wall cell = 1.0). See
       specs/21 § Implementation Notes. normalize() of a near-zero vector
       returns Vec2::default() (no NaN). distance_to is (a - b).length().
+      `dot` is intentionally NOT in the public surface — no in-crate
+      consumer exists; spec/80 § API Surface "no dead pub exports"
+      forbids shipping it as a future-use reservation. Reintroduce
+      only when a caller (e.g. LoS dot-product optimization) materialises.
 
   - name: Tile
     home_module: level_data

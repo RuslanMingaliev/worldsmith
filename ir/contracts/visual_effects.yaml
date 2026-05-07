@@ -23,8 +23,16 @@ public_types:
           pub pos: Vec2,                 // primary world position
           pub end_pos: Vec2,             // tracer endpoint; ignored for non-tracer kinds
           pub lifetime_remaining: f32,   // seconds; PERSISTENT_LIFETIME (f32::INFINITY) for corpses
-          pub initial_lifetime: f32,     // for fade interpolation in renderer
       }
+    notes: |
+      `initial_lifetime` was previously contracted "for fade
+      interpolation in renderer" but the renderer reads
+      `enemy.death_fade_remaining` (per spec/40 § Enemy Death Fade)
+      and never consumed it on Effect — it was a dead pub field.
+      Removed from the contract per spec/80 § API Surface "no dead
+      pub exports". Reintroduce only if and when the renderer's fade
+      pipeline actually needs the original duration (e.g. eased
+      curves rather than a linear 0..duration).
   - name: VisualEffects
     definition: |
       pub struct VisualEffects {

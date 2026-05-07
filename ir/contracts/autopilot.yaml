@@ -270,15 +270,21 @@ public_methods:
           private (module-internal) to avoid spec/80 § "no dead pub
           exports".
 
-      Bot RNG (used for stuck-detection strafe direction picks etc.)
-      is module-private and seeded from BOT_RNG_SEED in BotState::new(),
-      so two runs against the same Scenario + same GameState seed
-      produce identical (input, progress) sequences. This is the
-      determinism guarantee specs/35 § Determinism relies on. BFS
-      pathfinding is deterministic (no randomness in node visit order);
-      Coder must pick a stable tie-breaking rule (e.g. fixed neighbor
-      order N/E/S/W) so two runs on the same Level produce the same
-      path.
+      Bot determinism: two runs against the same Scenario + same
+      GameState seed must produce identical (input, progress)
+      sequences. BFS pathfinding is deterministic (no randomness in
+      node visit order); Coder must pick a stable tie-breaking rule
+      (e.g. fixed neighbor order N/E/S/W) so two runs on the same
+      Level produce the same path. Stuck-detection strafe-direction
+      pick is also deterministic — either an RNG-seeded sample from
+      BOT_RNG_SEED or a deterministic toggle (`strafe_dir = -strafe_dir`
+      on each `BOT_STUCK_FRAMES + BOT_REVERSE_STRAFE_FRAMES` boundary)
+      both satisfy the determinism contract. The current
+      implementation uses the deterministic toggle; BOT_RNG_SEED and
+      `BotState::rng` are reserved for future RNG-driven strafe but
+      may be omitted by a Coder that picks the toggle (see
+      specs/25 § RNG Seeds). This is the determinism guarantee
+      specs/35 § Determinism relies on.
     cfg_test_only: false
 
   # ---- #[cfg(test)] only
