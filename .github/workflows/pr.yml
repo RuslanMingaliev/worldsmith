@@ -311,6 +311,7 @@ jobs:
       - name: Suggest changes inline (Reconciler / PostMortem)
         if: always() && steps.capture-diff.outputs.has_diff == 'true'
         uses: reviewdog/action-suggester@v1
+        continue-on-error: true
         with:
           tool_name: worldsmith-agents
           cleanup: false
