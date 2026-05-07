@@ -136,6 +136,8 @@ Before submitting:
 - [ ] `cargo check` passes
 - [ ] `cargo test` passes
 - [ ] `cargo build` produces no new `dead_code` warnings on symbols you introduced
+- [ ] **No `unsafe` blocks and no `static mut`** in any generated file. spec/80 § Safety is unambiguous; `cargo check` will not catch it for you. If you reach for `static mut` to back module-private RNG state (or similar shared state), the safe alternatives are: thread the state through an existing `&mut` borrow (e.g. add a field on `Player` or `GameState`), use `std::cell::Cell` / `thread_local!` for per-thread state, or use `std::sync::atomic::*`. The 2026-05-07 release regen shipped `unsafe` + `static mut` in `weapon_system.rs` for the weapon RNG and only got caught at Reconciler — pick a safe primitive on the first try.
+- [ ] **No `#[cfg(test)] + #[allow(dead_code)]` "future test helper" symbols.** If a symbol is cfg-test-gated and has no cfg-test caller in this run, delete it. spec/80 § API Surface forbids "API for future use"; the cfg(test) carve-out only applies when a cfg(test) consumer actually exists.
 - [ ] If your module ships a `pub fn` / `pub struct field` / `pub const` whose ONLY callers are `#[cfg(test)]` (autopilot, integration tests, test fixtures), gate the export itself with `#[cfg(test)]` rather than leaving it public-and-dead in release builds. The "wave-cascade dead-code" exception in spec/80 § API Surface applies only when a *non-test* later wave will consume the symbol — if no non-test wave will consume it, gate it now.
 - [ ] No public method or trait method takes `&mut <ServiceType>` (VisualEffects, etc.) outside of `update`-style per-frame hooks — see spec/80 § API Surface.
 - [ ] Code follows generation rules
