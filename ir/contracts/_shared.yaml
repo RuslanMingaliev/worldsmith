@@ -181,9 +181,9 @@ main_cli:
       In current code: WEAPON_RNG_SEED, ENEMY_RNG_SEED, and
       BOT_RNG_SEED are passed unconditionally regardless of
       --autopilot — game_loop::new always seeds Player.weapon_rng
-      from WEAPON_RNG_SEED, every Enemy embeds DEFAULT_SEED at
-      construction, and BotState::new seeds bot.rng from
-      BOT_RNG_SEED. Specs/35 § Determinism permits a wall-clock seed
+      from WEAPON_RNG_SEED, every Enemy embeds ENEMY_RNG_SEED at
+      construction (module-private const in `enemy_logic.rs`), and
+      BotState::new seeds bot.rng from BOT_RNG_SEED. Specs/35 § Determinism permits a wall-clock seed
       in interactive mode but does not require one; the always-
       fixed-seed shape avoids threading a time source through the
       constructors. The seed arguments on Player::new and (future)

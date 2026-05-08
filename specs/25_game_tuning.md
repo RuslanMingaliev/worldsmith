@@ -132,7 +132,7 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 |---------|-------------|-----------|
 | Central divider (north half) | x=10, y=3..8 | Existing. Forces NS traversal in the upper half via columns 1-9 at y<3 OR columns 11-18 at y<3. |
 | Mid-left horizontal | y=7, x=4..9 | Existing. Separates the lower-left pocket (around the SW health pickup) from the upper region; bot must go around via x<4 or x>9. |
-| SE pocket cover | y=10, x=13..15 | New — three-tile horizontal cover north of the SE enemy. The bot's BFS path approaches the SE enemy from the east via column 16+ (open) rather than a straight diagonal, giving the demo a visible "round the corner" beat without changing the column-1-to-19 connectivity. Generation default — no knowledge backing. |
+| SE pocket cover | y=10, x=13..15 (Rust half-open: x=13, 14) | Two-tile horizontal cover north of the SE enemy. The bot's BFS path approaches the SE enemy from the east via column 15+ (open) rather than a straight diagonal, giving the demo a visible "round the corner" beat without changing the column-1-to-19 connectivity. Generation default — no knowledge backing. |
 
 ## Visual
 
@@ -351,7 +351,7 @@ Fixed seeds used when `--autopilot` flag is passed (specs/35 § Determinism). Se
 | Constant | Value | Module | Source |
 |----------|-------|--------|--------|
 | WEAPON_RNG_SEED | `0xDEAD_BEEF_1234_5678` | consumed via `Player.weapon_rng` (player_state contract § Player); `main` passes this seed to `Player::new` in `--autopilot` mode | Generation default — arbitrary distinctive hex value. Seeds weapon damage RNG for deterministic demo recording. RNG state lives on `Player` so `weapon_system::fire` advances it through the existing `&mut Player` borrow — no module-private `static mut`, no `unsafe` (spec/80 § Safety). |
-| ENEMY_RNG_SEED | `0xCAFE_BABE_8765_4321` | `enemy_logic` (module-private; named `DEFAULT_SEED` in code, embedded in every `Enemy::rng` field at construction) | Generation default — arbitrary distinctive hex value. Seeds enemy pain-check and attack-damage RNG. The Coder dropped the per-enemy seed-injection API in this regen because every enemy initialises from the same fixed seed; the row keeps the public name as the canonical identifier even though the in-code identifier is `DEFAULT_SEED`. (see reconcile_log#ENEMY_RNG_SEED) |
+| ENEMY_RNG_SEED | `0xCAFE_BABE_8765_4321` | `enemy_logic` (module-private const `ENEMY_RNG_SEED`, embedded in every `Enemy::rng` field at construction) | Generation default — arbitrary distinctive hex value. Seeds enemy pain-check and attack-damage RNG. The Coder dropped the per-enemy seed-injection API in this regen because every enemy initialises from the same fixed seed; the in-code identifier matches this row's canonical name. (see reconcile_log#ENEMY_RNG_SEED) |
 | BOT_RNG_SEED | `0x00C0_FFEE` | `autopilot` | Generation default — "coffee" mnemonic. Seeds `BotState::rng` (LCG, module-private). Currently consumed by stuck-detection strafe-direction selection: when `stuck_strafe_remaining` decays to 0 the bot picks the next strafe direction via `rng.next_f32() > 0.5`. Per `coder_degrees_of_freedom`, both RNG-seeded picks and a deterministic toggle (`strafe_dir = -strafe_dir`) satisfy specs/35 § Determinism — the current Coder picked the RNG-seeded form. (see reconcile_log#BOT_RNG_SEED) |
 
 ## Autopilot (Bot Tuning)

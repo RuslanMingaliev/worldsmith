@@ -68,7 +68,7 @@ Objectives are executed sequentially. Each must complete before the next begins.
 
 | Name | Resolves to |
 |------|-------------|
-| `enemy` | Nearest alive enemy position (minimum `player.pos.distance_to(enemy.pos)` over `enemies.iter().filter(|e| e.alive)`; ties broken by index in `level.enemy_spawns`). Falls back to first enemy's last position, then to `exit`, if no enemies are alive. The "nearest" rule keeps single-enemy fixtures (`tests/combat/{kill_enemy,kite_enemy}.yaml`) bit-for-bit equivalent to the old "first alive" rule, while letting multi-enemy fixtures (`tests/level/{scavenge_run,local_chase_obstacle}.yaml`) target the immediate threat instead of an arbitrary index-zero enemy that may be flanked by a closer one. |
+| `enemy` | Nearest alive enemy position (minimum `player.pos.distance_to(enemy.pos)` over `enemies.iter().filter(|e| e.alive)`; ties broken by index in `level.enemy_spawns`). Returns `None` when no enemies are alive — downstream callers handle this: `Kill` completes via `enemies.iter().all(|e| !e.alive)` regardless, `Reach`/`Approach` auto-complete on `None` per `check_objective_complete`, and `compute_input` returns the default `InputState`. The "nearest" rule keeps single-enemy fixtures (`tests/combat/{kill_enemy,kite_enemy}.yaml`) bit-for-bit equivalent to the old "first alive" rule, while letting multi-enemy fixtures (`tests/level/{scavenge_run,local_chase_obstacle}.yaml`) target the immediate threat instead of an arbitrary index-zero enemy that may be flanked by a closer one. |
 | `exit` | Level exit position |
 | `spawn` | Player spawn position |
 | `pickup_health` | First active health pickup (filtered by `kind == Health` AND `active == true`, per `specs/60 § Pickup Entity § Transitions`). Returns `None` when no active health pickup remains; combined with the `reach: pickup_<kind>` completion rule above, this means the objective completes (rather than stalls) once the bot has collected the pickup or the level had none to begin with. |
@@ -161,14 +161,18 @@ exists at least one `Pickup` in `level.pickups` with
 `kind == PickupKind::Health` and `active == true`, the modifier activates.
 
 **Effect.** The "intermediate target" tile is set to the nearest active
-health pickup's tile (Manhattan distance over the BFS graph; ties broken
-by the pickup's index in `level.pickups` for determinism). The BFS path
-is computed from `player.pos` to this intermediate tile. The bot follows
-that path. Once the bot's tile-position equals the pickup's tile (by which
-point `game_loop`'s per-frame pickup check has consumed the pickup, flipping
-its `active` flag to `false`), the next replan re-evaluates: the trigger
-fails (no `active == true` pickup at that index any more), the modifier
-deactivates, and the BFS path retargets the original objective.
+health pickup's tile (Euclidean `player.pos.distance_to(pickup.pos)`; ties
+broken by the pickup's index in `level.pickups` via `Iterator::min_by`'s
+"first equal minimum" rule). The BFS path is computed from `player.pos`
+to this intermediate tile. The bot follows that path. Once the bot's
+tile-position equals the pickup's tile (by which point `game_loop`'s
+per-frame pickup check has consumed the pickup, flipping its `active`
+flag to `false`), the next replan re-evaluates: the trigger fails (no
+`active == true` pickup at that index any more), the modifier deactivates,
+and the BFS path retargets the original objective. (BFS-graph Manhattan
+distance is the precise form for the prototype's 4-connected grid; the
+Euclidean approximation is cheaper and agrees with Manhattan on the test
+fixtures' open-corridor geometry. Tracked as a deferred refinement.)
 
 **Edge cases.**
 - **Pickup unreachable.** If BFS to the intermediate target returns an
@@ -206,24 +210,34 @@ progression. While routing toward the health pickup, the bot still:
 
 **Trigger.** On any path replan, if the bot is in path-follow mode AND the
 HP-threshold modifier did NOT activate this replan AND
-`player.ammo < PLAYER_AMMO_MAX` AND there exists at least one `Pickup` in
+`player.ammo == 0` AND there exists at least one `Pickup` in
 `level.pickups` with `kind == PickupKind::Ammo` and `active == true`, the
 modifier evaluates the detour cost.
 
-**Effect.** For each candidate active ammo pickup, compute:
-- `direct_len = len(find_path(player.pos, objective_target))`
-- `via_pickup_len = len(find_path(player.pos, pickup.pos))
-                  + len(find_path(pickup.pos, objective_target))`
-- `detour = via_pickup_len - direct_len`
+**Effect.** Trigger tightened from the earlier `< PLAYER_AMMO_MAX` rule:
+at the prototype's starting ammo of 12 / max 30, the looser trigger fires
+unconditionally on round one and the demo always detours; `== 0` keeps
+the modifier discriminating. Reintroduce the broader trigger when the
+ammo economy is rebalanced.
 
-If any candidate has `detour <= BOT_PICKUP_DETOUR_BUDGET`, the candidate
-with the smallest `detour` (ties broken by index in `level.pickups`) is
-chosen. The BFS path the bot follows for the next `BOT_PATH_REPLAN_FRAMES`
-is the `player.pos → pickup.pos → objective_target` two-segment path.
-The bot consumes the first segment, the pickup is collected on arrival
-(per `game_loop`'s per-frame check), the pickup goes inactive, and on
-the next replan the trigger fails (this pickup no longer counts) so the
-bot retargets the original objective directly.
+The current implementation uses a Euclidean approximation of the detour
+cost rather than a BFS path-length comparison: the modifier selects the
+*nearest* active ammo pickup (`Iterator::min_by` over Euclidean
+`player.pos.distance_to(pickup.pos)`; ties broken by iteration order in
+`level.pickups`) and accepts it iff
+`player.pos.distance_to(pickup.pos) <= player.pos.distance_to(objective_target) + BOT_PICKUP_DETOUR_BUDGET`.
+When the check passes, the BFS path destination is set to that pickup's
+position; the bot consumes the first segment, collects the pickup on
+arrival (per `game_loop`'s per-frame check), the pickup goes inactive,
+and on the next replan the trigger fails (this pickup no longer counts)
+so the bot retargets the original objective directly. The Euclidean
+budget check is a simpler approximation of the BFS-path detour: it admits
+some pickups whose actual two-segment path exceeds the budget and may
+reject others whose BFS detour is small but whose Euclidean distance is
+large. For the prototype's 20×15 grid with sparse interior walls the two
+metrics agree on the test fixtures; a BFS-based detour calculation
+(`via_pickup_len - direct_len`) is the precise form and is tracked as a
+deferred refinement.
 
 **Edge cases.**
 - **Two-segment path implementation.** The contract is that the bot's
@@ -233,15 +247,22 @@ bot retargets the original objective directly.
   intermediate via two replans (first replan: `player → pickup`; on
   arrival, second replan: `pickup → target`). Both meet the spec; option
   (b) is simpler and reuses the existing single-target BFS.
-- **No active ammo pickup, or all detours exceed budget.** The modifier
-  no-ops and the bot routes directly to the objective target.
-- **Multiple candidates with `detour <= budget`.** Cheapest detour wins.
-  Index-order tie-break keeps two candidates with equal detour
-  deterministic.
+- **No active ammo pickup, or the nearest active pickup fails the
+  Euclidean budget check.** The modifier no-ops and the bot routes
+  directly to the objective target. (The current implementation only
+  evaluates the single nearest candidate against the budget; if that
+  one is too far, no further candidates are considered this replan —
+  a consequence of `Iterator::min_by` collapsing the candidate set to
+  one before the budget check.)
+- **Multiple candidates.** `Iterator::min_by` over Euclidean
+  `distance_to(player.pos)` picks the nearest; ties resolved by the
+  pickup's index in `level.pickups` (min_by's "first equal minimum"
+  rule). Deterministic because the pickup vector is constructed in a
+  fixed order in `level_data::build_default`.
 - **Pickup blocks the direct path.** If the ammo pickup's tile already
-  lies on the direct BFS path (`detour == 0`), the modifier still fires
-  and the bot collects the pickup as part of its normal traversal — same
-  behavior as without the modifier, which is fine.
+  lies on the direct BFS path, the modifier still fires and the bot
+  collects the pickup as part of its normal traversal — same behavior as
+  without the modifier, which is fine.
 
 **Concurrent-objective interaction.** Same as HP-threshold: the modifier
 is a path modifier, not an objective. Firing, `wait:` countdowns, and

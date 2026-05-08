@@ -179,11 +179,15 @@ public_methods:
            "enemy" resolves to the NEAREST alive enemy by
            player.pos.distance_to(enemy.pos) over
            game.enemies.iter().filter(|e| e.alive), with ties broken
-           by index in level.enemy_spawns. Falls back to the first
-           enemy's last position, then to game.level.exit, when no
-           enemies are alive. Single-enemy fixtures behave identically
-           to the legacy "first alive" rule because there is only one
-           candidate. See spec/30 § Targets.
+           by index in level.enemy_spawns. Returns None when no
+           enemies are alive — downstream callers handle this:
+           Kill objective completion is keyed off
+           `enemies.iter().all(|e| !e.alive)` regardless of
+           resolve_target_pos, and Reach/Approach auto-complete via
+           the None branch in check_objective_complete.
+           Single-enemy fixtures behave identically to the legacy
+           "first alive" rule because there is only one candidate.
+           See spec/30 § Targets.
         2. Turn toward target_pos (apply BOT_TURN_THRESHOLD dead-zone).
         3. Movement mode:
            - kite (forward = -1.0) if the active objective targets an
@@ -210,22 +214,39 @@ public_methods:
                 player.health < BOT_HEALTH_PICKUP_THRESHOLD
                                 * PLAYER_MAX_HEALTH
               AND any Pickup with kind == Health, active == true exists,
-              the BFS path destination is redirected to the nearest such
-              pickup (Manhattan over BFS graph; index-tie-break).
-              Once the bot's tile-position equals the pickup tile and
-              game_loop has flipped active to false, the next replan
-              re-evaluates and (now that no active health pickup at the
-              same index satisfies the trigger) routes to the original
-              objective target.
-            - Ammo opportunism: when HP-threshold did NOT activate,
-                player.ammo < PLAYER_AMMO_MAX
+              the BFS path destination is redirected to the nearest
+              such pickup. "Nearest" uses Euclidean
+              `player.pos.distance_to(pickup.pos)`; ties broken by
+              `Iterator::min_by`'s "first equal minimum" rule (i.e.
+              by index in `level.pickups`). Once the bot's
+              tile-position equals the pickup tile and game_loop has
+              flipped active to false, the next replan re-evaluates
+              and (now that no active health pickup at the same index
+              satisfies the trigger) routes to the original objective
+              target.
+            - Ammo opportunism: when HP-threshold did NOT activate AND
+                player.ammo == 0
               AND any Pickup with kind == Ammo, active == true exists,
-              compute detour = via_pickup_len - direct_len for each
-              candidate over the BFS graph. The candidate with smallest
-              detour <= BOT_PICKUP_DETOUR_BUDGET wins (index tie-break).
-              Two-segment path (player → pickup → target) is followed
-              for the next BOT_PATH_REPLAN_FRAMES; on the next replan
-              after pickup consumption the modifier deactivates.
+              the modifier inspects the nearest active ammo pickup
+              (`Iterator::min_by` over Euclidean
+              `player.pos.distance_to(pickup.pos)`; ties broken by
+              iteration order in `level.pickups`) and accepts it iff
+                player.pos.distance_to(pickup.pos)
+                  <= player.pos.distance_to(target_pos)
+                     + BOT_PICKUP_DETOUR_BUDGET.
+              When accepted, the BFS path destination is redirected to
+              that pickup. The bot consumes the path-to-pickup segment;
+              on arrival game_loop flips the pickup's active flag, and
+              the next replan retargets the original objective. The
+              ammo-trigger threshold is `ammo == 0` (deferred from the
+              earlier `< PLAYER_AMMO_MAX` rule because at the prototype's
+              level scale the latter fires unconditionally on round 1
+              and the demo always detours; the stricter "out of ammo"
+              keeps the modifier discriminating). The Euclidean budget
+              check is an approximation of the BFS-path-length detour
+              (`via_pickup_len - direct_len <= budget`) — the precise
+              form is tracked as a deferred refinement; the two metrics
+              agree on the test fixtures.
             Both modifiers are PATH MODIFIERS — they redirect the BFS
             path destination, but the active objective and its success
             condition are unchanged. Firing decisions in step 4 still
