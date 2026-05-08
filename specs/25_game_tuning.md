@@ -119,11 +119,11 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 
 ### Enemy spawns
 
-`level_data::build_default()` populates two basic-trooper enemies (`Vec<Vec2>` order matters — `Scenario` targets resolve to the first alive enemy in this list):
+`level_data::build_default()` populates two basic-trooper enemies (`Vec<Vec2>` order is the deterministic tie-breaker for `Scenario` targets — per `specs/30 § Targets` "enemy" resolves to the *nearest* alive enemy with ties broken by index in `enemy_spawns`):
 
 | Order | Position (tile coords) | Rationale |
 |-------|------------------------|-----------|
-| 1 | (17.5, 12.5) | Existing SE-corner spawn. Kept first so `tests/combat/kill_enemy.yaml`, `tests/level/{complete_level,scavenge_run}.yaml` and any other fixture that expects "the enemy" at this position keeps working. Generation default — no knowledge backing. |
+| 1 | (17.5, 12.5) | Existing SE-corner spawn. Kept first so it wins index-tie-breaks when both enemies are equidistant; in single-enemy fixtures (`tests/combat/kill_enemy.yaml` etc.) it is the only candidate so the resolved target is unambiguous. Generation default — no knowledge backing. |
 | 2 | (4.5, 11.5) | SW spawn — geographically isolated from the spawn → enemy 1 → ammo → exit corridor used by `scavenge_run.yaml`, so it does not chase down the primary trajectory. Provides multi-enemy combat in `tests/level/local_chase_obstacle.yaml`-equivalents that target this position explicitly, and gives the recorded demo a second engagement. Generation default — no knowledge backing. |
 
 ### Interior walls
@@ -146,8 +146,8 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 | Exit marker | X shape, 20px | #00FFFF cyan |
 | Direction line | 20px length | #FFFF00 yellow |
 | Game over border | 10px | green tint (win) / red tint (lose) |
-| GAME_OVER_BORDER_WIN_COLOR | named `const` in `renderer::draw` game-over arm | #00FF80 spring green — generation default. Spec described "green tint" qualitatively; this row pins the specific shade. Distinct from `COLOR_PLAYER` (`#00FF00`) and `HUD_HEALTH_COLOR_HIGH` (`#00C000`) so the border reads as a discrete UI band rather than as a player tile or HUD element. (see reconcile_log#GAME_OVER_BORDER_COLORS) |
-| GAME_OVER_BORDER_LOSE_COLOR | named `const` in `renderer::draw` game-over arm | #FF4040 tomato red — generation default. Spec described "red tint" qualitatively; this row pins the specific shade. Lighter than `COLOR_ENEMY` (`#FF0000`) and `HUD_HEALTH_COLOR_LOW` (`#C00000`) so the lose border does not visually merge with a low-health HUD or with on-screen enemies. (see reconcile_log#GAME_OVER_BORDER_COLORS) |
+| GAME_OVER_BORDER_WIN_COLOR | inlined as `0x00FF80u32` in `renderer::draw` game-over arm | #00FF80 spring green — generation default. Spec described "green tint" qualitatively; this row pins the specific shade. Distinct from `COLOR_PLAYER` (`#00FF00`) and `HUD_HEALTH_COLOR_HIGH` (`#00C000`) so the border reads as a discrete UI band rather than as a player tile or HUD element. (see reconcile_log#GAME_OVER_BORDER_COLORS) |
+| GAME_OVER_BORDER_LOSE_COLOR | inlined as `0xFF4040u32` in `renderer::draw` game-over arm | #FF4040 tomato red — generation default. Spec described "red tint" qualitatively; this row pins the specific shade. Lighter than `COLOR_ENEMY` (`#FF0000`) and `HUD_HEALTH_COLOR_LOW` (`#C00000`) so the lose border does not visually merge with a low-health HUD or with on-screen enemies. (see reconcile_log#GAME_OVER_BORDER_COLORS) |
 | GAME_OVER_HOLD_SEC | 2.0 sec | Generation default — minimum visibility budget for the player to register the win/lose outcome before the loop exits. Rationale: without an explicit hold, the main-loop exits on the same tick the game-over flag is set, so the colored border renders for zero frames. 2 seconds is the standard retro-shooter hold; revisit if user feedback says it's too short or too long. See specs/20 § Game Over Flow. |
 
 ### Visual Feedback
@@ -352,7 +352,7 @@ Fixed seeds used when `--autopilot` flag is passed (specs/35 § Determinism). Se
 |----------|-------|--------|--------|
 | WEAPON_RNG_SEED | `0xDEAD_BEEF_1234_5678` | consumed via `Player.weapon_rng` (player_state contract § Player); `main` passes this seed to `Player::new` in `--autopilot` mode | Generation default — arbitrary distinctive hex value. Seeds weapon damage RNG for deterministic demo recording. RNG state lives on `Player` so `weapon_system::fire` advances it through the existing `&mut Player` borrow — no module-private `static mut`, no `unsafe` (spec/80 § Safety). |
 | ENEMY_RNG_SEED | `0xCAFE_BABE_8765_4321` | `enemy_logic` (module-private; named `DEFAULT_SEED` in code, embedded in every `Enemy::rng` field at construction) | Generation default — arbitrary distinctive hex value. Seeds enemy pain-check and attack-damage RNG. The Coder dropped the per-enemy seed-injection API in this regen because every enemy initialises from the same fixed seed; the row keeps the public name as the canonical identifier even though the in-code identifier is `DEFAULT_SEED`. (see reconcile_log#ENEMY_RNG_SEED) |
-| BOT_RNG_SEED | `0x00C0_FFEE` | `autopilot` | Generation default — "coffee" mnemonic. Reserved for bot stuck-detection strafe-direction RNG; current code uses a deterministic strafe-direction toggle (`bot.strafe_dir = -bot.strafe_dir` after `BOT_STUCK_FRAMES + BOT_REVERSE_STRAFE_FRAMES`) and never consumes the seed. The seed and `BotState::rng` field are retained as the canonical hook for future RNG-driven strafe; both deterministic-toggle and RNG-seeded picks satisfy specs/35 § Determinism. (see reconcile_log#BOT_RNG_SEED) |
+| BOT_RNG_SEED | `0x00C0_FFEE` | `autopilot` | Generation default — "coffee" mnemonic. Seeds `BotState::rng` (LCG, module-private). Currently consumed by stuck-detection strafe-direction selection: when `stuck_strafe_remaining` decays to 0 the bot picks the next strafe direction via `rng.next_f32() > 0.5`. Per `coder_degrees_of_freedom`, both RNG-seeded picks and a deterministic toggle (`strafe_dir = -strafe_dir`) satisfy specs/35 § Determinism — the current Coder picked the RNG-seeded form. (see reconcile_log#BOT_RNG_SEED) |
 
 ## Autopilot (Bot Tuning)
 
