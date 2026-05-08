@@ -280,10 +280,12 @@ public_methods:
       BOT_RNG_SEED or a deterministic toggle (`strafe_dir = -strafe_dir`
       on each `BOT_STUCK_FRAMES + BOT_REVERSE_STRAFE_FRAMES` boundary)
       both satisfy the determinism contract. The current
-      implementation uses the deterministic toggle; BOT_RNG_SEED and
-      `BotState::rng` are reserved for future RNG-driven strafe but
-      may be omitted by a Coder that picks the toggle (see
-      specs/25 § RNG Seeds). This is the determinism guarantee
+      implementation uses the RNG-seeded form (`bot.rng.next_f32() > 0.5`
+      after a stuck-recovery strafe completes); BOT_RNG_SEED and
+      `BotState::rng` are therefore live, not reserved. A future Coder
+      may swap to the toggle without behavior change beyond the strafe
+      direction's polarity, per `coder_degrees_of_freedom` and
+      specs/25 § RNG Seeds. This is the determinism guarantee
       specs/35 § Determinism relies on.
     cfg_test_only: false
 

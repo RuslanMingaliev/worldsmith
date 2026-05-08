@@ -31,9 +31,15 @@ public_types:
                                        // static state, no `static mut`, no
                                        // `unsafe` (spec/80 § Safety).
                                        // Seeded from WEAPON_RNG_SEED (specs/25
-                                       // § RNG Seeds) when --autopilot is set
-                                       // for deterministic demo recording; from
-                                       // an OS-time-derived seed otherwise.
+                                       // § RNG Seeds) by both interactive and
+                                       // --autopilot paths today: game_loop::new
+                                       // passes WEAPON_RNG_SEED unconditionally
+                                       // (per game_loop contract notes). Specs/35
+                                       // § Determinism permits a wall-clock seed
+                                       // in interactive mode but does not require
+                                       // one; the always-fixed-seed shape avoids
+                                       // threading a time source through
+                                       // game_loop::new.
       }
 public_constants:
   - { name: PLAYER_MAX_HEALTH, type: i32, value: "100",   source: "specs/25 § Player" }
@@ -56,12 +62,15 @@ public_methods:
       ammo = PLAYER_AMMO_INITIAL (specs/60),
       weapon_rng = weapon_rng_seed.
 
-      The seed is supplied by the caller (main.rs): WEAPON_RNG_SEED in
-      --autopilot mode for deterministic demo recording, an OS-time-
-      derived seed (e.g. `SystemTime::now().duration_since(UNIX_EPOCH)`)
-      in interactive mode. Coder must NOT introduce a `static mut`-backed
-      module-private RNG in weapon_system to back this — spec/80 § Safety
-      forbids unsafe; the &mut Player borrow already covers the use case.
+      The seed is supplied by the caller. Today game_loop::new passes
+      WEAPON_RNG_SEED unconditionally (specs/25 § RNG Seeds), so both
+      interactive and --autopilot modes get deterministic weapon RNG.
+      Specs/35 § Determinism permits a wall-clock seed in interactive
+      mode but does not require one; if a future Coder threads a time
+      source through game_loop::new, the seed argument here is the hook.
+      Coder must NOT introduce a `static mut`-backed module-private RNG
+      in weapon_system to back this — spec/80 § Safety forbids unsafe;
+      the &mut Player borrow already covers the use case.
   - signature: "pub fn apply_input(player: &mut Player, input: &InputState, level: &Level, dt: f32)"
     notes: |
       Per-frame movement update from specs/21:
