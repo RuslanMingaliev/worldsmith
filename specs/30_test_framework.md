@@ -316,7 +316,6 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 - **Not yet implemented** (return "unknown assertion field" error at runtime): `player.position.x`, `player.position.y`, `enemy.health`, `game.running`.
 - Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
 - Bot behavior: turn-toward objective, BFS pathfinding with periodic replan and bee-line fallback, kite at `BOT_KITE_RANGE`, range-gated firing at `BOT_FIRE_MAX_RANGE`, LoS-gated firing via tile-grid ray-cast, stuck detection with strafe recovery as fallback.
-- Pickup-seeking path modifiers — HP-threshold health routing (`BOT_HEALTH_PICKUP_THRESHOLD`) and ammo opportunism with detour-budget (`BOT_PICKUP_DETOUR_BUDGET`), per § Pickup-Seeking. Layered on top of the existing BFS path-follow logic; kite mode and combat firing decisions are unchanged.
 - `reach: pickup_<kind>` completes on actual pickup consumption (`pickup.active == false`), not on proximity, per § Objectives.
 - Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, 3600-frame max.
 - Per-frame API (`parse_scenario`, `BotState`, `BotProgress`, `bot_step`) always compiled for `--autopilot` mode (specs/35).
