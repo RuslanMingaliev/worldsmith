@@ -193,15 +193,23 @@ public_methods:
            - kite (forward = -1.0) if the active objective targets an
              enemy (Kill or Approach with target "enemy") AND there
              exists at least one alive enemy `e` such that
-             player.pos.distance_to(e.pos) < BOT_KITE_RANGE. The
-             trigger is "ANY alive enemy in range", not "the objective
-             target is in range" — so a flanking enemy correctly
-             forces back-pedal even when the objective target is far.
-             The bot still keeps facing the objective target while
-             kiting (LoS for firing on it is preserved). Single-enemy
+             player.pos.distance_to(e.pos) < BOT_KITE_RANGE
+             AND has_line_of_sight(player.pos, e.pos, &level) returns
+             true. The trigger is "ANY alive enemy in range AND with
+             LoS", not "the objective target is in range" — so a
+             flanking enemy correctly forces back-pedal even when the
+             objective target is far. The LoS gate prevents
+             wall-separated kiting: a wall between the bot and the
+             closest enemy keeps the bot in path-follow mode so BFS
+             can route around the wall, rather than indefinitely
+             backing away from a non-threatening proximity. The bot
+             still keeps facing the objective target while kiting
+             (LoS for firing on it is preserved). Single-enemy
              fixtures behave identically because "the only alive
-             enemy" and "the objective target" coincide. See spec/30
-             § Per-frame Decision step 2.
+             enemy" and "the objective target" coincide. Reconciled
+             2026-05-08 after the Coder added the LoS check to fix
+             indefinite westward back-pedal in local_chase_obstacle.
+             See spec/30 § Per-frame Decision step 2.
            - else path-follow: take the next waypoint from the BFS
              plan, turn toward it, emit forward = +1.0 once roughly
              facing it. Path destination may be redirected via a

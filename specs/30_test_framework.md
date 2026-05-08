@@ -114,7 +114,7 @@ Each frame the bot resolves the active objective's target position, computes `di
 
 1. **Turn toward target.** Emit `turn` with sign matching the angular delta and magnitude 1.0, except when `|delta_angle| < BOT_TURN_THRESHOLD` (emit `turn = 0` to suppress oscillation around the target heading).
 2. **Pick a movement mode:**
-   - **Kite mode** — when the active objective targets an enemy (`kill: enemy` or `approach: enemy`) AND there exists at least one alive enemy `e` with `player.pos.distance_to(e.pos) < BOT_KITE_RANGE`: emit `forward = -1.0` (back-pedal). The bot keeps facing the objective target so LoS for firing on it is preserved while the player position retreats from the closest threat. The trigger evaluates over ALL alive enemies (not just the objective target) so that a closer flanking enemy correctly forces a back-pedal even when the objective target is far away.
+   - **Kite mode** — when the active objective targets an enemy (`kill: enemy` or `approach: enemy`) AND there exists at least one alive enemy `e` with `player.pos.distance_to(e.pos) < BOT_KITE_RANGE` AND `has_line_of_sight(player.pos, e.pos, &level)` returns true: emit `forward = -1.0` (back-pedal). The bot keeps facing the objective target so LoS for firing on it is preserved while the player position retreats from the closest threat. The trigger evaluates over ALL alive enemies (not just the objective target) so that a closer flanking enemy correctly forces a back-pedal even when the objective target is far away. The LoS gate prevents wall-separated kiting: when an enemy is within `BOT_KITE_RANGE` but a wall lies between the two, the bot stays in path-follow mode and routes around the wall via BFS instead of indefinitely backing away from a non-threatening proximity. Captured during 2026-05-08 reconcile after the Coder added the LoS check to fix indefinite westward back-pedal in `local_chase_obstacle`.
    - **Path-follow mode** — otherwise: follow the next waypoint from the BFS path (see § Pathfinding). The path's destination is normally the objective target tile, but may be temporarily redirected via a pickup tile by the pickup-seeking modifiers (see § Pickup-Seeking). The bot turns toward the waypoint's center and emits `forward = +1.0` once roughly facing it.
 3. **Decide whether to fire** (combat objectives only, i.e. `kill`). The bot fires when there exists any alive enemy `e` such that **all three** gates hold for that enemy:
    - `player.pos.distance_to(e.pos) < BOT_FIRE_MAX_RANGE`,
@@ -338,7 +338,7 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 - Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
 - Bot behavior: turn-toward objective, BFS pathfinding with periodic replan and bee-line fallback, kite at `BOT_KITE_RANGE`, range-gated firing at `BOT_FIRE_MAX_RANGE`, LoS-gated firing via tile-grid ray-cast, stuck detection with strafe recovery as fallback.
 - `reach: pickup_<kind>` completes on actual pickup consumption (`pickup.active == false`), not on proximity, per § Objectives.
-- Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, 3600-frame max.
+- Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, `BOT_MAX_FRAMES`-frame max (see specs/25 § Autopilot).
 - Per-frame API (`parse_scenario`, `BotState`, `BotProgress`, `bot_step`) always compiled for `--autopilot` mode (specs/35).
 - Batch driver (`run_scenario`, `run_all_scenarios`) gated behind `#[cfg(test)]`.
 
