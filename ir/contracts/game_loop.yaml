@@ -32,9 +32,17 @@ public_methods:
       Constructs GameState from a caller-supplied Level. Caller is
       responsible for choosing the level (default vs. demo); this
       constructor is level-agnostic.
-        player = Player::new(level.player_spawn)
+        player = Player::new(level.player_spawn,
+                             player_state::WEAPON_RNG_SEED)
         enemies = level.enemy_spawns.iter()
                       .map(|&s| Enemy::new(s)).collect()
+      WEAPON_RNG_SEED is passed unconditionally — both interactive and
+      --autopilot modes get deterministic weapon RNG. Specs/35 §
+      Determinism permits a wall-clock seed in interactive mode but does
+      not require one; the always-fixed-seed shape avoids threading a
+      time source through game_loop::new. Future Coder threading a time
+      source picks up the second argument as the hook
+      (player_state contract § Player.weapon_rng).
         fx = VisualEffects::new()
         running = true; won = false; (#[cfg(test)] frames = 0)
         level (moved into GameState as state.level)
