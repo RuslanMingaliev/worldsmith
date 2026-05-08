@@ -166,6 +166,9 @@ Structure (omit a section by writing "None." rather than skipping it):
 
 ### Cross-module surface changes
 - [module.symbol]: [shape change, who calls it]
+
+### API Surface compromises
+- [module.symbol]: [`#[allow(dead_code)]` applied, `pub` field with no live consumer, blocker note deferred, etc.] — disclose every spec/80 § API Surface workaround the Coder phase took. Reconciler greps `#[allow(dead_code)]` mechanically (reconciler.md § Step 0); pre-disclosing here lets Reconciler pair the masking with your rationale instead of re-discovering it as drift. Write "None." if no compromises were taken.
 ```
 
 This is the only artifact Coder writes. Do not append to `work/pipeline_run_*.md` — that file is owned by Orchestrator/Reconciler and the CI artifact collector cannot scrape it.
