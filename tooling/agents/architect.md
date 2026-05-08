@@ -128,6 +128,7 @@ Before submitting:
 - [ ] Every spec rule that EXPLICITLY contradicts a knowledge entry (e.g. spec uses circle distance where knowledge uses AABB; spec hardcodes a value where knowledge reads from asset; spec applies a coloring policy that knowledge says the reference does NOT do) is flagged at the rule site with an inline `*(Generation default — knowledge says X; we use Y because <rationale>.)*` AND surfaced to the run journal under `### ADR candidates` for the PostMortem to elevate. Rationale: deviations that accumulate unflagged become future re-extraction questions the journal-only parking lot will lose. See `tooling/agents/postmortem.md` for the elevation pipeline.
 - [ ] If you added a new module to `ir/module_plan.yaml`, you also added its name to `main.depends_on`. `tooling/validate_specs.py` will fail otherwise.
 - [ ] If a new or modified spec names a `tests/**/*.yaml` fixture file, the fixture is authored alongside the spec — Coder will not create it.
+- [ ] When pinning a bot decision trigger (kite condition, fire gate, target resolution, pickup-seeking) in `ir/contracts/autopilot.yaml` or `specs/30_test_framework.md`, trace the trigger across EACH level geometry the bot can run on (`level_data::build_default` + every `DemoLevelKind` in `level_generator`). A trigger that's correct on open-floor `kite_melee` can loop forever on wall-divided `local_chase_obstacle`. The 2026.01 regen lost a Coder pass to this exact gap (kite mode without LoS gate); see `work/reconcile_history.md § KITE_MODE_LOS_GATE`.
 
 ## Escalation
 

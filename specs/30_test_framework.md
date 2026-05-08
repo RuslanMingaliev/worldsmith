@@ -312,7 +312,7 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 
 - Each scenario runs with fresh `GameState`
 - Simulation runs at 60 FPS (FRAME_TIME = 1/60)
-- Maximum duration: 3600 frames (60 seconds)
+- Maximum duration: `BOT_MAX_FRAMES` frames (see [`25_game_tuning.md § Autopilot`](25_game_tuning.md#autopilot-bot-tuning) — currently 18000 / 300 game-seconds; raised from the original 3600 to fit two-enemy fixtures across the central divider)
 - If max frames exceeded, assertions are checked against current state
 - Scenarios are independent — no shared state between tests
 

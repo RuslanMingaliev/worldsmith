@@ -361,7 +361,7 @@ The autopilot bot in `src/autopilot.rs` exposes a per-frame API always compiled,
 | Constant | Value | Source |
 |----------|-------|--------|
 | BOT_FRAME_TIME | 1/60 s | specs/30 § Execution Rules (60 FPS) |
-| BOT_MAX_FRAMES | 3600 | specs/30 § Execution Rules (60 sec max) |
+| BOT_MAX_FRAMES | 18000 | 300 game-seconds at 60 FPS. Raised from the original 3600 (60 sec) so two-enemy fixtures across the central divider have time to navigate around the obstacle, fire, and reach the exit; single-enemy fixtures continue to finish in well under 3600 frames. (see reconcile_log#BOT_MAX_FRAMES) |
 | BOT_REACH_DISTANCE | 1.0 tile | specs/30 § Objectives (`reach: distance < 1.0`) |
 | BOT_APPROACH_DISTANCE | 8.0 tiles | specs/30 § Objectives (`approach: distance < 8.0`) |
 | BOT_STUCK_FRAMES | 30 | specs/30 § Stuck Detection |

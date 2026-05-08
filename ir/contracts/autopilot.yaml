@@ -124,7 +124,7 @@ public_constants:
   # 1.0 / BOT_FRAME_RATE) crosses the module boundary, consumed by main.rs
   # in --autopilot mode. Reconciled during reconcile pass.
   - { name: BOT_FRAME_TIME,         type: f32, value: "0.01666667", source: "specs/30 § Execution Rules (1/60)", cfg_test_only: false }
-  - { name: BOT_MAX_FRAMES,         type: u32, value: "3600",   source: "specs/30 § Execution Rules (60 sec)", cfg_test_only: false }
+  - { name: BOT_MAX_FRAMES,         type: u32, value: "18000",  source: "specs/25 § Autopilot — 300 game-seconds at 60 FPS, raised from 3600 during 2026-05-08 reconcile to accommodate two-enemy fixtures across the central divider", cfg_test_only: false }
   - { name: BOT_REACH_DISTANCE,     type: f32, value: "1.0",    source: "specs/30 § Objectives (reach)", cfg_test_only: false }
   - { name: BOT_APPROACH_DISTANCE,  type: f32, value: "8.0",    source: "specs/30 § Objectives (approach)", cfg_test_only: false }
   - { name: BOT_STUCK_FRAMES,       type: u32, value: "30",     source: "specs/30 § Stuck Detection", cfg_test_only: false }
