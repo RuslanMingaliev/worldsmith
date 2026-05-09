@@ -78,7 +78,7 @@ public_methods:
   - signature: "pub fn new() -> VisualEffects"
     notes: "Empty list, Vec::with_capacity(EFFECT_LIST_INITIAL_CAPACITY)."
   - signature: "pub fn spawn_muzzle_flash(fx: &mut VisualEffects, muzzle_pos: Vec2)"
-    notes: "Pushes Effect { kind: MuzzleFlash, pos: muzzle_pos, end_pos: Vec2::default(), lifetime_remaining: MUZZLE_FLASH_DURATION, initial_lifetime: MUZZLE_FLASH_DURATION }."
+    notes: "Pushes Effect { kind: MuzzleFlash, pos: muzzle_pos, end_pos: Vec2::default(), lifetime_remaining: MUZZLE_FLASH_DURATION }. (initial_lifetime field removed — see Effect notes above; spec/80 § API Surface no-dead-pub-exports)."
   - signature: "pub fn spawn_tracer(fx: &mut VisualEffects, start: Vec2, end: Vec2)"
     notes: "Effect.pos = start, Effect.end_pos = end, lifetime = TRACER_DURATION."
   - signature: "pub fn spawn_wall_puff(fx: &mut VisualEffects, pos: Vec2)"
