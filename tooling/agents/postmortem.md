@@ -105,7 +105,7 @@ Look for *process* signals, not *code* signals (Reconciler owns code):
 - **Agent-prompt non-compliance**: did Coders ship things `coder.md` forbids (e.g. dead `pub` exports per specs/80, oversize doc-comments, journal entries above the cap)? If so, either the rule needs to be louder in the prompt, or the Reconciler / pre-merge check needs to enforce it.
 - **Recurring patterns across multiple agents**: e.g. multiple Coders inventing the same type of constant — suggests the spec / IR is missing a section.
 - **Unaddressed follow-ups from previous runs**: if `pipeline_run_<previous>.md` flagged X for cleanup and X is still flagged this run, propose a stronger enforcement (test, lint, ADR) instead of the same recommendation again.
-- **Roles or steps that didn't earn their cost**: did Reconciler / Architect / Researcher add value proportional to their cost? If a role consistently produces nothing actionable, propose collapsing it.
+- **Roles or steps that didn't earn their cost**: did Reconciler / Architect add value proportional to their cost? If a role consistently produces nothing actionable, propose collapsing it.
 
 ## Constraints
 
