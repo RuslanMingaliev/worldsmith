@@ -1,0 +1,70 @@
+name: pr-assets cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr-assets-cleanup-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check pr-assets branch exists
+        id: branch-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          # Distinguish a real 404 (benign no-op) from transient 403/429/5xx,
+          # auth failures, or network errors — those must fail the workflow,
+          # not silently leave pr-assets files behind.
+          set +e
+          err=$(gh api "/repos/${REPO}/branches/pr-assets" 2>&1 >/dev/null)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$err" | grep -q "HTTP 404"; then
+            echo "pr-assets branch does not exist; nothing to clean up."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "gh api failed checking pr-assets branch (exit ${rc}): ${err}" >&2
+            exit "$rc"
+          fi
+
+      - name: Delete demo gifs for closed PR
+        if: steps.branch-check.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -e
+          PREFIX="pr-${PR}-"
+          # Contents API directory listings return up to 1000 entries in one
+          # response (no Link-header pagination). If pr-assets ever exceeds
+          # that, switch to the Git Trees API.
+          gh api "/repos/${REPO}/contents?ref=pr-assets" \
+            --jq ".[] | select(.type == \"file\") | select(.name | startswith(\"${PREFIX}\")) | select(.name | endswith(\"-demo.gif\")) | \"\\(.path)\t\\(.sha)\"" \
+            > /tmp/matches.tsv
+          COUNT=0
+          while IFS=$'\t' read -r p sha; do
+            [ -z "$p" ] && continue
+            gh api --method DELETE "/repos/${REPO}/contents/${p}" \
+              -f message="Cleanup PR #${PR} demo gif: ${p}" \
+              -f branch=pr-assets \
+              -f sha="${sha}" > /dev/null
+            echo "Deleted ${p}"
+            COUNT=$((COUNT + 1))
+          done < /tmp/matches.tsv
+          rm -f /tmp/matches.tsv
+          echo "Removed ${COUNT} gif(s) for PR #${PR}."
