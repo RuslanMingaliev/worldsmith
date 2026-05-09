@@ -7,6 +7,9 @@ Runs automated checks:
 2. cargo test - all tests pass
 3. cargo clippy - no warnings (optional)
 
+Manual pre-release smoke is documented separately at
+evals/smoke/manual_smoke_checklist.md and is not invoked by this script.
+
 Usage:
     python tooling/run_evals.py [--clippy]
 """

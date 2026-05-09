@@ -37,8 +37,8 @@ Evals test the **harness** (generation pipeline), not the game itself.
 ```
 evals/
 ├── README.md               # This file
-├── smoke/                  # Quick checks after any change
-│   └── smoke_checklist.md
+├── smoke/                  # Manual pre-release runbook (not scripted)
+│   └── manual_smoke_checklist.md
 ├── generation/             # Pipeline evals
 │   ├── builds.md
 │   └── reproducibility.md
@@ -74,8 +74,8 @@ Release criteria are defined by the specs at that git tag, not by separate versi
 | Trigger | Which evals |
 |---------|-------------|
 | After spec change | `specs/` |
-| After generation | `generation/`, `smoke/` |
-| Before release (git tag) | All evals must pass |
+| After generation | `generation/` |
+| Before release (git tag) | All evals must pass + walk the `smoke/` runbook |
 | After agent run | `agents/` |
 
 ## Background
