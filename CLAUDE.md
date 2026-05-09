@@ -123,7 +123,7 @@ Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ → C
   6. Record `release/demo.gif` via `tooling/record_autopilot.sh`.
   7. Reconciler's edits to `specs/`, `knowledge/`, `ir/`, `tooling/agents/` and PostMortem's surgical edits to `tooling/agents/*.md` are captured as a unified diff (`agent_changes.diff` artifact) and embedded inline in the single PR-status comment within a `<details>` block, with a one-line `git apply` recipe. Diffs over 50 KB are linked to the artifact instead of inlined. Replaced the previous `reviewdog/action-suggester` inline-comments flow on 2026-05-08 — that flow silently dropped any edit outside the PR's already-touched lines (filter-mode `diff_context`), which forced multi-regen catch-up cycles to land the residue. See PR #28 audit log.
   8. PostMortem's narrative analysis (run summary, "what hurt", ADR drafts) is saved to `artifacts/postmortem.md` and linked from the PR comment.
-  9. The demo GIF is uploaded to a single shared `pr-assets` branch (auto-created on first run from `main`'s HEAD) as `pr-<N>-run-<run_id>-demo.gif`, then embedded inline in the PR status comment via its `raw.githubusercontent.com` URL. PR number + run id make filenames unique, so concurrent PR runs don't race. The branch is **never automatically pruned** — see Known Issues for cleanup.
+  9. The demo GIF is uploaded to a single shared `pr-assets` branch (auto-created on first run from `main`'s HEAD) as `pr-<N>-run-<run_id>-demo.gif`, then embedded inline in the PR status comment via its `raw.githubusercontent.com` URL. PR number + run id make filenames unique, so concurrent PR runs don't race. Cleanup runs via `.github/workflows/pr-assets-cleanup.yml` on `pull_request: closed`, deleting every `pr-<N>-*-demo.gif` for the closed PR. The cleanup filter requires both `startswith("pr-<N>-")` and `endswith("-demo.gif")` — keep this paired with the upload filename above (or extend the filter when adding a new artifact suffix).
 
 ### Post-merge snapshot (`generated-snapshot` branch)
 
@@ -144,6 +144,8 @@ Settings → Branches → main → "Require status checks to pass before merging
 - Required: `regenerate-and-build`
 
 `regenerate-and-build` is conditionally `if:`-skipped on fork PRs and on PRs that don't touch source-of-truth paths. GitHub treats a skipped job as a passing required check, so skipping doesn't block merge. A skipped check on a fork PR means the maintainer must rerun the workflow from this repo's branch (or close-and-reopen as a maintainer) to actually validate regeneration before merging.
+
+Do **not** add `pr-assets cleanup` as a required check. It triggers on `pull_request: types: [closed]`, so it runs after merge — making it required would deadlock every PR (the gating check can never reach success before the merge button does).
 
 ### Cost control
 
@@ -184,5 +186,4 @@ Local helper: the project-level skill `/create-agent-task` (`.claude/skills/crea
 ## Known Issues
 
 - Top-down view, not raycasting
-- The shared `pr-assets` branch grows by one file per PR run and is never pruned automatically. Periodic cleanup is needed — either a cron workflow that drops files older than N days, or a `pull_request: types: [closed]` workflow that deletes `pr-<N>-*.gif` for the closed PR. Not implemented yet.
 - The `generated-snapshot` branch is force-pushed and orphan-committed each time, so historical snapshots are not retained — only the latest regen-merge baseline lives there. If you need a previous baseline, fall back to the corresponding GitHub Release's `worldsmith-game-X-src.zip`. If a PR sits open for more than 90 days, its `generated-src` artifact expires and the post-merge snapshot can no longer pick it up — `post-merge-snapshot.yml` warns and skips, leaving the previous snapshot in place; refresh manually via `release.yml` if needed.
