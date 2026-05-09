@@ -31,7 +31,7 @@ Reference ──► Extractor ──► knowledge/ ──► Architect ──►
 ## Shared State (Filesystem)
 
 ```
-specs/              # Specifications (Architect writes)
+specs/              # Specifications (Architect writes; Reconciler appends to 25_game_tuning.md and 25_reconcile_log.md)
 ir/                 # Intermediate representation (Architect writes)
 generated/          # Generated code (Coder writes)
 knowledge/          # Public findings, no source refs (Extractor writes)

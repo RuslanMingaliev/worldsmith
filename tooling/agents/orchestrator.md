@@ -146,7 +146,9 @@ Step 3: Coder
 
 Step 4: Reconciler
   INPUT:  generated code, specs/, knowledge/
-  OUTPUT: updated specs (captured constants, marked deferred features)
+  OUTPUT: updated specs — captured constants split into a canonical row in
+          specs/25_game_tuning.md plus a provenance entry in
+          specs/25_reconcile_log.md; deferred features marked
   CHECK:  no invented values without spec backing
 ```
 
@@ -166,7 +168,9 @@ Step 2: Coder
 
 Step 3: Reconciler
   INPUT:  regenerated code, specs/
-  OUTPUT: updated specs if needed
+  OUTPUT: updated specs if needed (captured constants → canonical row in
+          specs/25_game_tuning.md + provenance entry in
+          specs/25_reconcile_log.md)
 ```
 
 ### Full Regeneration (release)
@@ -217,7 +221,9 @@ Step 2: Coder (all modules, in dependency order from ir/module_plan.yaml)
 
 Step 3: Reconciler
   INPUT:  all generated code, all specs
-  OUTPUT: updated specs, reconcile report
+  OUTPUT: updated specs (captured constants → canonical row in
+          specs/25_game_tuning.md + provenance entry in
+          specs/25_reconcile_log.md), reconcile report
 
 Step 4: PostMortem
   INPUT:  pipeline_run journal (incl. Reconciler section), work/decisions.md, tooling/agents/*.md, previous run journal if any
