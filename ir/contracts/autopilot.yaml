@@ -17,11 +17,15 @@ public_types:
     definition: |
       #[derive(Debug, serde::Deserialize)]
       pub struct Scenario {
+          // Only consumed by the cfg(test) batch driver
+          // (run_all_scenarios eprintln). serde silently ignores
+          // YAML's `description:` key in non-test (no struct field).
+          #[cfg(test)]
           pub scenario: String,
-          pub description: String,
           #[serde(default)]
           pub level: Option<crate::level_generator::DemoLevelKind>,
           pub objectives: Vec<Objective>,
+          #[cfg(test)]
           #[serde(default)]
           pub assertions: Vec<Assertion>,
       }
@@ -36,6 +40,17 @@ public_types:
       `.expect("valid scenario YAML")` propagates as a panic with
       a clear message — matching the existing parse error handling
       rule in specs/30 § Execution Rules.
+
+      `scenario` (the test-name string) and `assertions` are
+      #[cfg(test)]-gated because the only consumers are the test
+      batch driver (run_all_scenarios prints scenario.scenario;
+      run_scenario reads scenario.assertions). Spec/80 § API Surface
+      "no dead pub exports" mandates the gate. The YAML's
+      `description:` key has no in-crate consumer at all (test or
+      otherwise) and is dropped from the struct entirely — serde
+      ignores unknown YAML keys by default. This replaces the prior
+      regen's `#[allow(dead_code)]` mask on the whole struct, which
+      was a spec/80 violation flagged in 2026-05-09 reconcile.
   - name: Objective
     definition: |
       #[derive(Debug, serde::Deserialize)]
@@ -87,19 +102,25 @@ public_types:
       }
     cfg_test_only: true
     notes: |
-      Assertion is #[cfg(test)]-gated even though it appears as
-      Scenario::assertions; the Scenario type is always-compiled
-      but the assertions field is `#[serde(default)] Vec<Assertion>`
-      and Assertion's body lives behind cfg(test). Release builds
-      deserialize an empty Vec and never inspect it. This keeps the
-      released surface minimal while letting the same Scenario type
-      serve both paths.
+      Assertion, AssertOp, AssertValue, and the custom
+      `impl Deserialize for Assertion` (plus the `parse_assert_value`
+      helper) all live behind a single `#[cfg(test)]` gate. The
+      Scenario type is always-compiled but its `assertions` FIELD is
+      ALSO `#[cfg(test)]`-gated — release builds simply do not have
+      an `assertions` field on Scenario, and serde silently ignores
+      the YAML's `assertions:` key (default behavior; no
+      `deny_unknown_fields`). This avoids `#[serde(skip_deserializing)]`
+      gymnastics and keeps the released surface minimal.
 
-      Coder implementation note: define Assertion as a plain struct
-      with cfg(test) gating; for release-build deserialization of
-      the `assertions:` YAML key, either (a) use #[serde(default,
-      skip_deserializing)] in release builds, or (b) define an
-      empty stub Assertion in release. (a) is simpler.
+      Coder implementation note: gate Assertion, AssertOp,
+      AssertValue, the Deserialize impl, and parse_assert_value with
+      `#[cfg(test)]`. Gate Scenario.assertions and Scenario.scenario
+      fields with `#[cfg(test)]` as well (Scenario.scenario is the
+      test-name string consumed by run_all_scenarios eprintln). Drop
+      Scenario.description from the struct entirely — no consumer
+      anywhere; serde drops the YAML key. This was the
+      2026-05-09 reconcile fix replacing prior `#[allow(dead_code)]`
+      masks on Scenario / Assertion / AssertValue (spec/80 violation).
   - name: AssertOp
     definition: |
       #[derive(Debug, Clone, Copy, PartialEq)]
@@ -280,12 +301,18 @@ public_methods:
 
       Helpers (Coder-internal, not part of the public API; spec/80
       § "no dead pub exports"):
-        - has_line_of_sight(from: Vec2, to: Vec2, level: &Level) -> bool
+        - has_line_of_sight(from: Vec2, to: Vec2, game: &GameState) -> bool
             Tile-grid ray-cast at step BOT_FIRE_LOS_RAY_STEP. Returns
-            false on first sample inside Tile::Wall, else true.
-            Closed-form 2D DDA is allowed in lieu of stepping.
-        - find_path(from: Vec2, to: Vec2, level: &Level) -> Vec<(usize, usize)>
-            BFS over Level.grid; 4-connected; nodes are Tile::Floor.
+            false on first sample inside Tile::Wall (resolved via
+            level_data::is_wall on game.level), else true. Closed-form
+            2D DDA is allowed in lieu of stepping. The `&GameState`
+            arg form (rather than `&Level`) keeps the helper consistent
+            with bot_step's borrow graph and is reflected in the
+            current implementation.
+        - find_path(from: (usize, usize), to: (usize, usize), game: &GameState) -> Vec<(usize, usize)>
+            BFS over game.level.tiles; 4-connected; nodes are
+            Tile::Floor. Tile-coordinate args (rather than Vec2) avoid
+            redundant pos_to_tile calls inside the BFS hot loop.
             Replan cadence per BOT_PATH_REPLAN_FRAMES OR target moved
             > 1 tile since last plan. Empty Vec on no-path; bot
             falls back to bee-lining the straight-line target.

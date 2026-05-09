@@ -15,16 +15,22 @@ shared_types:
     public_methods: |
       pub fn new(x: f32, y: f32) -> Self
       pub fn length(self) -> f32
-      pub fn normalize(self) -> Vec2
       pub fn distance_to(self, other: Vec2) -> f32
+      // #[cfg(test)] only:
+      pub fn normalize(self) -> Vec2
     notes: |
       Coordinates are in tile units (one Tile::Wall cell = 1.0). See
-      specs/21 § Implementation Notes. normalize() of a near-zero vector
-      returns Vec2::default() (no NaN). distance_to is (a - b).length().
-      `dot` is intentionally NOT in the public surface — no in-crate
-      consumer exists; spec/80 § API Surface "no dead pub exports"
-      forbids shipping it as a future-use reservation. Reintroduce
-      only when a caller (e.g. LoS dot-product optimization) materialises.
+      specs/21 § Implementation Notes. distance_to is (a - b).length().
+      `dot` and `normalize` are NOT in the released public surface —
+      enemy_logic chase movement inlines the dx/dist division rather
+      than calling normalize(), so the only consumer of normalize() is
+      a #[cfg(test)] zero-vector unit test. Spec/80 § API Surface
+      "no dead pub exports" mandates a #[cfg(test)] gate on the impl
+      in that case. normalize() of a near-zero vector returns
+      Vec2::default() (no NaN). Reintroduce as released-public when an
+      in-crate non-test caller materialises (e.g. LoS dot-product
+      optimization for `dot`, or chase-direction unification for
+      `normalize`).
 
   - name: Tile
     home_module: level_data
