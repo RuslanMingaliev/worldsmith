@@ -114,10 +114,25 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 | Grid size | 20 x 15 tiles |
 | Tile size | 32 px |
 | Player spawn | (2.5, 2.5) |
-| Enemy spawn | (17.5, 12.5) |
 | Exit position | (17.5, 2.5) |
 | Border | All edges are walls |
-| Interior walls | Vertical segment x=10, y=3..8; horizontal y=7, x=4..9 |
+
+### Enemy spawns
+
+`level_data::build_default()` populates two basic-trooper enemies (`Vec<Vec2>` order is the deterministic tie-breaker for `Scenario` targets — per `specs/30 § Targets` "enemy" resolves to the *nearest* alive enemy with ties broken by index in `enemy_spawns`):
+
+| Order | Position (tile coords) | Rationale |
+|-------|------------------------|-----------|
+| 1 | (17.5, 12.5) | Existing SE-corner spawn. Kept first so it wins index-tie-breaks when both enemies are equidistant; in single-enemy fixtures (`tests/combat/kill_enemy.yaml` etc.) it is the only candidate so the resolved target is unambiguous. Generation default — no knowledge backing. |
+| 2 | (4.5, 11.5) | SW spawn — geographically isolated from the spawn → enemy 1 → ammo → exit corridor used by `scavenge_run.yaml`, so it does not chase down the primary trajectory. Provides multi-enemy combat in `tests/level/local_chase_obstacle.yaml`-equivalents that target this position explicitly, and gives the recorded demo a second engagement. Generation default — no knowledge backing. |
+
+### Interior walls
+
+| Segment | Coordinates | Rationale |
+|---------|-------------|-----------|
+| Central divider (north half) | x=10, y=3..8 | Existing. Forces NS traversal in the upper half via columns 1-9 at y<3 OR columns 11-18 at y<3. |
+| Mid-left horizontal | y=7, x=4..9 | Existing. Separates the lower-left pocket (around the SW health pickup) from the upper region; bot must go around via x<4 or x>9. |
+| SE pocket cover | y=10, x=13..15 (Rust half-open: x=13, 14) | Two-tile horizontal cover north of the SE enemy. The bot's BFS path approaches the SE enemy from the east via column 15+ (open) rather than a straight diagonal, giving the demo a visible "round the corner" beat without changing the column-1-to-19 connectivity. Generation default — no knowledge backing. |
 
 ## Visual
 
@@ -131,8 +146,8 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 | Exit marker | X shape, 20px | #00FFFF cyan |
 | Direction line | 20px length | #FFFF00 yellow |
 | Game over border | 10px | green tint (win) / red tint (lose) |
-| GAME_OVER_BORDER_WIN_COLOR | inlined at `renderer.rs:261` (if-arm) | #00FF80 spring green — generation default captured during reconcile pass; not yet a named `pub const`. Spec described "green tint" qualitatively; this row pins the specific shade. Distinct from `COLOR_PLAYER` (`#00FF00`) and `HUD_HEALTH_COLOR_HIGH` (`#00C000`) so the border reads as a discrete UI band rather than as a player tile or HUD element. |
-| GAME_OVER_BORDER_LOSE_COLOR | inlined at `renderer.rs:261` (else-arm) | #FF4040 tomato red — generation default captured during reconcile pass; not yet a named `pub const`. Spec described "red tint" qualitatively; this row pins the specific shade. Lighter than `COLOR_ENEMY` (`#FF0000`) and `HUD_HEALTH_COLOR_LOW` (`#C00000`) so the lose border does not visually merge with a low-health HUD or with on-screen enemies. |
+| GAME_OVER_BORDER_WIN_COLOR | inlined as `0x00FF80u32` in `renderer::draw` game-over arm | #00FF80 spring green — generation default. Spec described "green tint" qualitatively; this row pins the specific shade. Distinct from `COLOR_PLAYER` (`#00FF00`) and `HUD_HEALTH_COLOR_HIGH` (`#00C000`) so the border reads as a discrete UI band rather than as a player tile or HUD element. (see reconcile_log#GAME_OVER_BORDER_COLORS) |
+| GAME_OVER_BORDER_LOSE_COLOR | inlined as `0xFF4040u32` in `renderer::draw` game-over arm | #FF4040 tomato red — generation default. Spec described "red tint" qualitatively; this row pins the specific shade. Lighter than `COLOR_ENEMY` (`#FF0000`) and `HUD_HEALTH_COLOR_LOW` (`#C00000`) so the lose border does not visually merge with a low-health HUD or with on-screen enemies. (see reconcile_log#GAME_OVER_BORDER_COLORS) |
 | GAME_OVER_HOLD_SEC | 2.0 sec | Generation default — minimum visibility budget for the player to register the win/lose outcome before the loop exits. Rationale: without an explicit hold, the main-loop exits on the same tick the game-over flag is set, so the colored border renders for zero frames. 2 seconds is the standard retro-shooter hold; revisit if user feedback says it's too short or too long. See specs/20 § Game Over Flow. |
 
 ### Visual Feedback
@@ -251,11 +266,12 @@ Behavior spec: [`60_pickups.md`](60_pickups.md). Knowledge: [`knowledge/pickups.
 
 ### Default Level Placement
 
-Two pickups in `level_data::build_default()`:
+Three pickups in `level_data::build_default()`:
 
 | Pickup | Position (tile coords) | Rationale |
 |--------|------------------------|-----------|
 | Health | (5.5, 12.5) | Generation default — south corridor, off the direct path from spawn → enemy → exit. Rationale: rewards exploration; player must detour from the optimal kill-then-exit path to find it. Tests the refused-at-cap rule because at full health the player can intentionally skip it. |
+| Health | (12.5, 4.5) | Generation default — north of the central wall divider, on the natural BFS path between spawn and the SE enemy at (17.5, 12.5). With two enemies in the default level the bot is more likely to take damage during the run; this pickup sits on a low-detour line so `BOT_HEALTH_PICKUP_THRESHOLD`-triggered routing fires when HP drops below 50%. Generation default — no knowledge backing. |
 | Ammo | (15.5, 7.5) | Generation default — east of the interior horizontal wall, on a natural approach line toward the enemy at (17.5, 12.5). Rationale: lies on the path the player will most likely take; reinforces the "ammo replenish before combat" loop. Sized so a player who fired wastefully on the way still has ammo for the encounter. |
 
 ### Sprite Visual
@@ -334,9 +350,9 @@ Fixed seeds used when `--autopilot` flag is passed (specs/35 § Determinism). Se
 
 | Constant | Value | Module | Source |
 |----------|-------|--------|--------|
-| WEAPON_RNG_SEED | `0xDEAD_BEEF_1234_5678` | `weapon_system` | Generation default — arbitrary distinctive hex value. Seeds weapon damage RNG for deterministic demo recording. |
-| ENEMY_RNG_SEED | `0xCAFE_BABE_8765_4321` | `enemy_logic` | Generation default — arbitrary distinctive hex value. Seeds enemy pain-check and attack-damage RNG. |
-| BOT_RNG_SEED | `0x00C0_FFEE` | `autopilot` | Generation default — "coffee" mnemonic. Seeds bot stuck-detection strafe-direction RNG. |
+| WEAPON_RNG_SEED | `0xDEAD_BEEF_1234_5678` | module-private const in `game_loop`; `game_loop::new` passes it unconditionally to `player_state::new`, which stores it on `Player.weapon_rng` (player_state contract § Player) | Generation default — arbitrary distinctive hex value. Seeds weapon damage RNG for deterministic demo recording. RNG state lives on `Player` so `weapon_system::fire` advances it through the existing `&mut Player` borrow — no module-private `static mut`, no `unsafe` (spec/80 § Safety). The seed is passed unconditionally regardless of `--autopilot`; `_shared.yaml § main_cli § rng_seeding` permits either always-fixed or mode-switched plumbing. |
+| ENEMY_RNG_SEED | `0xCAFE_BABE_8765_4321` | `enemy_logic` (module-private const `ENEMY_RNG_SEED`, embedded in every `Enemy::rng` field at construction) | Generation default — arbitrary distinctive hex value. Seeds enemy pain-check and attack-damage RNG. The Coder dropped the per-enemy seed-injection API in this regen because every enemy initialises from the same fixed seed; the in-code identifier matches this row's canonical name. (see reconcile_log#ENEMY_RNG_SEED) |
+| BOT_RNG_SEED | `0x00C0_FFEE` | `autopilot` | Generation default — "coffee" mnemonic. Seeds `BotState::rng` (LCG, module-private). Currently consumed by stuck-detection strafe-direction selection: when `stuck_strafe_remaining` decays to 0 the bot picks the next strafe direction via `rng.next_f32() > 0.5`. Per `coder_degrees_of_freedom`, both RNG-seeded picks and a deterministic toggle (`strafe_dir = -strafe_dir`) satisfy specs/35 § Determinism — the current Coder picked the RNG-seeded form. (see reconcile_log#BOT_RNG_SEED) |
 
 ## Autopilot (Bot Tuning)
 
@@ -345,7 +361,7 @@ The autopilot bot in `src/autopilot.rs` exposes a per-frame API always compiled,
 | Constant | Value | Source |
 |----------|-------|--------|
 | BOT_FRAME_TIME | 1/60 s | specs/30 § Execution Rules (60 FPS) |
-| BOT_MAX_FRAMES | 3600 | specs/30 § Execution Rules (60 sec max) |
+| BOT_MAX_FRAMES | 18000 | 300 game-seconds at 60 FPS. Raised from the original 3600 (60 sec) so two-enemy fixtures across the central divider have time to navigate around the obstacle, fire, and reach the exit; single-enemy fixtures continue to finish in well under 3600 frames. (see reconcile_log#BOT_MAX_FRAMES) |
 | BOT_REACH_DISTANCE | 1.0 tile | specs/30 § Objectives (`reach: distance < 1.0`) |
 | BOT_APPROACH_DISTANCE | 8.0 tiles | specs/30 § Objectives (`approach: distance < 8.0`) |
 | BOT_STUCK_FRAMES | 30 | specs/30 § Stuck Detection |
@@ -357,6 +373,10 @@ The autopilot bot in `src/autopilot.rs` exposes a per-frame API always compiled,
 | BOT_FIRE_MAX_RANGE | 10.0 tiles | Generation default — no knowledge backing. Maximum distance at which the bot will pull the trigger on a `kill:` objective. Must be greater than `BOT_APPROACH_DISTANCE` (8.0) so the bot fires the moment the `approach:` objective completes; well below `PISTOL_RANGE_TILES` (64) since long-range pistol shots are spread-affected and waste ammo. 10 tiles also clears the typical 13-tile inter-spawn distance in `local_chase_obstacle` once the bot has rounded the obstacle. |
 | BOT_FIRE_LOS_RAY_STEP | 0.1 tile | Generation default — no knowledge backing. Step size for the tile-grid ray-cast in `has_line_of_sight`. Mirrors `TRACE_STEP` (`weapon_system.rs`); sub-tile resolution so a one-tile-wide gap reads as transparent at oblique angles. A closed-form 2D DDA is permitted in lieu of stepping (`coder_degrees_of_freedom`); the constant becomes a documentation marker if the Coder picks DDA. |
 | BOT_PATH_REPLAN_FRAMES | 30 frames | Generation default — no knowledge backing. The bot recomputes its BFS path no more often than every 30 frames (~0.5 s at 60 FPS) when the objective target hasn't shifted by more than one tile. Per-frame replanning is wasteful (BFS over the 20×15 grid is cheap but allocates). 30 frames is short enough that a moving enemy doesn't drift more than ~1 tile between plans at the basic trooper's 2.0 tiles/sec speed. The replan-on-target-move rule (move > 1 tile) is the dominant trigger in practice; the frame cadence is a floor that keeps the planner reactive when the target tile hasn't changed but the geometry has. |
+| BOT_HEALTH_PICKUP_THRESHOLD | 0.5 (50% of `PLAYER_MAX_HEALTH`, i.e. 50 HP) | Generation default — no knowledge backing. HP fraction below which the bot's next path-replan routes via the nearest active health pickup before resuming the current objective. 50% sits comfortably above the lethal range (a single basic-trooper hit at the 15-damage tier from 50 HP leaves the player at 35 HP, still survivable for one more hit) but high enough that the detour fires before the engagement turns critical. Below ~30% the bot would already be one bad hit from death and the detour is too late; above ~70% the bot detours unnecessarily on minor scratches. Project-internal tuning — bot is autopilot tooling, not reference-derived gameplay AI. |
+| BOT_PICKUP_DETOUR_BUDGET | 4 tiles | Generation default — no knowledge backing. Maximum extra path tiles the bot will detour to grab an opportunistic ammo pickup. The detour cost is computed as `path_via_pickup_length - direct_path_length` over the BFS graph. If the detour exceeds 4 tiles the pickup is skipped. 4 tiles is roughly two seconds of additional travel at the player's nominal speed and one BFS-path's worth of "round one corner to grab an item" — small enough that the demo doesn't visibly stall, large enough that an ammo pickup adjacent to the path is always taken. Project-internal tuning. |
+| BOT_WAYPOINT_REACHED_TILES | 0.7 tile | Generation default — no knowledge backing. Distance threshold under which the bot consumes the next BFS waypoint and steers toward the one after. Both tile-equality (`bot.path[0] == floor(player.pos)`) and a distance threshold satisfy the spec (`coder_degrees_of_freedom § "waypoint-consume distance"`); the current Coder picked the threshold form. 0.7 sits comfortably below the 1.0-tile waypoint spacing so the bot consumes a waypoint before reaching the next, while above the per-frame movement step (~0.005 tile @ MAX_SPEED * dt) so a single frame does not skip multiple waypoints. (see reconcile_log#BOT_WAYPOINT_REACHED_TILES) |
+| BOT_STUCK_MOVE_EPSILON | 0.02 tile/frame | Generation default — no knowledge backing. Per-frame movement threshold below which the bot's stuck-counter increments toward `BOT_STUCK_FRAMES`; inlined as a literal in `autopilot::bot_step` stuck-detect block. Spec/30 pins the frame counts but not the movement threshold (Coder degree of freedom under `stuck-detect`). 0.02 sits above f32 noise from collision slides and below the typical friction-tail velocity, so genuine stops trigger and floating-point jitter does not. (see reconcile_log#BOT_STUCK_MOVE_EPSILON) |
 
 ## Frame Rate
 

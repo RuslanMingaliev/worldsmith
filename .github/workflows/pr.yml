@@ -236,7 +236,7 @@ jobs:
         run: |
           set -e
           mkdir -p release
-          xvfb-run -a tooling/record_autopilot.sh tests/level/local_chase_obstacle.yaml release/demo.gif
+          xvfb-run -a tooling/record_autopilot.sh tests/level/scavenge_run.yaml release/demo.gif
           ls -la release/
 
       - name: Push demo GIF to shared pr-assets branch (for inline embed)
@@ -279,6 +279,20 @@ jobs:
           echo "raw_url=${RAW_URL}" >> "$GITHUB_OUTPUT"
           echo "Embeddable GIF URL: ${RAW_URL}"
 
+      - name: Capture agent-driven changes as a diff
+        id: capture-diff
+        if: always() && steps.scope.outputs.module_count != '0'
+        run: |
+          set -e
+          PATHS="specs knowledge ir tooling/agents"
+          git add -N $PATHS 2>/dev/null || true
+          git diff -- $PATHS > artifacts/agent_changes.diff || true
+          if [ -s artifacts/agent_changes.diff ]; then
+            echo "has_diff=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_diff=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -294,28 +308,6 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-      - name: Capture agent-driven changes as a diff
-        id: capture-diff
-        if: always() && steps.scope.outputs.module_count != '0'
-        run: |
-          set -e
-          PATHS="specs knowledge ir tooling/agents"
-          git add -N $PATHS 2>/dev/null || true
-          git diff -- $PATHS > artifacts/agent_changes.diff || true
-          if [ -s artifacts/agent_changes.diff ]; then
-            echo "has_diff=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_diff=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Suggest changes inline (Reconciler / PostMortem)
-        if: always() && steps.capture-diff.outputs.has_diff == 'true'
-        uses: reviewdog/action-suggester@v1
-        with:
-          tool_name: worldsmith-agents
-          cleanup: false
-          fail_on_error: false
-
       - name: Post PR status comment
         if: always()
         env:
@@ -327,6 +319,7 @@ jobs:
           BASELINE: ${{ steps.baseline.outputs.baseline }}
           GIF_URL: ${{ steps.gif-push.outputs.raw_url }}
           STATUS: ${{ job.status }}
+          HAS_DIFF: ${{ steps.capture-diff.outputs.has_diff }}
         run: |
           set -e
           ARTIFACTS_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}#artifacts"
@@ -356,9 +349,33 @@ jobs:
               echo "</details>"
               echo
             fi
-            if [ "$MODULE_COUNT" != "0" ]; then
-              echo "Inline suggestions from Reconciler / PostMortem are posted as a separate review on this PR (only on lines this PR touches). Suggestions on files this PR didn't already change appear in the \`agent_changes.diff\` artifact."
+            if [ "$HAS_DIFF" = "true" ]; then
+              DIFF_BYTES=$(wc -c < artifacts/agent_changes.diff)
+              DIFF_LINES=$(wc -l < artifacts/agent_changes.diff)
+              echo "### Reconciler / PostMortem edits to specs / contracts / agent prompts"
               echo
+              echo "Captured as a single diff (\`${DIFF_LINES}\` lines, \`${DIFF_BYTES}\` bytes). Replaces the previous reviewdog inline-suggestions flow, which silently dropped any edit outside the PR's already-touched lines."
+              echo
+              echo "**To apply locally:**"
+              echo
+              echo '```'
+              echo "gh run download ${RUN_ID} -R ${REPO} -n pr-${PR}-reports -D /tmp/agent-edits"
+              echo "git apply /tmp/agent-edits/agent_changes.diff"
+              echo '```'
+              echo
+              if [ "$DIFF_BYTES" -le 50000 ]; then
+                echo "<details><summary>Diff (inline)</summary>"
+                echo
+                echo '```diff'
+                cat artifacts/agent_changes.diff
+                echo '```'
+                echo
+                echo "</details>"
+                echo
+              else
+                echo "_Diff exceeds 50 KB — see the \`agent_changes.diff\` artifact for the full content._"
+                echo
+              fi
             fi
             echo "_Auto-posted by \`.github/workflows/pr.yml\`._"
           } > /tmp/pr_comment.md

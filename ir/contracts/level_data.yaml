@@ -20,7 +20,7 @@ public_types:
           pub height: usize,                // GRID_HEIGHT (15)
           pub tiles: Vec<Vec<Tile>>,        // tiles[y][x]
           pub player_spawn: Vec2,           // tile coords (specs/25 § Level Layout)
-          pub enemy_spawns: Vec<Vec2>,      // single entry today
+          pub enemy_spawns: Vec<Vec2>,      // two entries in build_default; resolution order is index-tie-breaker for "enemy" target (specs/30 § Targets)
           pub exit: Vec2,                   // tile coords
           pub pickups: Vec<Pickup>,         // static pickups (specs/60)
       }
@@ -34,12 +34,16 @@ public_methods:
   - signature: "pub fn build_default() -> Level"
     notes: |
       Hardcoded layout from specs/25 § Level Layout: 20x15, all-edge wall
-      border, vertical interior wall x=10 y=3..8, horizontal interior wall
-      y=7 x=4..9. Player spawn (2.5, 2.5), enemy spawn (17.5, 12.5),
-      exit (17.5, 2.5). No I/O.
+      border. Three interior wall segments:
+        - vertical central divider, x=10, y=3..8
+        - mid-left horizontal, y=7, x=4..9
+        - SE pocket cover, y=10, x=13..15 (Rust half-open: x=13, 14)
+      Player spawn (2.5, 2.5); two enemy spawns in resolution order
+      (17.5, 12.5) then (4.5, 11.5); exit (17.5, 2.5). No I/O.
       Pickups (specs/25 § Pickups § Default Level Placement):
         pickups: vec![
           Pickup { kind: PickupKind::Health, pos: Vec2::new(5.5, 12.5), active: true },
+          Pickup { kind: PickupKind::Health, pos: Vec2::new(12.5, 4.5), active: true },
           Pickup { kind: PickupKind::Ammo,   pos: Vec2::new(15.5, 7.5), active: true },
         ]
   - signature: "pub fn is_wall(level: &Level, tile_x: i32, tile_y: i32) -> bool"

@@ -15,13 +15,22 @@ shared_types:
     public_methods: |
       pub fn new(x: f32, y: f32) -> Self
       pub fn length(self) -> f32
-      pub fn normalize(self) -> Vec2
-      pub fn dot(self, other: Vec2) -> f32
       pub fn distance_to(self, other: Vec2) -> f32
+      // #[cfg(test)] only:
+      pub fn normalize(self) -> Vec2
     notes: |
       Coordinates are in tile units (one Tile::Wall cell = 1.0). See
-      specs/21 § Implementation Notes. normalize() of a near-zero vector
-      returns Vec2::default() (no NaN). distance_to is (a - b).length().
+      specs/21 § Implementation Notes. distance_to is (a - b).length().
+      `dot` and `normalize` are NOT in the released public surface —
+      enemy_logic chase movement inlines the dx/dist division rather
+      than calling normalize(), so the only consumer of normalize() is
+      a #[cfg(test)] zero-vector unit test. Spec/80 § API Surface
+      "no dead pub exports" mandates a #[cfg(test)] gate on the impl
+      in that case. normalize() of a near-zero vector returns
+      Vec2::default() (no NaN). Reintroduce as released-public when an
+      in-crate non-test caller materialises (e.g. LoS dot-product
+      optimization for `dot`, or chase-direction unification for
+      `normalize`).
 
   - name: Tile
     home_module: level_data
@@ -168,18 +177,27 @@ main_cli:
 
   rng_seeding:
     notes: |
-      When --autopilot is set, ALL module-private RNGs (weapon_system,
-      enemy_logic, autopilot bot) MUST initialize from fixed seeds.
-      Coder degrees of freedom: where the seed constants live and the
-      RNG choice (LCG/xorshift). The constraint is: same scenario =>
-      same byte-for-byte recording. Without --autopilot, RNGs may seed
-      from time as before. specs/35 § Determinism.
+      When --autopilot is set, ALL module-private RNGs (weapon_system
+      via Player.weapon_rng, enemy_logic, autopilot bot) MUST
+      initialize from fixed seeds. Coder degrees of freedom: where the
+      seed constants live and the RNG choice (LCG/xorshift). The
+      constraint is: same scenario => same byte-for-byte recording.
+      specs/35 § Determinism.
 
-      Implementation hint: a small `pub(crate) fn rng_mode() -> RngMode`
-      helper in main.rs that returns either Deterministic(seed) or
-      WallClock, set once during arg parsing, consumed by each module's
-      RNG init. Coder may pick a different mechanism; the contract is
-      the *behavior*, not the plumbing.
+      In current code: WEAPON_RNG_SEED, ENEMY_RNG_SEED, and
+      BOT_RNG_SEED are passed unconditionally regardless of
+      --autopilot — game_loop::new always seeds Player.weapon_rng
+      from WEAPON_RNG_SEED, every Enemy embeds ENEMY_RNG_SEED at
+      construction (module-private const in `enemy_logic.rs`), and
+      BotState::new seeds bot.rng from BOT_RNG_SEED. Specs/35 § Determinism permits a wall-clock seed
+      in interactive mode but does not require one; the always-
+      fixed-seed shape avoids threading a time source through the
+      constructors. The seed arguments on Player::new and (future)
+      Enemy::new / BotState::new remain the hooks for a Coder that
+      later threads a time source. Either shape (always-fixed or
+      mode-switched) satisfies the contract above; the contract is
+      the *behavior* (deterministic under --autopilot), not the
+      plumbing.
 
   exit_handling:
     notes: |
@@ -268,6 +286,8 @@ coder_degrees_of_freedom:
   - "Whether weapon_system and enemy_logic share an RNG seed via a small private helper module or each carry their own."
   - "Internal struct ordering / field layout details that do not change the public API."
   - "Bot pathfinding internals in autopilot (turn-toward, stuck-detect, strafe heuristic). The public Scenario / Objective shape is pinned; the bot logic is not."
+  - "Bot pickup-seeking helper shape in autopilot — single fn returning Option<(usize, Vec2)> vs. separate health/ammo selectors vs. inlined logic in bot_step. Whichever shape is picked, it MUST stay module-private (specs/80 § API Surface). The behavior is pinned in specs/30 § Pickup-Seeking; the helper shape is not."
+  - "Whether the ammo-opportunism two-segment path is computed as one concatenated BFS or as two replans (player→pickup, then pickup→target after consumption). Both meet the spec; option (b) reuses single-target BFS without modification."
   - "Choice of slide algorithm in player_state and enemy_logic (axis-aligned per spec/21; the per-axis order and the integer-vs-float of the radius check are Coder-internal)."
   - "Whether VisualEffect lifetime decay uses retain() or a manual swap_remove loop -- both meet the spec."
 

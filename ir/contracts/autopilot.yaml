@@ -17,11 +17,15 @@ public_types:
     definition: |
       #[derive(Debug, serde::Deserialize)]
       pub struct Scenario {
+          // Only consumed by the cfg(test) batch driver
+          // (run_all_scenarios eprintln). serde silently ignores
+          // YAML's `description:` key in non-test (no struct field).
+          #[cfg(test)]
           pub scenario: String,
-          pub description: String,
           #[serde(default)]
           pub level: Option<crate::level_generator::DemoLevelKind>,
           pub objectives: Vec<Objective>,
+          #[cfg(test)]
           #[serde(default)]
           pub assertions: Vec<Assertion>,
       }
@@ -36,6 +40,17 @@ public_types:
       `.expect("valid scenario YAML")` propagates as a panic with
       a clear message — matching the existing parse error handling
       rule in specs/30 § Execution Rules.
+
+      `scenario` (the test-name string) and `assertions` are
+      #[cfg(test)]-gated because the only consumers are the test
+      batch driver (run_all_scenarios prints scenario.scenario;
+      run_scenario reads scenario.assertions). Spec/80 § API Surface
+      "no dead pub exports" mandates the gate. The YAML's
+      `description:` key has no in-crate consumer at all (test or
+      otherwise) and is dropped from the struct entirely — serde
+      ignores unknown YAML keys by default. This replaces the prior
+      regen's `#[allow(dead_code)]` mask on the whole struct, which
+      was a spec/80 violation flagged in 2026-05-09 reconcile.
   - name: Objective
     definition: |
       #[derive(Debug, serde::Deserialize)]
@@ -87,19 +102,25 @@ public_types:
       }
     cfg_test_only: true
     notes: |
-      Assertion is #[cfg(test)]-gated even though it appears as
-      Scenario::assertions; the Scenario type is always-compiled
-      but the assertions field is `#[serde(default)] Vec<Assertion>`
-      and Assertion's body lives behind cfg(test). Release builds
-      deserialize an empty Vec and never inspect it. This keeps the
-      released surface minimal while letting the same Scenario type
-      serve both paths.
+      Assertion, AssertOp, AssertValue, and the custom
+      `impl Deserialize for Assertion` (plus the `parse_assert_value`
+      helper) all live behind a single `#[cfg(test)]` gate. The
+      Scenario type is always-compiled but its `assertions` FIELD is
+      ALSO `#[cfg(test)]`-gated — release builds simply do not have
+      an `assertions` field on Scenario, and serde silently ignores
+      the YAML's `assertions:` key (default behavior; no
+      `deny_unknown_fields`). This avoids `#[serde(skip_deserializing)]`
+      gymnastics and keeps the released surface minimal.
 
-      Coder implementation note: define Assertion as a plain struct
-      with cfg(test) gating; for release-build deserialization of
-      the `assertions:` YAML key, either (a) use #[serde(default,
-      skip_deserializing)] in release builds, or (b) define an
-      empty stub Assertion in release. (a) is simpler.
+      Coder implementation note: gate Assertion, AssertOp,
+      AssertValue, the Deserialize impl, and parse_assert_value with
+      `#[cfg(test)]`. Gate Scenario.assertions and Scenario.scenario
+      fields with `#[cfg(test)]` as well (Scenario.scenario is the
+      test-name string consumed by run_all_scenarios eprintln). Drop
+      Scenario.description from the struct entirely — no consumer
+      anywhere; serde drops the YAML key. This was the
+      2026-05-09 reconcile fix replacing prior `#[allow(dead_code)]`
+      masks on Scenario / Assertion / AssertValue (spec/80 violation).
   - name: AssertOp
     definition: |
       #[derive(Debug, Clone, Copy, PartialEq)]
@@ -124,7 +145,7 @@ public_constants:
   # 1.0 / BOT_FRAME_RATE) crosses the module boundary, consumed by main.rs
   # in --autopilot mode. Reconciled during reconcile pass.
   - { name: BOT_FRAME_TIME,         type: f32, value: "0.01666667", source: "specs/30 § Execution Rules (1/60)", cfg_test_only: false }
-  - { name: BOT_MAX_FRAMES,         type: u32, value: "3600",   source: "specs/30 § Execution Rules (60 sec)", cfg_test_only: false }
+  - { name: BOT_MAX_FRAMES,         type: u32, value: "18000",  source: "specs/25 § Autopilot — 300 game-seconds at 60 FPS, raised from 3600 during 2026-05-08 reconcile to accommodate two-enemy fixtures across the central divider", cfg_test_only: false }
   - { name: BOT_REACH_DISTANCE,     type: f32, value: "1.0",    source: "specs/30 § Objectives (reach)", cfg_test_only: false }
   - { name: BOT_APPROACH_DISTANCE,  type: f32, value: "8.0",    source: "specs/30 § Objectives (approach)", cfg_test_only: false }
   - { name: BOT_STUCK_FRAMES,       type: u32, value: "30",     source: "specs/30 § Stuck Detection", cfg_test_only: false }
@@ -135,6 +156,10 @@ public_constants:
   - { name: BOT_FIRE_MAX_RANGE,      type: f32, value: "10.0",   source: "specs/25 § Autopilot (Generation default — no knowledge backing; max distance at which the bot fires)", cfg_test_only: false }
   - { name: BOT_FIRE_LOS_RAY_STEP,   type: f32, value: "0.1",    source: "specs/25 § Autopilot (Generation default — no knowledge backing; step size for has_line_of_sight tile-grid ray-cast in tile units)", cfg_test_only: false }
   - { name: BOT_PATH_REPLAN_FRAMES,  type: u32, value: "30",     source: "specs/25 § Autopilot (Generation default — no knowledge backing; cap on BFS replan cadence)", cfg_test_only: false }
+  - { name: BOT_HEALTH_PICKUP_THRESHOLD, type: f32, value: "0.5", source: "specs/25 § Autopilot (Generation default — no knowledge backing; HP fraction of PLAYER_MAX_HEALTH below which the bot routes via the nearest active health pickup before resuming the current objective)", cfg_test_only: false }
+  - { name: BOT_PICKUP_DETOUR_BUDGET, type: u32, value: "4",      source: "specs/25 § Autopilot (Generation default — no knowledge backing; max extra BFS path tiles the bot will detour to grab an opportunistic ammo pickup)", cfg_test_only: false }
+  - { name: BOT_WAYPOINT_REACHED_TILES, type: f32, value: "0.7",  source: "specs/25 § Autopilot (Generation default — no knowledge backing; distance under which the bot consumes the next BFS waypoint and steers toward the one after)", cfg_test_only: false }
+  - { name: BOT_STUCK_MOVE_EPSILON, type: f32, value: "0.02",     source: "specs/25 § Autopilot (Generation default — no knowledge backing; per-frame movement threshold below which the bot's stuck-counter increments toward BOT_STUCK_FRAMES)", cfg_test_only: false }
   - { name: BOT_RNG_SEED,           type: u64, value: "0xC0FFEE", source: "specs/35 § Determinism (Generation default — Coder may pick any fixed constant; record in work/decisions.md)", cfg_test_only: false }
 public_methods:
   # ---- Always compiled
@@ -170,43 +195,154 @@ public_methods:
           scenarios that don't expect death).
 
       Decision policy (specs/30 § Bot Behavior):
-        1. Resolve target_pos from the active objective.
+        1. Resolve target_pos from the active objective. For
+           Objective::Kill("enemy") and Objective::Approach("enemy"),
+           "enemy" resolves to the NEAREST alive enemy by
+           player.pos.distance_to(enemy.pos) over
+           game.enemies.iter().filter(|e| e.alive), with ties broken
+           by index in level.enemy_spawns. Returns None when no
+           enemies are alive — downstream callers handle this:
+           Kill objective completion is keyed off
+           `enemies.iter().all(|e| !e.alive)` regardless of
+           resolve_target_pos, and Reach/Approach auto-complete via
+           the None branch in check_objective_complete.
+           Single-enemy fixtures behave identically to the legacy
+           "first alive" rule because there is only one candidate.
+           See spec/30 § Targets.
         2. Turn toward target_pos (apply BOT_TURN_THRESHOLD dead-zone).
         3. Movement mode:
-           - kite (forward = -1.0) if objective targets an enemy AND
-             dist(player.pos, target_pos) < BOT_KITE_RANGE;
+           - kite (forward = -1.0) if the active objective targets an
+             enemy (Kill or Approach with target "enemy") AND there
+             exists at least one alive enemy `e` such that
+             player.pos.distance_to(e.pos) < BOT_KITE_RANGE
+             AND has_line_of_sight(player.pos, e.pos, &level) returns
+             true. The trigger is "ANY alive enemy in range AND with
+             LoS", not "the objective target is in range" — so a
+             flanking enemy correctly forces back-pedal even when the
+             objective target is far. The LoS gate prevents
+             wall-separated kiting: a wall between the bot and the
+             closest enemy keeps the bot in path-follow mode so BFS
+             can route around the wall, rather than indefinitely
+             backing away from a non-threatening proximity. The bot
+             still keeps facing the objective target while kiting
+             (LoS for firing on it is preserved). Single-enemy
+             fixtures behave identically because "the only alive
+             enemy" and "the objective target" coincide. Reconciled
+             2026-05-08 after the Coder added the LoS check to fix
+             indefinite westward back-pedal in local_chase_obstacle.
+             See spec/30 § Per-frame Decision step 2.
            - else path-follow: take the next waypoint from the BFS
              plan, turn toward it, emit forward = +1.0 once roughly
-             facing it.
-        4. Fire iff the active objective is `kill:` AND
-             dist < BOT_FIRE_MAX_RANGE
-             AND has_line_of_sight(player.pos, target_pos, &level)
-             AND |delta_angle| < BOT_FACING_THRESHOLD.
+             facing it. Path destination may be redirected via a
+             pickup tile by step 3a (pickup-seeking modifiers).
+        3a. Pickup-seeking modifiers (specs/30 § Pickup-Seeking) —
+            evaluated only on path replan, only in path-follow mode,
+            only when kite mode is NOT active. At most one modifier
+            applies per replan; HP-threshold wins over ammo opportunism.
+            - HP-threshold health routing: if
+                player.health < BOT_HEALTH_PICKUP_THRESHOLD
+                                * PLAYER_MAX_HEALTH
+              AND any Pickup with kind == Health, active == true exists,
+              the BFS path destination is redirected to the nearest
+              such pickup. "Nearest" uses Euclidean
+              `player.pos.distance_to(pickup.pos)`; ties broken by
+              `Iterator::min_by`'s "first equal minimum" rule (i.e.
+              by index in `level.pickups`). Once the bot's
+              tile-position equals the pickup tile and game_loop has
+              flipped active to false, the next replan re-evaluates
+              and (now that no active health pickup at the same index
+              satisfies the trigger) routes to the original objective
+              target.
+            - Ammo opportunism: when HP-threshold did NOT activate AND
+                player.ammo == 0
+              AND any Pickup with kind == Ammo, active == true exists,
+              the modifier inspects the nearest active ammo pickup
+              (`Iterator::min_by` over Euclidean
+              `player.pos.distance_to(pickup.pos)`; ties broken by
+              iteration order in `level.pickups`) and accepts it iff
+                player.pos.distance_to(pickup.pos)
+                  <= player.pos.distance_to(target_pos)
+                     + BOT_PICKUP_DETOUR_BUDGET.
+              When accepted, the BFS path destination is redirected to
+              that pickup. The bot consumes the path-to-pickup segment;
+              on arrival game_loop flips the pickup's active flag, and
+              the next replan retargets the original objective. The
+              ammo-trigger threshold is `ammo == 0` (deferred from the
+              earlier `< PLAYER_AMMO_MAX` rule because at the prototype's
+              level scale the latter fires unconditionally on round 1
+              and the demo always detours; the stricter "out of ammo"
+              keeps the modifier discriminating). The Euclidean budget
+              check is an approximation of the BFS-path-length detour
+              (`via_pickup_len - direct_len <= budget`) — the precise
+              form is tracked as a deferred refinement; the two metrics
+              agree on the test fixtures.
+            Both modifiers are PATH MODIFIERS — they redirect the BFS
+            path destination, but the active objective and its success
+            condition are unchanged. Firing decisions in step 4 still
+            gate off objective_target, not pickup_target.
+        4. Fire iff the active objective is `kill:` AND there exists
+           any alive enemy `e` such that ALL THREE gates hold for
+           that enemy:
+             player.pos.distance_to(e.pos) < BOT_FIRE_MAX_RANGE
+             AND has_line_of_sight(player.pos, e.pos, &level)
+             AND |angle_to(e.pos) - player.facing| < BOT_FACING_THRESHOLD.
+           The fire gate is keyed on "any alive enemy in
+           range/LoS/facing", not on the objective target alone, so
+           the bot can defend itself against a flanking enemy while
+           routing toward the objective. Single-enemy fixtures behave
+           identically because "the only alive enemy" and "the
+           objective target" coincide. While routing toward a pickup
+           the bot may still fire at an enemy along the way if all
+           three gates hold for that enemy. See spec/30 § Per-frame
+           Decision step 3.
         5. Stuck-detect fallback (BOT_STUCK_FRAMES /
            BOT_REVERSE_STRAFE_FRAMES) is unchanged in mechanics;
            strafe activates when BFS-driven motion is itself blocked.
 
       Helpers (Coder-internal, not part of the public API; spec/80
       § "no dead pub exports"):
-        - has_line_of_sight(from: Vec2, to: Vec2, level: &Level) -> bool
+        - has_line_of_sight(from: Vec2, to: Vec2, game: &GameState) -> bool
             Tile-grid ray-cast at step BOT_FIRE_LOS_RAY_STEP. Returns
-            false on first sample inside Tile::Wall, else true.
-            Closed-form 2D DDA is allowed in lieu of stepping.
-        - find_path(from: Vec2, to: Vec2, level: &Level) -> Vec<(usize, usize)>
-            BFS over Level.grid; 4-connected; nodes are Tile::Floor.
+            false on first sample inside Tile::Wall (resolved via
+            level_data::is_wall on game.level), else true. Closed-form
+            2D DDA is allowed in lieu of stepping. The `&GameState`
+            arg form (rather than `&Level`) keeps the helper consistent
+            with bot_step's borrow graph and is reflected in the
+            current implementation.
+        - find_path(from: (usize, usize), to: (usize, usize), game: &GameState) -> Vec<(usize, usize)>
+            BFS over game.level.tiles; 4-connected; nodes are
+            Tile::Floor. Tile-coordinate args (rather than Vec2) avoid
+            redundant pos_to_tile calls inside the BFS hot loop.
             Replan cadence per BOT_PATH_REPLAN_FRAMES OR target moved
             > 1 tile since last plan. Empty Vec on no-path; bot
             falls back to bee-lining the straight-line target.
+        - pickup-seeking selection helpers — Coder-internal. The
+          shape of these helpers (a single fn that returns
+          Option<(usize_pickup_index, Vec2_pickup_pos)>, vs. two
+          separate fns for health vs ammo, vs. inlined logic in
+          bot_step) is unspecified; pinning the public surface to
+          the modifier behavior in specs/30 § Pickup-Seeking
+          suffices. Whichever helper shape the Coder picks must be
+          private (module-internal) to avoid spec/80 § "no dead pub
+          exports".
 
-      Bot RNG (used for stuck-detection strafe direction picks etc.)
-      is module-private and seeded from BOT_RNG_SEED in BotState::new(),
-      so two runs against the same Scenario + same GameState seed
-      produce identical (input, progress) sequences. This is the
-      determinism guarantee specs/35 § Determinism relies on. BFS
-      pathfinding is deterministic (no randomness in node visit order);
-      Coder must pick a stable tie-breaking rule (e.g. fixed neighbor
-      order N/E/S/W) so two runs on the same Level produce the same
-      path.
+      Bot determinism: two runs against the same Scenario + same
+      GameState seed must produce identical (input, progress)
+      sequences. BFS pathfinding is deterministic (no randomness in
+      node visit order); Coder must pick a stable tie-breaking rule
+      (e.g. fixed neighbor order N/E/S/W) so two runs on the same
+      Level produce the same path. Stuck-detection strafe-direction
+      pick is also deterministic — either an RNG-seeded sample from
+      BOT_RNG_SEED or a deterministic toggle (`strafe_dir = -strafe_dir`
+      on each `BOT_STUCK_FRAMES + BOT_REVERSE_STRAFE_FRAMES` boundary)
+      both satisfy the determinism contract. The current
+      implementation uses the RNG-seeded form (`bot.rng.next_f32() > 0.5`
+      after a stuck-recovery strafe completes); BOT_RNG_SEED and
+      `BotState::rng` are therefore live, not reserved. A future Coder
+      may swap to the toggle without behavior change beyond the strafe
+      direction's polarity, per `coder_degrees_of_freedom` and
+      specs/25 § RNG Seeds. This is the determinism guarantee
+      specs/35 § Determinism relies on.
     cfg_test_only: false
 
   # ---- #[cfg(test)] only
