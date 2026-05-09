@@ -94,9 +94,6 @@ Agents in `tooling/agents/`:
 - **Extractor** — Extracts knowledge from reference → `knowledge/`
 - **Architect** — Formalizes knowledge into specs
 - **Coder** — Generates code from specs
-- **Researcher** — Answers questions, explores
-- **TestBuilder** — Creates test models
-- **EvalWriter** — Writes evaluation criteria
 
 Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ → Coder → generated/`
 
