@@ -100,12 +100,24 @@ jobs:
           fi
 
       - name: Build scope from issue body
-        id: scope
         run: |
           set -euo pipefail
           mkdir -p artifacts
           gh issue view "$ISSUE_NUMBER" --json title,body \
             -q '"# " + .title + "\n\n" + .body' > artifacts/issue_scope.md
+
+      - name: Sanitize issue scope
+        # Hygiene pass before the issue body reaches an LLM prompt: caps the
+        # body to 4096 bytes and replaces ` and ~~~ with safe surrogates.
+        # NOT a security boundary; the actual injection mitigation is the
+        # Bash removal from Extractor's PHASE_TOOLS in
+        # tooling/orchestrator_run.py. See tooling/sanitize_scope.py.
+        run: python tooling/sanitize_scope.py artifacts/issue_scope.md
+
+      - name: Export scope to job output
+        id: scope
+        run: |
+          set -euo pipefail
           echo "Issue scope (truncated):"
           head -c 1000 artifacts/issue_scope.md
           echo
