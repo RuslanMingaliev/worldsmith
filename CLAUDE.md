@@ -155,7 +155,7 @@ Settings → Branches → main → "Require status checks to pass before merging
 
 1. Anyone files an issue using `.github/ISSUE_TEMPLATE/agent-task.yml` — fields are Goal, Scope, Affected modules (optional), Constraints, Acceptance criteria. The form auto-applies the inert label `agent:task`. **Filing alone does NOT spend tokens.**
 2. A maintainer (admin / write / maintain) reviews the issue and applies `agent:run`. The workflow verifies the sender's permission via `gh api .../collaborators/.../permission` before doing anything else.
-3. The job clones the public reference repo from `vars.WORLDSMITH_REFERENCE_REPO` into `reference/`, runs Extractor, runs `check_sanitization.py` + `validate_specs.py`, runs Architect, validates again, wipes `reference/`, commits to `agent/issue-<N>`, force-pushes, and opens a draft PR `Closes #<N>`.
+3. The job clones the public reference repo from `vars.WORLDSMITH_REFERENCE_REPO` into `reference/`, writes the issue title+body to `artifacts/issue_scope.md`, runs `tooling/sanitize_scope.py` over it (caps to 4096 bytes and replaces backtick/`~~~` fence characters — hygiene, not a security boundary), runs Extractor, runs `check_sanitization.py` + `validate_specs.py`, runs Architect, validates again, wipes `reference/`, commits to `agent/issue-<N>`, force-pushes, and opens a draft PR `Closes #<N>`.
 4. The PR triggers the existing `pr.yml` flow — Coder / Reconciler / PostMortem on the affected modules, plus `cargo build/test` and the demo GIF.
 5. On success the workflow swaps the issue's labels to `agent:in-pr`. On failure (including the `EXTRACTOR_BLOCKED` sentinel from an empty reference clone), it comments the reason and applies `agent:failed`. Re-applying `agent:run` re-runs and force-pushes onto the same branch.
 
@@ -178,6 +178,15 @@ Local helper: the project-level skill `/create-agent-task` (`.claude/skills/crea
 - Permission gate, label gate, and reference clone all run before the first `claude` invocation — unauthorized triggers spend no tokens.
 - `WORLDSMITH_MAX_TOKENS_PER_RUN` is honoured by both phases via `orchestrator_run.py`.
 - `concurrency: cancel-in-progress: true` keyed on issue number — re-labeling the same issue cancels the prior run.
+
+### Injection surface
+
+The issue body is attacker-controlled (only the maintainer who applies `agent:run` is permission-gated; issue authors are not). Two layers shrink the resulting prompt-injection surface:
+
+1. **Extractor has no shell access.** `tooling/orchestrator_run.py`'s `PHASE_TOOLS` deliberately omits `Bash` from Extractor's allowlist, so issue-derived prose entering the prompt cannot reach a shell from inside that phase. Sanitization gates (`check_sanitization.py`, `validate_specs.py`) are run by the workflow post-phase, not by the agent.
+2. **Issue scope is sanitized before forwarding.** `tooling/sanitize_scope.py` runs on `artifacts/issue_scope.md` between the `gh issue view` step and either LLM phase — caps to 4096 bytes and replaces ` and `~~~` with safe surrogates. Hygiene only.
+
+Architect's `PHASE_TOOLS` entry still includes `Bash`; auditing/shrinking it and adding a maintainer re-confirmation step are deferred.
 
 ## Known Issues
 
