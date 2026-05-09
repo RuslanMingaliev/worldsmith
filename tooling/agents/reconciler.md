@@ -47,7 +47,28 @@ Triage the diff:
 
 **Orphan file check.** A clean `cargo build` is **not** sufficient — rustc only compiles what `main.rs` declares with `mod <name>;`. After triaging warnings, list `generated/game/src/*.rs` and confirm every file (other than `main.rs`) has a matching `mod` declaration. If a file is on disk but unreferenced, rustc silently skips it: zero warnings, but also zero compiled tests, and the public API is dead. Flag every orphan in `### Drift found` with the `mod` line that's missing. The mechanical complement is `tooling/check_orphan_files.py`, invoked by `validate_specs.py`; this Step 0 bullet is the agent-side guard for the case where a Coder ships a new module-file but leaves `main.rs` out of scope (PR #10).
 
-Only proceed to Step 1 once warnings have been triaged into "spec drift" / "cfg-test-only / needs gate" / "expected wave-cascade noise" / "orphan-file" buckets and recorded in the report.
+**Test-count parity check.** Coverage regressions are a silent failure mode: `cargo test` reports `N passed; 0 failed` and looks green even when the Coder dropped a `#[cfg(test)] mod tests { ... }` block during regen and lost N tests of coverage. Mechanical check, per regenerated module:
+
+```
+# Baseline: generated-snapshot ref, fetched at workflow step 1
+# (refs/remotes/origin/generated-snapshot is always present in CI by Reconciler time).
+PRE=$(git show origin/generated-snapshot:src/<module>.rs 2>/dev/null \
+      | grep -c '#\[test\]' || echo 0)
+# Post-regen, current working tree
+POST=$(grep -c '#\[test\]' generated/game/src/<module>.rs)
+```
+
+Any module where `POST < PRE` is a **coverage regression** — log under `### Drift found` as a **release-blocker**, NOT defer to next regen pass. This is the same severity tier as `unsafe`/`static mut`: the safety net stops working if Reconciler treats coverage drops as soft. Two valid resolutions in-pass:
+
+(a) **Restore the missing tests** by reading the `mod tests { ... }` block from `git show origin/generated-snapshot:src/<module>.rs` and re-applying to the regenerated file. Append after the last public item; do not re-derive — the snapshot is the canonical prior state.
+
+(b) **Escalate to Orchestrator** if the drop was intentional (e.g. a contract change made the tests structurally stale because a function was removed or renamed). Document under `### Drift found` *which* tests were dropped and *why*, with the spec/contract change that justifies the removal.
+
+Bare `Tests passing: N / N` in the report is **insufficient** when N decreased between regens. The 2026-05-08 release regen on commit `9ec001f` shipped 35 tests vs. 64 in the prior commit `b3a5237` — net loss of ~27 unit tests across `autopilot.rs` (-9), `game_loop.rs` (-5), `renderer.rs` (-4), and others. Reconciler's report read "Tests passing: 35 / 35" without flagging the drop; PostMortem propagated the same framing. The coverage hole would have baselined into `generated-snapshot` on merge, making restoration progressively harder for future PRs.
+
+In manual (non-CI) mode, where `origin/generated-snapshot` may not be fetched, fall back to `git fetch origin generated-snapshot --depth=1` before the grep. If the ref still does not exist (first-run / fork), skip the check with a note in the report rather than failing — the floor is the workflow-fetched baseline; without it there is no prior state to compare against.
+
+Only proceed to Step 1 once warnings have been triaged into "spec drift" / "cfg-test-only / needs gate" / "expected wave-cascade noise" / "orphan-file" / "coverage-regression" buckets and recorded in the report.
 
 ### Step 1: Scan code for constants
 
