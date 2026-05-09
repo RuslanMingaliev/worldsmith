@@ -72,7 +72,19 @@ cross_module_borrows:
   - "&mut VisualEffects (spawn flash/tracer/puff/blood) -- spec/80 exception A"
 notes: |
   Damage formula is 5 * (random(0..3) + 1) -> {5, 10, 15} per
-  specs/25. Use std::collections::hash_map::DefaultHasher or a small
-  explicit linear congruential generator for randomness; std lacks
-  a public RNG. Picking a tiny LCG keeps the dep list clean (no
-  `rand` crate). Coder owns this internal choice.
+  specs/25. RNG state lives on Player (`Player.weapon_rng: u64`,
+  see player_state contract § Player) — `fire()` advances it through
+  the existing `&mut Player` borrow, mutates `player.weapon_rng` in
+  place, and reads the new value to derive the spread + damage roll.
+  Use a small linear congruential generator (`x = x * a + c`); std
+  lacks a public RNG and the `rand` crate is rejected by spec/80
+  § Dependencies. Coder owns the LCG constants (any standard pair
+  is acceptable: e.g. Numerical Recipes 6364136223846793005 / 1442695040888963407).
+
+  DO NOT use `static mut`, `unsafe`, or any module-private mutable
+  global to back this RNG — spec/80 § Safety forbids both, and the
+  &mut Player borrow gives weapon_system everything it needs for
+  stateful randomness without them. The 2026-05-07 release regen
+  shipped `static mut WEAPON_RNG: u64` + `unsafe { ... }` here and
+  Reconciler escalated as a release-blocker; this note is the
+  contract-side codification of "use the borrow, not statics."

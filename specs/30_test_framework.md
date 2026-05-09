@@ -59,7 +59,8 @@ Objectives are executed sequentially. Each must complete before the next begins.
 | Objective | Behavior |
 |-----------|----------|
 | `kill: <target>` | Navigate to target, attack until dead |
-| `reach: <target>` | Navigate to target position (distance < 1.0) |
+| `reach: <position-target>` | Navigate to target position. Completes when `distance(player.pos, target_pos) < BOT_REACH_DISTANCE` (1.0). Position targets: `exit`, `spawn`. |
+| `reach: pickup_<kind>` | Travel to and **consume** the first active `<kind>` pickup. Completes when `resolve_target_pos` returns `None` — i.e. no active pickup of that kind remains, because the bot collected it (or the level had none). The proximity check is intentionally NOT used for pickup targets: the bot's BFS path runs over a tile grid and "within `BOT_REACH_DISTANCE`" can be satisfied by the bot's continuous position without it actually walking onto the pickup tile, which is what `game_loop` uses to flip `pickup.active = false`. Without this rule the objective completes on proximity, the bot moves on, and the BFS path away from the pickup orbits without ever consuming it. |
 | `approach: <target>` | Get within weapon range of target (distance < 8.0) |
 | `wait: <frames>` | Do nothing for N frames |
 
@@ -67,13 +68,13 @@ Objectives are executed sequentially. Each must complete before the next begins.
 
 | Name | Resolves to |
 |------|-------------|
-| `enemy` | First alive enemy position; falls back to first enemy's last position, then to `exit`, if no enemies are alive. |
+| `enemy` | Nearest alive enemy position (minimum `player.pos.distance_to(enemy.pos)` over `enemies.iter().filter(|e| e.alive)`; ties broken by index in `level.enemy_spawns`). Returns `None` when no enemies are alive — downstream callers handle this: `Kill` completes via `enemies.iter().all(|e| !e.alive)` regardless, `Reach`/`Approach` auto-complete on `None` per `check_objective_complete`, and `compute_input` returns the default `InputState`. The "nearest" rule keeps single-enemy fixtures (`tests/combat/{kill_enemy,kite_enemy}.yaml`) bit-for-bit equivalent to the old "first alive" rule, while letting multi-enemy fixtures (`tests/level/{scavenge_run,local_chase_obstacle}.yaml`) target the immediate threat instead of an arbitrary index-zero enemy that may be flanked by a closer one. |
 | `exit` | Level exit position |
 | `spawn` | Player spawn position |
-| `pickup_health` | First active health pickup position (specs/60). Falls back to player's current position when no active health pickup remains, so a `reach: pickup_health` objective trivially completes once all health pickups are consumed. **Partial drift**: current code in `resolve_pos_target` uses `find(kind == Health)` without filtering `active`, so a consumed (inactive) pickup's position is still returned instead of falling back to the player's position. |
-| `pickup_ammo` | First active ammo pickup position (specs/60). Same fallback rule as `pickup_health`. Same partial drift as above. |
+| `pickup_health` | First active health pickup (filtered by `kind == Health` AND `active == true`, per `specs/60 § Pickup Entity § Transitions`). Returns `None` when no active health pickup remains; combined with the `reach: pickup_<kind>` completion rule above, this means the objective completes (rather than stalls) once the bot has collected the pickup or the level had none to begin with. |
+| `pickup_ammo` | First active ammo pickup. Same filter and completion semantics as `pickup_health`. |
 
-The fallback semantics for pickup targets are deliberate: a scavenge-style scenario like `reach: pickup_health → reach: pickup_ammo → reach: exit` should not stall when a pickup is missing or already consumed — it should treat that objective as already satisfied and move on. The `active` filter and fallback are not yet enforced in code (flagged as drift; fix in next Coder pass).
+The "first active" filter is critical to the `reach: pickup_<kind>` semantics: it must distinguish between "pickup still on the floor" (objective unmet, keep routing toward it) and "pickup already collected" (objective satisfied, advance to next). Pickups can only deactivate, never reactivate within a run (`specs/60 § Pickup Entity § Transitions`), so the active filter encodes exactly the binary the objective check needs.
 
 ## Assertions
 
@@ -113,14 +114,14 @@ Each frame the bot resolves the active objective's target position, computes `di
 
 1. **Turn toward target.** Emit `turn` with sign matching the angular delta and magnitude 1.0, except when `|delta_angle| < BOT_TURN_THRESHOLD` (emit `turn = 0` to suppress oscillation around the target heading).
 2. **Pick a movement mode:**
-   - **Kite mode** — when the active objective targets an enemy (`kill: enemy` or `approach: enemy`) AND `dist < BOT_KITE_RANGE`: emit `forward = -1.0` (back-pedal). The bot keeps facing the target so LoS for firing is preserved while the player position retreats.
-   - **Path-follow mode** — otherwise: follow the next waypoint from the BFS path (see § Pathfinding). The bot turns toward the waypoint's center and emits `forward = +1.0` once roughly facing it.
-3. **Decide whether to fire** (combat objectives only, i.e. `kill`):
-   - `dist < BOT_FIRE_MAX_RANGE`,
-   - AND `has_line_of_sight(player.pos, target_pos, &level)` returns true,
-   - AND `|delta_angle| < BOT_FACING_THRESHOLD`.
+   - **Kite mode** — when the active objective targets an enemy (`kill: enemy` or `approach: enemy`) AND there exists at least one alive enemy `e` with `player.pos.distance_to(e.pos) < BOT_KITE_RANGE` AND `has_line_of_sight(player.pos, e.pos, &level)` returns true: emit `forward = -1.0` (back-pedal). The bot keeps facing the objective target so LoS for firing on it is preserved while the player position retreats from the closest threat. The trigger evaluates over ALL alive enemies (not just the objective target) so that a closer flanking enemy correctly forces a back-pedal even when the objective target is far away. The LoS gate prevents wall-separated kiting: when an enemy is within `BOT_KITE_RANGE` but a wall lies between the two, the bot stays in path-follow mode and routes around the wall via BFS instead of indefinitely backing away from a non-threatening proximity. Captured during 2026-05-08 reconcile after the Coder added the LoS check to fix indefinite westward back-pedal in `local_chase_obstacle`.
+   - **Path-follow mode** — otherwise: follow the next waypoint from the BFS path (see § Pathfinding). The path's destination is normally the objective target tile, but may be temporarily redirected via a pickup tile by the pickup-seeking modifiers (see § Pickup-Seeking). The bot turns toward the waypoint's center and emits `forward = +1.0` once roughly facing it.
+3. **Decide whether to fire** (combat objectives only, i.e. `kill`). The bot fires when there exists any alive enemy `e` such that **all three** gates hold for that enemy:
+   - `player.pos.distance_to(e.pos) < BOT_FIRE_MAX_RANGE`,
+   - AND `has_line_of_sight(player.pos, e.pos, &level)` returns true,
+   - AND `|angle_to(e.pos) - player.facing| < BOT_FACING_THRESHOLD`.
 
-   The previous gate (`roughly_facing && dist < BOT_APPROACH_DISTANCE + ENEMY_RADIUS_TILES`) is retired. Range and LoS replace it. `BOT_APPROACH_DISTANCE` is no longer a fire gate; it remains the success threshold for the `approach:` objective only.
+   The fire gate is keyed on "any alive enemy in range/LoS/facing", not on the objective target alone, so the bot can defend itself against a flanking enemy while routing toward the objective. Single-enemy fixtures behave identically because "the only alive enemy" and "the objective target" coincide. The previous gate (`roughly_facing && dist < BOT_APPROACH_DISTANCE + ENEMY_RADIUS_TILES`) is retired. Range and LoS replace it. `BOT_APPROACH_DISTANCE` is no longer a fire gate; it remains the success threshold for the `approach:` objective only.
 
 ### Line-of-sight Test
 
@@ -139,6 +140,165 @@ Each frame the bot resolves the active objective's target position, computes `di
 
 The pathfinding internals (turn-toward, waypoint-consume distance, kite vs path-follow precedence when both apply) are listed under `coder_degrees_of_freedom` in `ir/contracts/_shared.yaml`.
 
+### Pickup-Seeking (Path Modifier)
+
+Pickup-seeking is a **path modifier** layered on top of the existing
+objective system. The active objective (`kill:` / `approach:` / `reach:` /
+`wait:`) does NOT change when pickup-seeking activates — the bot still
+evaluates objective completion against the original objective target.
+What changes is the BFS path's destination tile: the bot routes via a
+pickup tile, then resumes routing toward the objective target.
+
+Two distinct modifiers exist; both feed into the same underlying BFS
+mechanism.
+
+#### HP-threshold health routing
+
+**Trigger.** On any path replan (per `BOT_PATH_REPLAN_FRAMES`, or when the
+objective target moves > 1 tile), if the bot is in path-follow mode AND
+`player.health < BOT_HEALTH_PICKUP_THRESHOLD * PLAYER_MAX_HEALTH` AND there
+exists at least one `Pickup` in `level.pickups` with
+`kind == PickupKind::Health` and `active == true`, the modifier activates.
+
+**Effect.** The "intermediate target" tile is set to the nearest active
+health pickup's tile (Euclidean `player.pos.distance_to(pickup.pos)`; ties
+broken by the pickup's index in `level.pickups` via `Iterator::min_by`'s
+"first equal minimum" rule). The BFS path is computed from `player.pos`
+to this intermediate tile. The bot follows that path. Once the bot's
+tile-position equals the pickup's tile (by which point `game_loop`'s
+per-frame pickup check has consumed the pickup, flipping its `active`
+flag to `false`), the next replan re-evaluates: the trigger fails (no
+`active == true` pickup at that index any more), the modifier deactivates,
+and the BFS path retargets the original objective. (BFS-graph Manhattan
+distance is the precise form for the prototype's 4-connected grid; the
+Euclidean approximation is cheaper and agrees with Manhattan on the test
+fixtures' open-corridor geometry. Tracked as a deferred refinement.)
+
+**Edge cases.**
+- **Pickup unreachable.** If BFS to the intermediate target returns an
+  empty path (the pickup is enclosed in walls), the modifier no-ops for
+  this replan and the bot routes directly to the objective target.
+  Re-evaluated on the next replan.
+- **Pickup consumed before bot arrives.** Cannot happen in the prototype:
+  only the bot can consume pickups (the basic-trooper enemy ignores them
+  per `specs/60`). For a future multi-pickup-consumer world, the
+  same edge case as "unreachable" applies — the next replan re-evaluates.
+- **Health restored above threshold mid-route.** The modifier deactivates
+  on the next replan (HP check fails) and the bot retargets the original
+  objective. The bot does NOT immediately abandon its current waypoint;
+  it finishes the in-flight waypoint then replans.
+- **`reach: pickup_health` objective active.** No special interaction —
+  the trigger condition still fires if HP is low and the objective's
+  pickup target equals the modifier's intermediate target, the BFS path
+  is computed once toward that single tile, and the original objective
+  completes when the bot reaches it. If the objective targets a *different*
+  pickup, both targets are in `level.pickups`; the modifier picks the
+  nearest active health pickup, which may or may not be the objective's
+  target. The objective's target wins for objective completion; the
+  modifier's target wins for movement.
+
+**Concurrent-objective interaction.** The modifier is a path modifier, NOT
+an objective. It does not pause `kill:` / `approach:` / `reach:` / `wait:`
+progression. While routing toward the health pickup, the bot still:
+- evaluates firing decisions against the original objective target
+  (kill/approach combat objectives — the bot may fire at an enemy along
+  the route to the pickup if LoS, range, and facing all hold);
+- counts frames toward `wait:` countdowns;
+- checks `reach:` distance against the original objective target.
+
+#### Ammo opportunism
+
+**Trigger.** On any path replan, if the bot is in path-follow mode AND the
+HP-threshold modifier did NOT activate this replan AND
+`player.ammo == 0` AND there exists at least one `Pickup` in
+`level.pickups` with `kind == PickupKind::Ammo` and `active == true`, the
+modifier evaluates the detour cost.
+
+**Effect.** Trigger tightened from the earlier `< PLAYER_AMMO_MAX` rule:
+at the prototype's starting ammo of 12 / max 30, the looser trigger fires
+unconditionally on round one and the demo always detours; `== 0` keeps
+the modifier discriminating. Reintroduce the broader trigger when the
+ammo economy is rebalanced.
+
+The current implementation uses a Euclidean approximation of the detour
+cost rather than a BFS path-length comparison: the modifier selects the
+*nearest* active ammo pickup (`Iterator::min_by` over Euclidean
+`player.pos.distance_to(pickup.pos)`; ties broken by iteration order in
+`level.pickups`) and accepts it iff
+`player.pos.distance_to(pickup.pos) <= player.pos.distance_to(objective_target) + BOT_PICKUP_DETOUR_BUDGET`.
+When the check passes, the BFS path destination is set to that pickup's
+position; the bot consumes the first segment, collects the pickup on
+arrival (per `game_loop`'s per-frame check), the pickup goes inactive,
+and on the next replan the trigger fails (this pickup no longer counts)
+so the bot retargets the original objective directly. The Euclidean
+budget check is a simpler approximation of the BFS-path detour: it admits
+some pickups whose actual two-segment path exceeds the budget and may
+reject others whose BFS detour is small but whose Euclidean distance is
+large. For the prototype's 20×15 grid with sparse interior walls the two
+metrics agree on the test fixtures; a BFS-based detour calculation
+(`via_pickup_len - direct_len`) is the precise form and is tracked as a
+deferred refinement.
+
+**Edge cases.**
+- **Two-segment path implementation.** The contract is that the bot's
+  next waypoint is the next tile along the `player → pickup → target`
+  joined path. The Coder may either (a) compute both BFS segments
+  separately and concatenate, or (b) treat the pickup tile as a forced
+  intermediate via two replans (first replan: `player → pickup`; on
+  arrival, second replan: `pickup → target`). Both meet the spec; option
+  (b) is simpler and reuses the existing single-target BFS.
+- **No active ammo pickup, or the nearest active pickup fails the
+  Euclidean budget check.** The modifier no-ops and the bot routes
+  directly to the objective target. (The current implementation only
+  evaluates the single nearest candidate against the budget; if that
+  one is too far, no further candidates are considered this replan —
+  a consequence of `Iterator::min_by` collapsing the candidate set to
+  one before the budget check.)
+- **Multiple candidates.** `Iterator::min_by` over Euclidean
+  `distance_to(player.pos)` picks the nearest; ties resolved by the
+  pickup's index in `level.pickups` (min_by's "first equal minimum"
+  rule). Deterministic because the pickup vector is constructed in a
+  fixed order in `level_data::build_default`.
+- **Pickup blocks the direct path.** If the ammo pickup's tile already
+  lies on the direct BFS path, the modifier still fires and the bot
+  collects the pickup as part of its normal traversal — same behavior as
+  without the modifier, which is fine.
+
+**Concurrent-objective interaction.** Same as HP-threshold: the modifier
+is a path modifier, not an objective. Firing, `wait:` countdowns, and
+objective completion checks all run against the original objective target.
+
+#### Modifier priority
+
+When multiple modifiers could apply, the priority is:
+
+1. **Kite mode wins over both modifiers.** Kite mode (specs/30 § Per-frame
+   Decision step 2) activates when the active objective targets an enemy
+   AND `dist < BOT_KITE_RANGE`. While kiting, the bot back-pedals (`forward
+   = -1.0`) and does not follow a BFS path at all — pickup-seeking is moot.
+2. **HP-threshold wins over ammo opportunism.** When path-follow mode is
+   active and both modifiers' triggers fire, only the HP-threshold modifier
+   activates; ammo opportunism is skipped this replan. Health is more
+   critical than ammo: a dead bot can't grab any pickup, but an
+   under-armed bot can still kite or close to contact range.
+3. **At most one modifier per replan.** A single replan never produces a
+   three-segment `player → health → ammo → target` path. The next replan
+   re-evaluates and a different modifier may apply.
+
+#### Replan triggering
+
+Pickup-seeking modifiers piggyback on the existing replan cadence: every
+`BOT_PATH_REPLAN_FRAMES` frames OR on objective-target movement > 1 tile.
+A pickup that becomes active (impossible in this prototype but defined for
+future-proofing — pickups can only deactivate, never reactivate, within a
+run, per `specs/60 § Pickup Entity § Transitions`) does NOT trigger a
+replan; the next scheduled replan sees the new state.
+
+The on-arrival pickup consumption (player tile equals pickup tile, pickup
+flips to inactive) does NOT itself trigger a replan — the bot continues
+on the in-flight path. The next scheduled replan deactivates the now-stale
+modifier and retargets the original objective.
+
 ### Stuck Detection (Fallback)
 
 Stuck detection remains as a backstop for cases BFS cannot resolve:
@@ -152,7 +312,7 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 
 - Each scenario runs with fresh `GameState`
 - Simulation runs at 60 FPS (FRAME_TIME = 1/60)
-- Maximum duration: 3600 frames (60 seconds)
+- Maximum duration: `BOT_MAX_FRAMES` frames (see [`25_game_tuning.md § Autopilot`](25_game_tuning.md#autopilot-bot-tuning) — currently 18000 / 300 game-seconds; raised from the original 3600 to fit two-enemy fixtures across the central divider)
 - If max frames exceeded, assertions are checked against current state
 - Scenarios are independent — no shared state between tests
 
@@ -177,7 +337,8 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 - **Not yet implemented** (return "unknown assertion field" error at runtime): `player.position.x`, `player.position.y`, `enemy.health`, `game.running`.
 - Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
 - Bot behavior: turn-toward objective, BFS pathfinding with periodic replan and bee-line fallback, kite at `BOT_KITE_RANGE`, range-gated firing at `BOT_FIRE_MAX_RANGE`, LoS-gated firing via tile-grid ray-cast, stuck detection with strafe recovery as fallback.
-- Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, 3600-frame max.
+- `reach: pickup_<kind>` completes on actual pickup consumption (`pickup.active == false`), not on proximity, per § Objectives.
+- Execution rules: fresh `GameState` per scenario, 60 FPS fixed-`dt` simulation, `BOT_MAX_FRAMES`-frame max (see specs/25 § Autopilot).
 - Per-frame API (`parse_scenario`, `BotState`, `BotProgress`, `bot_step`) always compiled for `--autopilot` mode (specs/35).
 - Batch driver (`run_scenario`, `run_all_scenarios`) gated behind `#[cfg(test)]`.
 

@@ -83,7 +83,7 @@ PHASES = ["extractor", "architect", "coder", "reconciler", "postmortem", "releas
 # Tools each phase is permitted to invoke. Conservative defaults — broaden
 # only when the phase legitimately needs more.
 PHASE_TOOLS: Dict[str, List[str]] = {
-    "extractor": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
+    "extractor": ["Read", "Write", "Edit", "Grep", "Glob"],
     "architect": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     "coder": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
     "reconciler": ["Read", "Edit", "Bash", "Grep", "Glob"],
@@ -152,9 +152,11 @@ def build_prompt(phase: str, mode: str, scope: Optional[str]) -> str:
         "You are running NON-INTERACTIVELY inside a CI workflow. "
         "Treat all instructions in the role prompt as authoritative. "
         f"Mode: `{mode}`. Repository root is the current working directory. "
-        "Use Read/Write/Edit/Bash tools to make file changes; do not ask questions — "
-        "if information is missing, escalate by writing a clear blocker note to "
-        "`artifacts/blocker.md` and exit. When you are done, exit normally."
+        "Use the tools available to you to make file changes; the per-phase "
+        "`--allowedTools` list is authoritative — do not assume Bash is available. "
+        "Do not ask questions — if information is missing, escalate by writing a "
+        "clear blocker note to `artifacts/blocker.md` and exit. When you are done, "
+        "exit normally."
     )
 
     # Order matters for prompt-cache prefix matching: most-stable content first.
@@ -188,7 +190,11 @@ def claude_command(phase: str, model: Optional[str], max_turns: int) -> List[str
         "--max-turns",
         str(max_turns),
         "--allowedTools",
-        ",".join(PHASE_TOOLS.get(phase, ["Read", "Write", "Edit", "Bash"])),
+        # No fallback: argparse already restricts `--phase` to PHASES, and every
+        # PHASES entry must have an explicit allowlist. A silent fallback (esp.
+        # one containing Bash) would let a future typo or refactor quietly
+        # re-introduce Bash to a phase that consumes attacker-controlled input.
+        ",".join(PHASE_TOOLS[phase]),
     ]
     effective_model = model or PHASE_DEFAULT_MODEL.get(phase)
     if effective_model:

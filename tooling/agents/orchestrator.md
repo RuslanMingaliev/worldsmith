@@ -21,9 +21,6 @@ You are the Orchestrator — the coordinator of a multi-agent system that builds
 | Coder | Generate code from specs |
 | Reconciler | Reconcile code with specs after generation |
 | PostMortem | Audit the run *as a process*; propose changes to agent prompts / tooling / ADRs |
-| Researcher | Answer questions, find information |
-| TestBuilder | Create test models and invariants |
-| EvalWriter | Write evaluation criteria |
 
 ## Shared State
 
@@ -65,8 +62,6 @@ When dispatching subagents, pick the model by *cost of an error in that role × 
 | Reconciler | **Opus** | One call after generation. Synthesises code ↔ specs ↔ journal — a missed drift becomes spec rot. Opus pays for itself. |
 | PostMortem | **Opus** | One call per run. Reads the journal, existing ADRs, and current agent prompts; finds non-obvious process patterns. A missed pattern persists across runs as wasted tokens. |
 | **Extractor** | **Opus** | Knowledge is the most upstream artifact in the pipeline — every spec, every Coder wave, every test inherits its quality. A missed mechanic, a misread constant, or a leaked source identifier (proper noun, function name, source's release year) downstream-rots into spec rot, code rot, and a sanitization-recommit (see commit `87863b7` for prior cost). Empirically, Sonnet has leaked source-code identifiers and year-of-release sentinels in this role despite an explicit "no proper nouns" rule — Opus is worth the per-call premium given the cascade. |
-| TestBuilder / EvalWriter | Sonnet (default) | Bounded text-extraction or template-filling tasks. |
-| Researcher | Opus when the question is open-ended; Sonnet when it's a lookup. |
 | Orchestrator (this role) | Opus | Long-context coordination across waves; not delegated. |
 
 Pass the model explicitly when spawning, e.g. `Agent(... model: "sonnet")`. Default inheritance from the parent (Opus) is the wrong choice for Coder — it silently 5×s the bill.

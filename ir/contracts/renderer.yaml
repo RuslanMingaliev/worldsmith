@@ -93,9 +93,18 @@ public_methods:
            GAME_OVER_BORDER_PX).
       The renderer reads visual_effects (including fx.pickup_tint_count),
       player.damage_count, player.health, player.ammo, level.pickups,
-      enemy.pain_flash_remaining, enemy.death_fade_remaining (for fade
-      interpolation), and enemy.alive (corpse vs. live). It does NOT
-      mutate any other module's state.
+      enemy.pain_flash_remaining (live-enemy pain-flash color override),
+      and enemy.alive (live vs. corpse skip). It does NOT mutate any
+      other module's state. The death-fade interpolation reads
+      `eff.lifetime_remaining / ENEMY_DEATH_FADE_DURATION` from the
+      VisualEffects entry pushed by spawn_enemy_death_fade — NOT
+      enemy.death_fade_remaining (which is a parallel timer on Enemy
+      gating corpse-marker spawn in enemy_logic, not consumed by
+      renderer). Both timers tick at dt in lockstep so the visual
+      result matches; the contract pin is "renderer reads the Effect's
+      lifetime", not "renderer reads the Enemy's timer". Captured
+      2026-05-09 reconcile after `initial_lifetime` field removal made
+      the divisor a plain constant.
   - signature: "pub fn make_framebuffer() -> Vec<u32>"
     notes: |
       Allocates Vec::from_iter([0u32; WINDOW_WIDTH * WINDOW_HEIGHT]).

@@ -10,9 +10,6 @@ Multi-agent architecture for spec-driven game generation.
 | **Extractor** | `extractor.md` | Extract knowledge from reference |
 | **Architect** | `architect.md` | Design specs and IR |
 | **Coder** | `coder.md` | Generate code |
-| **Researcher** | `researcher.md` | Answer questions, explore |
-| **TestBuilder** | `test_builder.md` | Create test models |
-| **EvalWriter** | `eval_writer.md` | Write evaluation criteria |
 | **Reconciler** | `reconciler.md` | Reconcile code with specs after generation |
 | **PostMortem** | `postmortem.md` | Audit the run as a process; propose changes to agent prompts / tooling / ADRs |
 
@@ -36,7 +33,7 @@ ir/                 # Intermediate representation (Architect writes)
 generated/          # Generated code (Coder writes)
 knowledge/          # Public findings, no source refs (Extractor writes)
 tests/              # Test scenarios
-evals/              # EvalWriter output
+evals/              # Evaluation criteria
 reference/          # Read-only reference material (private)
 ```
 

@@ -75,7 +75,12 @@ This project's whole proposition is "specs distilled from a real reference, rege
 
 2. **Only the Extractor writes to `knowledge/`, and only when `reference/` is loaded.** Architect, Orchestrator, Reconciler, and PostMortem must never add or modify knowledge files. If a spec value has no knowledge backing, mark its Source as `Generation default — no knowledge backing` in `specs/25_game_tuning.md` and add a parking-lot item to the run journal — never invent a knowledge citation. See `tooling/agents/architect.md` § Citation discipline.
 
-`tooling/validate_specs.py` enforces this mechanically: a session that modifies `knowledge/` while `reference/` is empty fails validation with a loud banner. Trust the gate; do not work around it. If the gate fires unexpectedly, the right responses are (a) revert the knowledge edit, (b) load the relevant reference and re-run Extractor properly, or (c) demote the value to a `Generation default` in spec/25.
+`tooling/validate_specs.py` enforces this mechanically. Two hard rules, no warning paths:
+
+- A session that modifies `knowledge/` while `reference/` is empty fails validation with a loud banner.
+- Any forbidden source-identifier token (proper nouns, source-code identifiers, release-year sentinels) in any `knowledge/*.md` fails validation, regardless of git status. The pattern table lives in `tooling/check_sanitization.py`. Pre-existing leaks in committed files must be cleaned up in the same PR that next touches the affected file.
+
+Trust the gate; do not work around it. If the gate fires unexpectedly, the right responses are (a) revert the knowledge edit, (b) load the relevant reference and re-run Extractor properly, (c) demote the value to a `Generation default` in spec/25, or (d) for sanitization leaks, paraphrase the offending text without changing numerics.
 
 ## Auto-Documentation Rules
 
@@ -94,9 +99,6 @@ Agents in `tooling/agents/`:
 - **Extractor** — Extracts knowledge from reference → `knowledge/`
 - **Architect** — Formalizes knowledge into specs
 - **Coder** — Generates code from specs
-- **Researcher** — Answers questions, explores
-- **TestBuilder** — Creates test models
-- **EvalWriter** — Writes evaluation criteria
 
 Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ → Coder → generated/`
 
@@ -119,9 +121,9 @@ Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ → C
   4. `cargo build/test --release` (under `xvfb-run` because autopilot tests need a display).
   5. Package the regenerated `generated/game/` into `generated-src.tar.gz` and upload it as a workflow artifact (90-day retention). `post-merge-snapshot.yml` consumes this after merge.
   6. Record `release/demo.gif` via `tooling/record_autopilot.sh`.
-  7. Reconciler's edits to `specs/`, `knowledge/`, `ir/`, `tooling/agents/` and PostMortem's surgical edits to `tooling/agents/*.md` are captured as a unified diff and posted as **inline review suggestions** via `reviewdog/action-suggester` (only on lines this PR already touches; the rest of the diff is in the `agent_changes.diff` artifact).
+  7. Reconciler's edits to `specs/`, `knowledge/`, `ir/`, `tooling/agents/` and PostMortem's surgical edits to `tooling/agents/*.md` are captured as a unified diff (`agent_changes.diff` artifact) and embedded inline in the single PR-status comment within a `<details>` block, with a one-line `git apply` recipe. Diffs over 50 KB are linked to the artifact instead of inlined. Replaced the previous `reviewdog/action-suggester` inline-comments flow on 2026-05-08 — that flow silently dropped any edit outside the PR's already-touched lines (filter-mode `diff_context`), which forced multi-regen catch-up cycles to land the residue. See PR #28 audit log.
   8. PostMortem's narrative analysis (run summary, "what hurt", ADR drafts) is saved to `artifacts/postmortem.md` and linked from the PR comment.
-  9. The demo GIF is uploaded to a single shared `pr-assets` branch (auto-created on first run from `main`'s HEAD) as `pr-<N>-run-<run_id>-demo.gif`, then embedded inline in the PR status comment via its `raw.githubusercontent.com` URL. PR number + run id make filenames unique, so concurrent PR runs don't race. The branch is **never automatically pruned** — see Known Issues for cleanup.
+  9. The demo GIF is uploaded to a single shared `pr-assets` branch (auto-created on first run from `main`'s HEAD) as `pr-<N>-run-<run_id>-demo.gif`, then embedded inline in the PR status comment via its `raw.githubusercontent.com` URL. PR number + run id make filenames unique, so concurrent PR runs don't race. Cleanup runs via `.github/workflows/pr-assets-cleanup.yml` on `pull_request: closed`, deleting every `pr-<N>-*-demo.gif` for the closed PR. The cleanup filter requires both `startswith("pr-<N>-")` and `endswith("-demo.gif")` — keep this paired with the upload filename above (or extend the filter when adding a new artifact suffix).
 
 ### Post-merge snapshot (`generated-snapshot` branch)
 
@@ -143,6 +145,8 @@ Settings → Branches → main → "Require status checks to pass before merging
 
 `regenerate-and-build` is conditionally `if:`-skipped on fork PRs and on PRs that don't touch source-of-truth paths. GitHub treats a skipped job as a passing required check, so skipping doesn't block merge. A skipped check on a fork PR means the maintainer must rerun the workflow from this repo's branch (or close-and-reopen as a maintainer) to actually validate regeneration before merging.
 
+Do **not** add `pr-assets cleanup` as a required check. It triggers on `pull_request: types: [closed]`, so it runs after merge — making it required would deadlock every PR (the gating check can never reach success before the merge button does).
+
 ### Cost control
 
 - `concurrency: cancel-in-progress: true` per PR — re-pushes cancel the prior run, but tokens already spent are not refunded.
@@ -155,7 +159,7 @@ Settings → Branches → main → "Require status checks to pass before merging
 
 1. Anyone files an issue using `.github/ISSUE_TEMPLATE/agent-task.yml` — fields are Goal, Scope, Affected modules (optional), Constraints, Acceptance criteria. The form auto-applies the inert label `agent:task`. **Filing alone does NOT spend tokens.**
 2. A maintainer (admin / write / maintain) reviews the issue and applies `agent:run`. The workflow verifies the sender's permission via `gh api .../collaborators/.../permission` before doing anything else.
-3. The job clones the public reference repo from `vars.WORLDSMITH_REFERENCE_REPO` into `reference/`, runs Extractor, runs `check_sanitization.py` + `validate_specs.py`, runs Architect, validates again, wipes `reference/`, commits to `agent/issue-<N>`, force-pushes, and opens a draft PR `Closes #<N>`.
+3. The job clones the public reference repo from `vars.WORLDSMITH_REFERENCE_REPO` into `reference/`, writes the issue title+body to `artifacts/issue_scope.md`, runs `tooling/sanitize_scope.py` over it (caps to 4096 bytes and replaces backtick/`~~~` fence characters — hygiene, not a security boundary), runs Extractor, runs `check_sanitization.py` + `validate_specs.py`, runs Architect, validates again, wipes `reference/`, commits to `agent/issue-<N>`, force-pushes, and opens a draft PR `Closes #<N>`.
 4. The PR triggers the existing `pr.yml` flow — Coder / Reconciler / PostMortem on the affected modules, plus `cargo build/test` and the demo GIF.
 5. On success the workflow swaps the issue's labels to `agent:in-pr`. On failure (including the `EXTRACTOR_BLOCKED` sentinel from an empty reference clone), it comments the reason and applies `agent:failed`. Re-applying `agent:run` re-runs and force-pushes onto the same branch.
 
@@ -179,8 +183,16 @@ Local helper: the project-level skill `/create-agent-task` (`.claude/skills/crea
 - `WORLDSMITH_MAX_TOKENS_PER_RUN` is honoured by both phases via `orchestrator_run.py`.
 - `concurrency: cancel-in-progress: true` keyed on issue number — re-labeling the same issue cancels the prior run.
 
+### Injection surface
+
+The issue body is attacker-controlled (only the maintainer who applies `agent:run` is permission-gated; issue authors are not). Two layers shrink the resulting prompt-injection surface:
+
+1. **Extractor has no shell access.** `tooling/orchestrator_run.py`'s `PHASE_TOOLS` deliberately omits `Bash` from Extractor's allowlist, so issue-derived prose entering the prompt cannot reach a shell from inside that phase. Sanitization gates (`check_sanitization.py`, `validate_specs.py`) are run by the workflow post-phase, not by the agent.
+2. **Issue scope is sanitized before forwarding.** `tooling/sanitize_scope.py` runs on `artifacts/issue_scope.md` between the `gh issue view` step and either LLM phase — caps to 4096 bytes and replaces ` and `~~~` with safe surrogates. Hygiene only.
+
+Architect's `PHASE_TOOLS` entry still includes `Bash`; auditing/shrinking it and adding a maintainer re-confirmation step are deferred.
+
 ## Known Issues
 
 - Top-down view, not raycasting
-- The shared `pr-assets` branch grows by one file per PR run and is never pruned automatically. Periodic cleanup is needed — either a cron workflow that drops files older than N days, or a `pull_request: types: [closed]` workflow that deletes `pr-<N>-*.gif` for the closed PR. Not implemented yet.
 - The `generated-snapshot` branch is force-pushed and orphan-committed each time, so historical snapshots are not retained — only the latest regen-merge baseline lives there. If you need a previous baseline, fall back to the corresponding GitHub Release's `worldsmith-game-X-src.zip`. If a PR sits open for more than 90 days, its `generated-src` artifact expires and the post-merge snapshot can no longer pick it up — `post-merge-snapshot.yml` warns and skips, leaving the previous snapshot in place; refresh manually via `release.yml` if needed.

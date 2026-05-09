@@ -5,7 +5,7 @@
 #   tooling/record_autopilot.sh <scenario.yaml> [output.gif]
 #
 # Defaults:
-#   scenario  = tests/combat/kill_enemy.yaml
+#   scenario  = tests/level/scavenge_run.yaml
 #   output    = release/demo.gif
 #
 # Behavior:
@@ -41,7 +41,7 @@ readonly PIXEL_FORMAT="bgr0"   # minifb framebuffer is 0x00RRGGBB native-endian 
 # ---------------------------------------------------------------------------
 # Args
 # ---------------------------------------------------------------------------
-readonly SCENARIO="${1:-tests/combat/kill_enemy.yaml}"
+readonly SCENARIO="${1:-tests/level/scavenge_run.yaml}"
 readonly OUTPUT="${2:-release/demo.gif}"
 # Sibling mp4: same basename, .mp4 extension. Encoded from the same raw
 # stream as the gif, so both artifacts are frame-aligned.
@@ -86,7 +86,23 @@ RAW_FRAMES="$(mktemp -t worldsmith-frames.XXXXXX.raw)"
 trap 'rm -f "${RAW_FRAMES}"' EXIT
 
 echo "==> recording autopilot: ${SCENARIO}"
-"${BINARY}" --autopilot "${SCENARIO}" --record-frames "${RAW_FRAMES}"
+# Hard wall-clock cap on the binary. The bot's own BOT_MAX_FRAMES guard caps
+# in-sim frames, but if minifb's set_target_fps gating misbehaves under xvfb
+# or the bot enters an unintended infinite loop inside a single bot_step (BFS,
+# LoS ray-cast), the in-sim guard never fires. 90 s is ~9x the typical
+# scavenge_run wall-clock (~10 s observed) — well above any healthy run, well
+# below the GitHub job timeout. Exits 124 on hang so CI surfaces the problem
+# in seconds instead of hours.
+if ! timeout --signal=KILL 90s "${BINARY}" --autopilot "${SCENARIO}" --record-frames "${RAW_FRAMES}"; then
+    rc=$?
+    if [[ "${rc}" == "124" || "${rc}" == "137" ]]; then
+        echo "error: autopilot binary exceeded 90 s wall-clock cap and was killed" >&2
+        echo "       (likely an autopilot regression — bot did not complete the scenario)" >&2
+    else
+        echo "error: autopilot binary exited with status ${rc}" >&2
+    fi
+    exit "${rc}"
+fi
 
 if [[ ! -s "${RAW_FRAMES}" ]]; then
     echo "error: no frames recorded (file empty)" >&2

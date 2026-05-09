@@ -1,9 +1,8 @@
-# Smoke Checklist
+# Manual Smoke Checklist
 
-## Automated (via `python tooling/run_evals.py`)
+This is a manual pre-release runbook, not a scripted eval. The scripted smoke pipeline is `cargo build` + `cargo test`, run via `tooling/run_evals.py`. Run this checklist before tagging a release.
 
-- [x] project builds (`cargo build`)
-- [x] all tests pass (`cargo test`)
+Automated coverage: see `tooling/run_evals.py`.
 
 ## Manual Testing
 

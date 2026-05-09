@@ -14,7 +14,7 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
   - Pistol / chaingun: `5 * (rnd%3 + 1)` = 5, 10, or 15 per shot (mean ~10)
   - Shotgun: 7 pellets, each using the pistol formula, total 35-105 (mean ~70)
   - Super shotgun: 20 pellets, each `5 * (rnd%3 + 1)`, total 100-300 (mean ~200)
-  - Fist: `(rnd%10 + 1) * 2` = 2-20 (mean ~11); berserk multiplies by 10 = 20-200
+  - Fist: `(rnd%10 + 1) * 2` = 2-20 (mean ~11); melee strength powerup multiplies by 10 = 20-200
   - Enemy hitscan (basic grunt): `((rnd%5) + 1) * 3` = 3-15 per shot (mean ~9)
   - Shotgun grunt: 3 pellets at `((rnd%5) + 1) * 3` each = 9-45 total
 - **Feel**: The discrete damage tiers (5/10/15 for pistol) create a subtle "lucky hit" / "weak hit" dynamic. Most shots cluster around the mean but occasionally spike or dip
@@ -121,11 +121,11 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
   - Starting ammo: 50 bullets (clip type)
   - Clip pickup: 10 bullets (half = 5 from dropped clips)
   - Box of bullets: 50
-  - Max ammo (bullets): 200 (400 with backpack)
+  - Max ammo (bullets): 200 (400 with ammo capacity expander)
   - Pistol: 1 bullet per shot
   - Chaingun: 1 bullet per shot (but fires 2 per cycle)
   - Shotgun: 1 shell per shot
-  - Max ammo (shells): 50 (100 with backpack)
+  - Max ammo (shells): 50 (100 with ammo capacity expander)
 - **Feel**: Starting with 50 bullets means ~25 basic troopers worth of ammo at average damage, or only ~8 ranged-melee hybrids. This creates early scarcity pressure that drives exploration and weapon acquisition
 
 ### Damage Randomization System
@@ -167,7 +167,7 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
 | Shotgun damage | 35-105 (7 pellets) | Mean ~70 |
 | Shotgun fire cycle | 44 ticks (~1.26s) | ~0.80 shots/sec |
 | Chaingun fire cycle | 8 ticks (~0.23s) | 2 shots per cycle |
-| Fist damage | 2-20 | Berserk: 20-200 |
+| Fist damage | 2-20 | Melee strength powerup: 20-200 |
 | Hitscan range | 2048 world units | Effectively infinite indoors |
 | Melee range | 64 world units | Very close |
 | Auto-aim range | 1024 world units | For bullet slope |
@@ -183,7 +183,7 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
 | Blue armor absorption | 50% | Type 2 |
 | Starting ammo (bullets) | 50 | ~25 basic trooper kills |
 | Clip pickup | 10 bullets | Half from drops |
-| Max bullets | 200 | 400 with backpack |
+| Max bullets | 200 | 400 with ammo capacity expander |
 | Enemy spread (grunt) | +/- ~22 deg max | 4x wider than player |
 | Pain chance (basic trooper) | 200/256 (~78%) | High stagger rate |
 | Pain chance (ranged-melee hybrid) | 200/256 (~78%) | High stagger rate |

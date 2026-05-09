@@ -21,7 +21,7 @@ Before doing anything else:
 
 2. If `reference/` contains source files, proceed. Cite specific paths under `reference/` in your private notes — knowledge files themselves stay sanitized per § Output Rules below.
 
-`tooling/validate_specs.py` enforces this mechanically: it fails the run if `reference/` is empty AND `knowledge/` has any uncommitted changes. Trust the gate; do not work around it.
+`tooling/validate_specs.py` enforces two hard rules mechanically: (a) it fails the run if `reference/` is empty AND `knowledge/` has any uncommitted changes, and (b) it fails the run if ANY committed `knowledge/*.md` contains a forbidden source-identifier token. There is no warning-only path for either rule. Trust the gate; do not work around it.
 
 ## Mission
 
@@ -141,14 +141,10 @@ Ensure public knowledge files contain no source references or file paths from th
 - **No proper nouns.** If the reference uses "Stimpack", your knowledge entry says "small health pickup". The sanitization commit (`87863b7`) explicitly removed identifiers — do not re-add them.
 - **No numeric source-identifiers either.** Release years (1993, 1994, 2004), version numbers (`v1.10`), copyright years, and magic constants from the source's preprocessor that grep-match `\b(199[0-9]|200[0-9])\b` ALSO count as identifiers — substitute with neutral phrasing or omit. A previous extraction leaked the source-game's release year as a "sentinel value" because the rule did not say years count. They count.
 
-## Sanitization gate (mandatory before declaring done)
+## Sanitization gate (enforced by the workflow)
 
-Once `knowledge/<area>.md` is written, run:
+You have no shell access — `Bash` is not in your tool allowlist. Do **not** attempt to invoke `python3 tooling/check_sanitization.py` yourself; it will fail. The agent-intake workflow runs that script automatically against any `knowledge/*.md` you change, immediately after this phase, and `tooling/validate_specs.py` runs it again over every file in `knowledge/` on every validation pass. A leak that survives sanitization fails the whole run and rejects the PR.
 
-```
-python3 tooling/check_sanitization.py knowledge/<area>.md
-```
+Your job is therefore to make the gate pass on the first try by writing clean prose. While you are writing, if you find yourself about to commit a forbidden token (proper nouns, source identifiers, year-range, lump names — see the prohibitions section above), paraphrase the offending section in place using neutral phrasing. Do not "shell out and check"; you cannot, and you do not need to — the workflow does that for you.
 
-It exits non-zero with offending lines if any forbidden token (proper nouns, source identifiers, year-range, lump names) survives. Treat any non-zero exit as a hard rejection — rewrite the offending sections, do NOT patch around the grep. The single source of truth for forbidden patterns is the script itself; do not maintain a parallel grep block in your prompt.
-
-`tooling/validate_specs.py` invokes the same script over every file in `knowledge/` as part of every run, so a leak that survives this gate fails the whole validation run.
+The single source of truth for forbidden patterns is `tooling/check_sanitization.py` itself; do not maintain a parallel grep block in your prompt. If you are unsure whether a phrase is safe, rewrite it more abstractly — neutral phrasing is always cheaper than re-running the phase.
