@@ -252,7 +252,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Scan every *.md file in knowledge/ (excluding README.md).",
+        help="Scan every *.md file in knowledge/.",
     )
     parser.add_argument(
         "--mode",
@@ -275,7 +275,7 @@ def main() -> None:
     args = parse_args()
 
     if args.all:
-        paths = sorted(p for p in KNOWLEDGE_DIR.glob("*.md") if p.name != "README.md")
+        paths = sorted(KNOWLEDGE_DIR.glob("*.md"))
     else:
         paths = args.paths
 

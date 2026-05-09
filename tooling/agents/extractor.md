@@ -21,7 +21,7 @@ Before doing anything else:
 
 2. If `reference/` contains source files, proceed. Cite specific paths under `reference/` in your private notes — knowledge files themselves stay sanitized per § Output Rules below.
 
-`tooling/validate_specs.py` enforces this mechanically: it fails the run if `reference/` is empty AND `knowledge/` has any uncommitted changes. Trust the gate; do not work around it.
+`tooling/validate_specs.py` enforces two hard rules mechanically: (a) it fails the run if `reference/` is empty AND `knowledge/` has any uncommitted changes, and (b) it fails the run if ANY committed `knowledge/*.md` contains a forbidden source-identifier token. There is no warning-only path for either rule. Trust the gate; do not work around it.
 
 ## Mission
 

@@ -75,7 +75,12 @@ This project's whole proposition is "specs distilled from a real reference, rege
 
 2. **Only the Extractor writes to `knowledge/`, and only when `reference/` is loaded.** Architect, Orchestrator, Reconciler, and PostMortem must never add or modify knowledge files. If a spec value has no knowledge backing, mark its Source as `Generation default — no knowledge backing` in `specs/25_game_tuning.md` and add a parking-lot item to the run journal — never invent a knowledge citation. See `tooling/agents/architect.md` § Citation discipline.
 
-`tooling/validate_specs.py` enforces this mechanically: a session that modifies `knowledge/` while `reference/` is empty fails validation with a loud banner. Trust the gate; do not work around it. If the gate fires unexpectedly, the right responses are (a) revert the knowledge edit, (b) load the relevant reference and re-run Extractor properly, or (c) demote the value to a `Generation default` in spec/25.
+`tooling/validate_specs.py` enforces this mechanically. Two hard rules, no warning paths:
+
+- A session that modifies `knowledge/` while `reference/` is empty fails validation with a loud banner.
+- Any forbidden source-identifier token (proper nouns, source-code identifiers, release-year sentinels) in any `knowledge/*.md` fails validation, regardless of git status. The pattern table lives in `tooling/check_sanitization.py`. Pre-existing leaks in committed files must be cleaned up in the same PR that next touches the affected file.
+
+Trust the gate; do not work around it. If the gate fires unexpectedly, the right responses are (a) revert the knowledge edit, (b) load the relevant reference and re-run Extractor properly, (c) demote the value to a `Generation default` in spec/25, or (d) for sanitization leaks, paraphrase the offending text without changing numerics.
 
 ## Auto-Documentation Rules
 

@@ -68,7 +68,7 @@ Enemies in the classic reference FPS share a common AI framework built around a 
 - **Behavior**: A probability-based check that determines whether an enemy should fire. Enemies at close range almost always fire, while distant enemies fire less often. This creates natural attack patterns without explicit timers.
 - **Rules**:
   - Requires line of sight to the target (via the line-of-sight check)
-  - If the target just hit the enemy (MF_JUSTHIT flag), always fire (fight back immediately)
+  - If the target just hit the enemy (the recently-hit flag, set when the monster takes damage and cleared on the next AI tick), always fire (fight back immediately)
   - If reaction time is non-zero, never fire
   - Base distance is the approximate distance to the target minus 64 units
   - For enemies with no melee attack (like the basic trooper), subtract an additional 128 units from the distance, making them fire more aggressively at range
@@ -121,7 +121,7 @@ Enemies in the classic reference FPS share a common AI framework built around a 
 - **Rules**:
   - On each damage event, a random number 0-255 is compared to the enemy's pain chance
   - If the random number is less than the pain chance, the enemy enters its pain state
-  - The pain state sets MF_JUSTHIT, causing the enemy to retaliate immediately on recovery
+  - The pain state sets the recently-hit flag, causing the enemy to retaliate immediately on recovery
   - Pain state duration is very short (6 ticks for the basic trooper)
   - Being damaged also sets reaction time to 0 (immediate attack readiness)
   - If the enemy was idle (spawn state) when hit, it transitions to chase
@@ -215,7 +215,7 @@ Enemies in the classic reference FPS share a common AI framework built around a 
 
 - **Distance-based attack probability replaces explicit cooldowns**: Instead of putting attacks on a timer, the game makes distant enemies probabilistically less likely to fire. This creates natural-feeling attack patterns that are dense up close and sparse at range, without any visible "reloading" behavior.
 
-- **No double attack rule prevents stunlock**: The MF_JUSTATTACKED flag ensures an enemy always takes at least one chase step between attacks. On non-Nightmare difficulty, this means the enemy must also pick a new direction, creating visible wind-up before the next shot.
+- **No double attack rule prevents stunlock**: The post-attack flag (set after a monster fires and cleared on the next AI tick) ensures an enemy always takes at least one chase step between attacks. On non-Nightmare difficulty, this means the enemy must also pick a new direction, creating visible wind-up before the next shot.
 
 ## Enemy Constants Summary
 
