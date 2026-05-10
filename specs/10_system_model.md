@@ -50,6 +50,8 @@ Responsibility:
 
 ### 4. Code Generator
 
+The generator emits a small Rust crate under `generated/game/`. Module-level structure is pinned in `ir/module_plan.yaml`. As of slice 1 of the FPS migration (specs/45), the rendering surface is split across three modules: **`presentation`** owns window-and-frame constants; **`renderer`** owns the existing 2D top-down draw path, the HUD, and the game-over border; **`raycaster`** owns the new column-based first-person draw path that fills the framebuffer with walls + flat floor / ceiling when `--render-mode=raycaster` is selected. `main.rs` chooses between `renderer::draw` and `raycaster::draw` per frame based on the `--render-mode` flag (default `topdown`). The HUD and game-over border draw on top of either pipeline so they remain identical between modes. Subsequent slices fold sprites, FPS effects, and the FPS HUD layout into the raycaster path before the topdown path is removed.
+
 Location:
 - `tooling/`
 - `generated/game/`

@@ -24,6 +24,8 @@ Generate a retro shooter that captures the essence of classic FPS games:
 - Core mechanics faithful to the genre
 - Specs derived from reference research
 
+The current renderer is a 2D top-down view (specs/25 § Visual). Within Phase 1, a six-slice migration replaces it with a column-based first-person raycaster that matches the reference engine's projection model (knowledge/raycaster_renderer.md). The migration ships incrementally so each slice is reviewable in isolation: slice 1 introduces the raycaster module, the spec, and a `--render-mode={topdown|raycaster}` CLI scaffold defaulting to `topdown` (specs/45); slices 2–4 add sprites, first-person effects, and the FPS-specific HUD layout; slice 5 flips the default to `raycaster`; slice 6 removes the top-down code path. Until slice 5 lands, the default behavior — and every existing autopilot scenario, plus the canonical PR-preview GIF — continues to render the top-down view byte-for-byte unchanged.
+
 ### Phase 2: Extensibility (Future)
 
 Add plugin/skill architecture for spec modifications:

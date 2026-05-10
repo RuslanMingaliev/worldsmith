@@ -86,6 +86,15 @@ RAW_FRAMES="$(mktemp -t worldsmith-frames.XXXXXX.raw)"
 trap 'rm -f "${RAW_FRAMES}"' EXIT
 
 echo "==> recording autopilot: ${SCENARIO}"
+# Optional render-mode override. Used while the renderer migration is in
+# flight (slices 1..4) so the demo GIF visibly shows the raycaster path even
+# though the binary's own default is still topdown. After slice 5 flips the
+# default, this env var becomes redundant and can be dropped from pr.yml.
+RENDER_MODE_ARGS=()
+if [[ -n "${WORLDSMITH_RENDER_MODE:-}" ]]; then
+    RENDER_MODE_ARGS=(--render-mode="${WORLDSMITH_RENDER_MODE}")
+    echo "==> render mode override: ${WORLDSMITH_RENDER_MODE}"
+fi
 # Hard wall-clock cap on the binary. The bot's own BOT_MAX_FRAMES guard caps
 # in-sim frames, but if minifb's set_target_fps gating misbehaves under xvfb
 # or the bot enters an unintended infinite loop inside a single bot_step (BFS,
@@ -93,7 +102,7 @@ echo "==> recording autopilot: ${SCENARIO}"
 # scavenge_run wall-clock (~10 s observed) — well above any healthy run, well
 # below the GitHub job timeout. Exits 124 on hang so CI surfaces the problem
 # in seconds instead of hours.
-if ! timeout --signal=KILL 90s "${BINARY}" --autopilot "${SCENARIO}" --record-frames "${RAW_FRAMES}"; then
+if ! timeout --signal=KILL 90s "${BINARY}" --autopilot "${SCENARIO}" --record-frames "${RAW_FRAMES}" "${RENDER_MODE_ARGS[@]}"; then
     rc=$?
     if [[ "${rc}" == "124" || "${rc}" == "137" ]]; then
         echo "error: autopilot binary exceeded 90 s wall-clock cap and was killed" >&2
