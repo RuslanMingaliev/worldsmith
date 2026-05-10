@@ -1,11 +1,13 @@
 # raycaster module contract.
-# Slice 1 of 6 of the FPS migration (specs/45). Walls + flat
-# floor / ceiling only; no entities, no FPS-specific effects, no
-# FPS HUD. Default --render-mode is `topdown`, so this module
-# does not run by default until slice 5 flips the default.
+# Slice 2 of 6 of the FPS migration (specs/45). Walls + flat
+# floor / ceiling from slice 1, plus a per-column wall-depth z-buffer
+# and a back-to-front sprite pass for live enemies, dying enemies,
+# corpses, blood splats, and active pickups. Default --render-mode is
+# `topdown` (through slice 4), so this module does not run by default
+# until slice 5 flips the default.
 name: raycaster
 file: src/raycaster.rs
-depends_on: [level_data, player_state]
+depends_on: [level_data, player_state, enemy_logic, visual_effects]
 public_types: []
 public_constants:
   # All numeric values pinned in specs/25 § Renderer (Raycaster).
@@ -48,12 +50,22 @@ public_constants:
       type: u32,
       value: "0x202020",
       source: "specs/25 § Renderer (Raycaster) / Floor / Ceiling (Generation default)" }
+  - { name: RAYCASTER_SPRITE_NEAR_PLANE,
+      type: f32,
+      value: "0.1",
+      source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (knowledge-backed mechanism: knowledge/raycaster_sprites.md § World → Camera-Space Transform — MINZ; value is generation default in that spirit, scaled to tile units)" }
+  - { name: RAYCASTER_SPRITE_SIDE_CONE_FACTOR,
+      type: f32,
+      value: "4.0",
+      source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (knowledge-backed: knowledge/raycaster_sprites.md § World → Camera-Space Transform — Side-cone reject)" }
 public_methods:
   - signature: |
       pub fn draw(
           framebuffer: &mut Vec<u32>,
           level: &Level,
           player: &Player,
+          enemies: &[Enemy],
+          fx: &VisualEffects,
       )
     notes: |
       Single-entry-point world-layer draw for --render-mode=raycaster
@@ -66,8 +78,15 @@ public_methods:
       See ir/contracts/_shared.yaml § main_cli § render_mode for the
       dispatch shape.
 
-      Per-column algorithm (one ray per pixel column, x in
-      0..WINDOW_WIDTH):
+      Two-pass structure (specs/45 § Per-Frame Draw Dispatch):
+        Pass 1: wall pass (slice 1, unchanged) -- fills ceiling + walls
+                + floor AND populates the per-column wall-depth z-buffer.
+        Pass 2: sprite pass (slice 2) -- back-to-front over the entity
+                lists; per-column z-test against wall_depth[].
+
+      ----------------------------------------------------------------
+      Pass 1 (wall pass) -- per-column algorithm (one ray per pixel
+      column, x in 0..WINDOW_WIDTH):
         1. theta = player.facing + column_angle_offset[x]
            where column_angle_offset[x] = atan2((x - WINDOW_WIDTH / 2) as f32,
                                                 focal_px) -- centered on the
@@ -117,54 +136,170 @@ public_methods:
                                  .clamp(0, WINDOW_HEIGHT as i32) as usize
                  floor_top   = (HORIZON_Y as i32 + column_h_px / 2)
                                  .clamp(0, WINDOW_HEIGHT as i32) as usize
-        8. If the DDA walk exits via RAYCASTER_MAX_DEPTH without a
-           hit, skip step 5/6/7's wall-slice write and only fill the
-           full column with floor + ceiling (specs/45 § Far Clipping).
+        8. Write wall_depth[x] = perp_dist (knowledge:
+           knowledge/raycaster_sprites.md § Per-Column Wall Depth
+           (Z-Buffer Equivalent)).
+        9. If the DDA walk exits via RAYCASTER_MAX_DEPTH without a
+           hit, skip step 5/6/7's wall-slice write -- only fill the
+           full column with floor + ceiling -- and write
+           wall_depth[x] = RAYCASTER_MAX_DEPTH as the far-clip
+           sentinel (sprites at that distance or beyond will not
+           draw; sprites closer will). Specs/45 § Far Clipping +
+           § Sprites and Billboards § Per-Column Wall Depth Z-Buffer.
 
-      Reads (no mutation): level.tiles, level.width, level.height
-      (via level_data::is_wall); player.pos, player.facing. Does NOT
-      read VisualEffects, the enemies slice, player.health,
-      player.alive, the per-frame frames counter, or any other
+      ----------------------------------------------------------------
+      Pass 2 (sprite pass) -- back-to-front billboard composite:
+        a. Build the candidate sprite list. Each candidate carries
+           (pos: Vec2, world_half_width: f32, world_half_height: f32,
+            color: u32). Sources (specs/45 § Sprites and Billboards
+            § Sprite Sources):
+             - Live enemies: iterate `enemies`; include where
+               `enemy.alive`. world_half_* = ENEMY_RADIUS_TILES.
+               color = COLOR_PAIN_FLASH if pain_flash_remaining > 0,
+               else COLOR_ENEMY.
+             - Dying-enemy death fade: iterate `fx.effects`; include
+               where `kind == EffectKind::EnemyDeathFade`.
+               world_half_* = ENEMY_RADIUS_TILES.
+               color = lerp_rgb(COLOR_ENEMY, COLOR_CORPSE,
+                                 1.0 - lifetime_remaining /
+                                       ENEMY_DEATH_FADE_DURATION).
+             - Enemy corpse: iterate `fx.effects`; include where
+               `kind == EffectKind::EnemyCorpse`.
+               world_half_* = ENEMY_CORPSE_RADIUS / TILE_SIZE.
+               color = COLOR_CORPSE.
+             - Blood splat: iterate `fx.effects`; include where
+               `kind == EffectKind::BloodSplat`.
+               world_half_* = BLOOD_RADIUS / TILE_SIZE.
+               color = COLOR_BLOOD.
+             - Active pickups: iterate `level.pickups`; include where
+               `pickup.active`. Per kind:
+                 Health: world_half_* = PICKUP_HEALTH_SIZE_PX as f32 / 2.0
+                                         / TILE_SIZE;
+                         color = PICKUP_HEALTH_OUTER_COLOR.
+                 Ammo:   world_half_* = PICKUP_AMMO_SIZE_PX as f32 / 2.0
+                                         / TILE_SIZE;
+                         color = PICKUP_AMMO_COLOR.
+             Skip (deferred to slice 3): MuzzleFlash, Tracer, WallPuff
+             effect kinds.
+        b. For each candidate, compute camera-space transform
+           (knowledge § World → Camera-Space Transform):
+             tr = sprite.pos - player.pos
+             forward_dist = tr.x * cos(player.facing)
+                            + tr.y * sin(player.facing)
+             right_offset = tr.x * sin(player.facing)
+                            - tr.y * cos(player.facing)
+           Reject if forward_dist < RAYCASTER_SPRITE_NEAR_PLANE.
+           Coder MAY also reject if
+             |right_offset| > RAYCASTER_SPRITE_SIDE_CONE_FACTOR
+                               * forward_dist
+           as an early-out (correctness-equivalent to always-clip --
+           specs/45 § Camera-Space Transform side-cone-reject is
+           "optional fast path").
+        c. Sort the surviving candidates by forward_dist DESCENDING
+           (= xscale ascending; farthest first). Specs/45 § Sort Order;
+           knowledge § Sort Order: Back-to-Front. Sort algorithm is a
+           Coder degree of freedom (Vec::sort_by, selection sort, etc.) --
+           the comparator on forward_dist is total. Secondary tie-
+           breaker (e.g. source-list index) MUST be deterministic
+           (specs/45 § Determinism).
+        d. For each sorted candidate, project to screen coordinates
+           and paint per-column with z-test:
+             xscale = focal_px / forward_dist
+             screen_x_center = WINDOW_WIDTH as f32 / 2.0
+                                + right_offset * xscale
+             half_w_px = sprite.world_half_width * xscale
+             half_h_px = sprite.world_half_height * xscale
+             x1 = (screen_x_center - half_w_px).round()
+                    .clamp(0, WINDOW_WIDTH as i32 - 1) as usize
+             x2 = (screen_x_center + half_w_px).round()
+                    .clamp(0, WINDOW_WIDTH as i32 - 1) as usize
+             if x2 < x1 { continue; }   // fully off-screen
+             y1 = (HORIZON_Y as f32 - half_h_px).round()
+                    .clamp(0, WINDOW_HEIGHT as i32) as usize
+             y2 = (HORIZON_Y as f32 + half_h_px).round()
+                    .clamp(0, WINDOW_HEIGHT as i32) as usize
+             for x in x1..=x2:
+               if forward_dist < wall_depth[x]:
+                 for y in y1..y2:
+                   framebuffer[y * WINDOW_WIDTH + x] = color;
+           Comparison is strict-less-than -- at exact equality the
+           wall wins (knowledge § Per-Column Wall Depth — Comparison).
+
+      ----------------------------------------------------------------
+      Reads (no mutation):
+        level.tiles, level.width, level.height (via level_data::is_wall);
+        level.pickups (sprite source);
+        player.pos, player.facing;
+        enemies[*].pos, enemies[*].alive, enemies[*].pain_flash_remaining;
+        fx.effects[*].kind, fx.effects[*].pos, fx.effects[*].lifetime_remaining
+          (filtered to EnemyDeathFade / EnemyCorpse / BloodSplat).
+      Does NOT read VisualEffects::pickup_tint_count, the per-frame
+      frames counter, player.health, player.ammo, player.alive,
+      player.damage_count, enemy.health, enemy.state, or any other
       gameplay state. Writes the framebuffer; no other side effects.
 
-      Module-private state. The angle-offset table
-      (column_angle_offset: [f32; WINDOW_WIDTH]) is computed once on
-      first call (lazy via std::sync::OnceLock or similar) or on
-      module init; either shape satisfies specs/45 § Determinism
-      (the table is a pure function of WINDOW_WIDTH and
-      RAYCASTER_FOV_RADIANS). Coder degree of freedom on
-      const-vs-OnceLock; const-fn trig is not stable so OnceLock is
-      the simplest path.
+      Module-private state:
+        - column_angle_offset: [f32; WINDOW_WIDTH] -- precomputed
+          angle table (slice 1, unchanged).
+        - wall_depth: [f32; WINDOW_WIDTH] -- per-column wall-distance
+          z-buffer (slice 2). Storage strategy is a Coder degree of
+          freedom (stack-local array re-used per call, OnceLock-backed
+          static, or lazy_static-style); all satisfy specs/45 § State
+          ("rewritten end-to-end during the wall pass of every frame;
+          never carries state between frames"). The same allocation
+          choices as the angle-offset table apply here.
 
       Determinism. raycaster::draw is a pure function of
-      (level, player) plus compile-time constants and the
-      angle-offset table. specs/45 § Determinism details how this
-      composes with specs/35's existing determinism chain.
+      (level, player, enemies, fx) plus compile-time constants and
+      the angle-offset table. specs/45 § Determinism details how this
+      composes with specs/35's existing determinism chain. The sprite
+      pass is order-deterministic IF the back-to-front sort uses a
+      total-order comparator (forward_dist + a deterministic
+      secondary tie-breaker).
 
 cross_module_borrows:
   - "&mut Vec<u32> (framebuffer; owned by main.rs)"
-  - "&Level (read-only; level_data)"
+  - "&Level (read-only; level_data — also reads level.pickups)"
   - "&Player (read-only; player_state)"
+  - "&[Enemy] (read-only; enemy_logic — slice 2)"
+  - "&VisualEffects (read-only; visual_effects — slice 2)"
 notes: |
   Single consumer is main.rs in --render-mode=raycaster mode. Not
   consumed by any per-frame gameplay path (game_loop::update,
   autopilot::bot_step, enemy_logic::update, weapon_system::fire all
-  stay unaware of this module). Slice 1 deliberately ships a
-  walls-only renderer; slice 2 of the migration adds entity / sprite
-  drawing inside this module's draw() (or a sibling pass), slice 3
-  adds FPS-specific effects, slice 4 swaps the HUD layout, slice 5
-  flips the --render-mode default to raycaster, slice 6 removes the
-  topdown code path.
+  stay unaware of this module). Slice 1 ships a walls-only renderer;
+  slice 2 of the migration adds entity / sprite drawing inside this
+  module's draw() (this contract); slice 3 adds FPS-specific effects
+  (muzzle flash / tracer / wall puff / damage tint / pickup tint),
+  slice 4 swaps the HUD layout, slice 5 flips the --render-mode
+  default to raycaster, slice 6 removes the topdown code path.
 
-  Dependency graph: depends_on [level_data, player_state] — the
-  same read-only borrows the existing top-down renderer takes. No
-  visual_effects dependency this slice (effects are not drawn in
-  raycaster mode until slice 3). No presentation dependency in
-  module_plan terms, even though the module references
+  Dependency graph: depends_on
+  [level_data, player_state, enemy_logic, visual_effects] --
+  the same read-only borrows the existing top-down renderer takes
+  except renderer also owns the COLOR_* table and depends on
+  `presentation` for window dimensions. The raycaster reads color
+  constants from renderer (constant import is the spec/80-acceptable
+  cross-module dependency form; symbol-level only, no behavioral
+  dependency on renderer's draw functions). No presentation
+  dependency in module_plan terms, even though the module references
   presentation's WINDOW_WIDTH / WINDOW_HEIGHT public_constants —
   presentation is a constants-only sibling and the import is
   symbol-level, not behavioral; module_plan's depends_on is for
   regen-ordering closure rather than imports.
+
+  Imported color and dimensional constants (specs/80 § API Surface
+  "constant import is fine; struct import is not"):
+    use crate::renderer::{COLOR_ENEMY, COLOR_PAIN_FLASH, COLOR_CORPSE,
+                          COLOR_BLOOD, PICKUP_HEALTH_OUTER_COLOR,
+                          PICKUP_AMMO_COLOR, PICKUP_HEALTH_SIZE_PX,
+                          PICKUP_AMMO_SIZE_PX};
+    use crate::enemy_logic::ENEMY_RADIUS_TILES;
+    use crate::visual_effects::{ENEMY_DEATH_FADE_DURATION,
+                                ENEMY_CORPSE_RADIUS, BLOOD_RADIUS};
+    use crate::level_data::TILE_SIZE;
+  These are pure constant imports; raycaster does not call any
+  function on these modules.
 
   Coder degrees of freedom (per spec/80 § API Surface and
   _shared.yaml § coder_degrees_of_freedom):
@@ -174,12 +309,22 @@ notes: |
       module-private.
     - Whether the angle-offset table is a OnceLock<[f32; W]> or a
       lazy_static-style helper or a function that recomputes per
-      call (the last is the slowest but the simplest; per-frame
-      recompute of 640 atan2 calls is well under 1 ms at modern
-      speeds and still satisfies the no-allocation invariant if the
-      table lives on the stack). The deterministic-output guarantee
-      is what the contract pins; the storage strategy is not.
+      call. Same options apply to wall_depth[]. The deterministic-
+      output guarantee is what the contract pins; the storage
+      strategy is not.
     - Whether NS / EW shading uses 0.75 as a per-channel f32
       multiply or a fixed-point right-shift on packed u32 channels.
       Both produce the same visual-result tier within our
       framebuffer color depth.
+    - Sort algorithm for the sprite pass (Vec::sort_by /
+      sort_unstable_by / O(n²) selection sort). The total-order
+      comparator on forward_dist is what the contract pins; the
+      sort strategy is not.
+    - Sprite-candidate collection storage (stack-local fixed-size
+      array vs. module-private Vec reused across calls vs.
+      per-frame Vec). The per-frame allocation invariant (specs/45
+      § Invariants) eliminates per-call Vec::new(); the other two
+      shapes both meet the contract.
+    - Whether the side-cone early-out (RAYCASTER_SPRITE_SIDE_CONE_FACTOR)
+      is applied or skipped in favor of always running the screen-x
+      clip. Both are correctness-equivalent.

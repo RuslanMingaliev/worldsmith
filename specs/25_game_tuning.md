@@ -420,6 +420,45 @@ All wall colors are generation defaults — no knowledge backing. Knowledge § N
 | RAYCASTER_FLOOR_COLOR | — | #404040 dark gray | Generation default — no knowledge backing. Knowledge § Floor and Ceiling Treatment "Feel" recommends "contrasting hues for floor vs ceiling so the horizon line is unambiguous"; dark gray below contrasts with mid gray above. Re-uses the existing top-down `COLOR_WALL` palette band so both renderers share a visual identity. |
 | RAYCASTER_CEILING_COLOR | — | #202020 darker gray | Generation default — no knowledge backing. Slightly darker than the floor so the horizon line reads downward (player's eye drops to "ground"); same § Floor and Ceiling Treatment "Feel" rationale. Distinct from `RAYCASTER_WALL_COLOR_FAR` (`#101010`) so a far wall does not visually merge with the ceiling. |
 
+### Sprites and Billboards
+
+Behavior spec: [`45_raycaster_renderer.md § Sprites and Billboards`](45_raycaster_renderer.md). Knowledge: [`knowledge/raycaster_sprites.md`](../knowledge/raycaster_sprites.md). The sprite pass projects entity-list elements into screen-aligned billboards drawn as flat-color rectangles centered on the horizon, with per-column z-test against the wall pass's depth array.
+
+The constants below are sized for the raycaster slice 2 sprite pass. The per-entity world half-extents are derived from existing visual constants — the raycaster module imports those values rather than redefining them, so this section pins only the genuinely new tuning knobs.
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| RAYCASTER_SPRITE_NEAR_PLANE | 0.1 tiles | knowledge/raycaster_sprites.md § World → Camera-Space Transform — "MINZ" rationale. Reference engine pins MINZ at 4 reference world units (= 4 / 32 = 0.125 tiles at our scale); rounded to 0.1 tiles. Below this forward-distance the projection scale would diverge; sprites at or below `forward_dist = RAYCASTER_SPRITE_NEAR_PLANE` are dropped from rendering for the frame. The chosen value sits well below `ENEMY_CONTACT_RANGE_TILES` (0.8125), so an enemy in melee range never trips the near-plane reject. |
+| RAYCASTER_SPRITE_SIDE_CONE_FACTOR | 4.0 | knowledge/raycaster_sprites.md § World → Camera-Space Transform — "Side-cone reject". At 90° FOV the precise edge is `\|right_offset\| = forward_dist`; the reference uses ×4 slack as a coarse early-out before the per-column screen-x clip path runs. Coder degree of freedom — falling back to the always-clip form (no early-out) is correctness-equivalent and lets the constant remain a documentation marker. |
+| RAYCASTER_SPRITE_VERTICAL_ANCHOR | horizon-centered | knowledge/raycaster_sprites.md § Per-Sprite Scale and Screen-Space X-Range — "anchor offset". Slice-2 simplification — entities have no world-Z field, so all sprites center vertically on `HORIZON_Y`. Pins the anchor convention as a spec-level commitment so the Coder does not silently switch between "center on horizon" and "anchor at floor"; the choice affects every billboard's y1/y2 calculation. Floor-anchored / world-Z sprites are deferred (specs/45 § Deferred). |
+
+#### Per-Entity Billboard Half-Extents (derived, not new constants)
+
+The raycaster's sprite pass reads existing visual constants for each entity type's world half-width / half-height (in tile units). Listed here for cross-reference; **not new constants** — defined in the modules cited.
+
+| Entity | Half-extent | Source |
+|--------|-------------|--------|
+| Live enemy | `ENEMY_RADIUS_TILES` (0.375 tile) | specs/25 § Enemy. Imported from `enemy_logic`. |
+| Dying enemy (death-fade Effect) | `ENEMY_RADIUS_TILES` (0.375 tile) | Same as live enemy — the fading visual replaces the live enemy in-place at the same world position. |
+| Persistent corpse Effect | `ENEMY_CORPSE_RADIUS / TILE_SIZE` (0.25 tile, 8 px / 32 px) | specs/25 § Enemy Death Visual. Imported from `visual_effects` (px) and `level_data` (TILE_SIZE). |
+| Blood splat Effect | `BLOOD_RADIUS / TILE_SIZE` (0.1875 tile, 6 px / 32 px) | specs/25 § Blood Splat. Imported from `visual_effects` (px) and `level_data` (TILE_SIZE). |
+| Health pickup | `PICKUP_HEALTH_SIZE_PX / 2.0 / TILE_SIZE` (0.1875 tile, 12 px / 32 px / 2) | specs/25 § Pickups § Sprite Visual. Imported from `renderer` (px) and `level_data` (TILE_SIZE). |
+| Ammo pickup | `PICKUP_AMMO_SIZE_PX / 2.0 / TILE_SIZE` (0.15625 tile, 10 px / 32 px / 2) | specs/25 § Pickups § Sprite Visual. Imported from `renderer` (px) and `level_data` (TILE_SIZE). |
+
+#### Per-Entity Billboard Color (derived, not new constants)
+
+The raycaster's sprite pass reads existing color constants for each entity type. Listed here for cross-reference; **not new constants** — defined in the modules cited.
+
+| Entity | Color | Source |
+|--------|-------|--------|
+| Live enemy (no pain) | `COLOR_ENEMY` (#FF0000) | specs/25 § Visual. Imported from `renderer`. |
+| Live enemy (`pain_flash_remaining > 0`) | `COLOR_PAIN_FLASH` (#FFFFFF) | specs/25 § Enemy Pain Flash. Imported from `renderer`. |
+| Dying enemy (death-fade Effect) | `lerp(COLOR_ENEMY, COLOR_CORPSE, 1.0 - lifetime_remaining / ENEMY_DEATH_FADE_DURATION)` | specs/25 § Enemy Death Visual. Imported color constants from `renderer`; duration constant from `visual_effects`. |
+| Persistent corpse Effect | `COLOR_CORPSE` (#602020) | specs/25 § Enemy Death Visual. Imported from `renderer`. |
+| Blood splat Effect | `COLOR_BLOOD` (#C00000) | specs/25 § Blood Splat. Imported from `renderer`. |
+| Health pickup | `PICKUP_HEALTH_OUTER_COLOR` (#FFFFFF) | specs/25 § Pickups § Sprite Visual. Imported from `renderer`. The inner red cross overlay is **deferred** (specs/45 § Deferred — Inner-detail multi-layer sprites). |
+| Ammo pickup | `PICKUP_AMMO_COLOR` (#FFFF00) | specs/25 § Pickups § Sprite Visual. Imported from `renderer`. |
+
 ## Frame Rate
 
 | Property | Value |
