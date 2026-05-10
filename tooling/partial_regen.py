@@ -104,6 +104,18 @@ TRIGGER_CONFIG = {
             "specs/60_pickups.md",
             "knowledge/pickups.md",
         ],
+        "raycaster": [
+            # specs/45 § Raycaster Renderer: column-based first-person draw
+            # path added in the topdown→raycaster migration (slice 1, PR #39).
+            # The slice introduced specs/45 + knowledge/raycaster_renderer.md
+            # + ir/contracts/raycaster.yaml but did NOT add the partial_regen
+            # trigger row, so edits to those files matched zero modules and
+            # regenerate-and-build skipped Coder. Caught while landing the
+            # fisheye-correction fix-up PR (#40).
+            "specs/45_raycaster_renderer.md",
+            "knowledge/raycaster_renderer.md",
+            "ir/contracts/raycaster.yaml",
+        ],
     },
     # Files that are too cross-cutting for the per-module heuristic. When one
     # of these changes, partial_regen.py prints the candidate-module list

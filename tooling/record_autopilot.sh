@@ -92,7 +92,7 @@ echo "==> recording autopilot: ${SCENARIO}"
 # default, this env var becomes redundant and can be dropped from pr.yml.
 RENDER_MODE_ARGS=()
 if [[ -n "${WORLDSMITH_RENDER_MODE:-}" ]]; then
-    RENDER_MODE_ARGS=(--render-mode="${WORLDSMITH_RENDER_MODE}")
+    RENDER_MODE_ARGS=(--render-mode "${WORLDSMITH_RENDER_MODE}")
     echo "==> render mode override: ${WORLDSMITH_RENDER_MODE}"
 fi
 # Hard wall-clock cap on the binary. The bot's own BOT_MAX_FRAMES guard caps
