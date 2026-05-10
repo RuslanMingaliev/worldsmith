@@ -233,6 +233,12 @@ jobs:
           if-no-files-found: error
 
       - name: Record gameplay GIF
+        env:
+          # During the topdown→raycaster migration (slices 1..4) the demo GIF
+          # forces raycaster mode so reviewers can see the new render path.
+          # After slice 5 flips the binary default to raycaster, drop this env
+          # var (record_autopilot.sh treats it as opt-in).
+          WORLDSMITH_RENDER_MODE: raycaster
         run: |
           set -e
           mkdir -p release
