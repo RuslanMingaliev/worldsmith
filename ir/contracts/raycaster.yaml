@@ -196,12 +196,39 @@ public_methods:
              Skip (deferred to slice 3): MuzzleFlash, Tracer, WallPuff
              effect kinds.
         b. For each candidate, compute camera-space transform
-           (knowledge § World → Camera-Space Transform):
+           (knowledge § World → Camera-Space Transform; sign of
+           right_offset adapted for our +y-down world — see note
+           below):
              tr = sprite.pos - player.pos
              forward_dist = tr.x * cos(player.facing)
                             + tr.y * sin(player.facing)
-             right_offset = tr.x * sin(player.facing)
-                            - tr.y * cos(player.facing)
+             right_offset = tr.y * cos(player.facing)
+                            - tr.x * sin(player.facing)
+           Y-axis convention note. Knowledge § World → Camera-Space
+           Transform pins r = (sin yaw, -cos yaw) and right_offset =
+           tr.x*sin(yaw) - tr.y*cos(yaw); that derivation assumes the
+           reference engine's +y-up world. Worldsmith's level data is
+           +y-down (the topdown renderer maps world (x,y) directly to
+           screen (x,y) — `renderer.rs` `(tx * TILE_SIZE, ty *
+           TILE_SIZE)`). Translating the reference formula to a
+           +y-down world flips the sign of the y-component, giving
+           r = (-sin yaw, cos yaw) and the right_offset formula above.
+           Verification anchor: with player.facing=0 (looking east =
+           +x = right on screen), an entity at (player.x, player.y-1)
+           is geometrically on the player's LEFT (north = up on
+           screen for an east-facing camera in a +y-down world).
+           Substituting tr=(0,-1) yields right_offset = -1*1 - 0*0 =
+           -1 (negative = left half of screen) — the screen-x-center
+           must land at WIDTH/2 - xscale. With the original
+           reference-engine sign the same setup yielded +1 → sprites
+           rendered mirrored left↔right, matching knowledge § World →
+           Camera-Space Transform "Feel" — "Bugs in sign convention
+           manifest as sprites snapping to the wrong side of the
+           screen when the player turns; mismatched cosine/sine
+           handedness puts entities on the opposite side of every
+           wall." The signed convention "positive right_offset maps
+           to the right half of the screen" still holds; only the
+           formula deriving the signed value changes.
            Reject if forward_dist < RAYCASTER_SPRITE_NEAR_PLANE.
            Coder MAY also reject if
              |right_offset| > RAYCASTER_SPRITE_SIDE_CONE_FACTOR
