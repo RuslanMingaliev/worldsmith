@@ -62,6 +62,10 @@ public_constants:
       type: f32,
       value: "0.7",
       source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (knowledge-permitted, knowledge/raycaster_sprites.md § Flat-Color vs Textured Choice — 'Distance attenuation is optional — if applied, it follows the same lerp-toward-far convention as the wall pass'; factor is generation default)" }
+  - { name: RAYCASTER_SPRITE_MIN_PROJ_DIST,
+      type: f32,
+      value: "1.0",
+      source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (Generation default — caps the projected screen extent of a near-camera billboard so flat-color rectangles do not monopolize the framebuffer; knowledge has no analogue)" }
 public_methods:
   - signature: |
       pub fn draw(
@@ -257,7 +261,16 @@ public_methods:
              shaded_color = lerp_rgb(sprite.color,
                                       RAYCASTER_WALL_COLOR_FAR,
                                       sprite_shade_t)
-             xscale = focal_px / forward_dist
+             # xscale clamps the projection divisor so a sprite
+             # closer than RAYCASTER_SPRITE_MIN_PROJ_DIST renders
+             # at the size it would have at MIN_PROJ_DIST instead
+             # of monopolizing the framebuffer. The unclamped
+             # forward_dist is still used for the per-column z-test
+             # below — the clamp only affects projection extent.
+             # specs/25 § Renderer (Raycaster) / Sprites and
+             # Billboards § RAYCASTER_SPRITE_MIN_PROJ_DIST.
+             xscale = focal_px / forward_dist.max(
+                          RAYCASTER_SPRITE_MIN_PROJ_DIST)
              screen_x_center = WINDOW_WIDTH as f32 / 2.0
                                 + right_offset * xscale
              half_w_px = sprite.world_half_width * xscale

@@ -183,7 +183,7 @@ For each candidate sprite (knowledge: `raycaster_sprites.md` § World → Camera
 
 For each sprite that survives the camera-space rejects (knowledge: `raycaster_sprites.md` § Per-Sprite Scale and Screen-Space X-Range):
 
-- `xscale = focal_px / forward_dist`. (Same `focal_px` as the wall pass — § Column Projection.)
+- `xscale = focal_px / forward_dist.max(RAYCASTER_SPRITE_MIN_PROJ_DIST)`. (Same `focal_px` as the wall pass — § Column Projection.) The `max` clamps the divisor so a melee-range sprite renders at the size it would have at `RAYCASTER_SPRITE_MIN_PROJ_DIST` instead of monopolizing the framebuffer (specs/25 § Renderer (Raycaster) / Sprites and Billboards). The z-test below still uses the unclamped `forward_dist` — the clamp only affects the projected screen extent, not occlusion.
 - `screen_x_center = (WINDOW_WIDTH as f32 / 2.0) + right_offset * xscale`.
 - `half_width_px = sprite.world_half_width * xscale`.
 - `half_height_px = sprite.world_half_height * xscale`.
