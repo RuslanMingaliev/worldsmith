@@ -58,6 +58,10 @@ public_constants:
       type: f32,
       value: "4.0",
       source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (knowledge-backed: knowledge/raycaster_sprites.md § World → Camera-Space Transform — Side-cone reject)" }
+  - { name: RAYCASTER_SPRITE_DEPTH_FADE_FACTOR,
+      type: f32,
+      value: "0.7",
+      source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (knowledge-permitted, knowledge/raycaster_sprites.md § Flat-Color vs Textured Choice — 'Distance attenuation is optional — if applied, it follows the same lerp-toward-far convention as the wall pass'; factor is generation default)" }
 public_methods:
   - signature: |
       pub fn draw(
@@ -159,10 +163,20 @@ public_methods:
                else COLOR_ENEMY.
              - Dying-enemy death fade: iterate `fx.effects`; include
                where `kind == EffectKind::EnemyDeathFade`.
-               world_half_* = ENEMY_RADIUS_TILES.
-               color = lerp_rgb(COLOR_ENEMY, COLOR_CORPSE,
-                                 1.0 - lifetime_remaining /
-                                       ENEMY_DEATH_FADE_DURATION).
+               Compute fade_t = 1.0 - lifetime_remaining /
+                                ENEMY_DEATH_FADE_DURATION
+               (single value drives both color and size).
+               world_half_* = lerp(ENEMY_RADIUS_TILES,
+                                    ENEMY_CORPSE_RADIUS / TILE_SIZE,
+                                    fade_t).
+                 — applied to both world_half_width and
+                 world_half_height (sprites are square).
+               color = lerp_rgb(COLOR_ENEMY, COLOR_CORPSE, fade_t).
+               At fade_t == 1.0 both extent and color match the
+               corpse that spawns next, so the visual transitions
+               continuously from live → fading → corpse without a
+               size pop. specs/45 § Sprites and Billboards § Sprite
+               Sources item 2.
              - Enemy corpse: iterate `fx.effects`; include where
                `kind == EffectKind::EnemyCorpse`.
                world_half_* = ENEMY_CORPSE_RADIUS / TILE_SIZE.
@@ -202,8 +216,20 @@ public_methods:
            the comparator on forward_dist is total. Secondary tie-
            breaker (e.g. source-list index) MUST be deterministic
            (specs/45 § Determinism).
-        d. For each sorted candidate, project to screen coordinates
-           and paint per-column with z-test:
+        d. For each sorted candidate, compute the depth-attenuated
+           color, project to screen coordinates, and paint per-column
+           with z-test. Depth attenuation matches the wall pass so a
+           sprite partially occluded by a near-shaded wall does not
+           visually clash with the wall's deep-shade band (specs/45
+           § Distance Attenuation (Sprites); knowledge § Flat-Color
+           vs Textured Choice — "if applied, follows the same lerp-
+           toward-far convention as the wall pass"):
+             sprite_shade_t = (forward_dist / RAYCASTER_MAX_DEPTH)
+                                 .clamp(0.0, 1.0)
+                              * RAYCASTER_SPRITE_DEPTH_FADE_FACTOR
+             shaded_color = lerp_rgb(sprite.color,
+                                      RAYCASTER_WALL_COLOR_FAR,
+                                      sprite_shade_t)
              xscale = focal_px / forward_dist
              screen_x_center = WINDOW_WIDTH as f32 / 2.0
                                 + right_offset * xscale
@@ -221,9 +247,11 @@ public_methods:
              for x in x1..=x2:
                if forward_dist < wall_depth[x]:
                  for y in y1..y2:
-                   framebuffer[y * WINDOW_WIDTH + x] = color;
+                   framebuffer[y * WINDOW_WIDTH + x] = shaded_color;
            Comparison is strict-less-than -- at exact equality the
            wall wins (knowledge § Per-Column Wall Depth — Comparison).
+           The attenuation reuses the same module-private lerp_rgb
+           helper used in Pass 1; no new helper is added.
 
       ----------------------------------------------------------------
       Reads (no mutation):
