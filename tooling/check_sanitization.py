@@ -87,10 +87,14 @@ PROPER_NOUN_LITERALS: List[Tuple[str, str]] = [
     ("mobjtype", "source-code identifier (thing-type enum)"),
     ("ammotype", "source-code identifier (ammo-type enum)"),
     ("weapontype", "source-code identifier (weapon-type enum)"),
-    # Source-code identifier prefixes — match anywhere in a token. These are
-    # the named, pre-known reference prefixes; keeping them explicit means
+    # Source-code identifier prefixes — match at a word boundary only. These
+    # are the named, pre-known reference prefixes; keeping them explicit means
     # `release-notes` mode (which drops the generic SCREAMING_SNAKE fallback)
     # still rejects e.g. `MT_PLAYER`, `MF_SPECIAL`, `SPR_STIM`, `MN_GAMEMSG`.
+    # Substring matching (the previous behaviour) fired on legitimate prose
+    # like `column_height` (containing `mn_`) — real source-code mentions
+    # always sit at a word boundary, so the boundary form preserves recall
+    # while dropping the false positives. See `build_compiled_patterns`.
     ("mt_", "source-code identifier prefix (thing-type macro)"),
     ("mf_", "source-code identifier prefix (mobj-flag macro)"),
     ("spr_", "source-code identifier prefix (sprite enum)"),
@@ -140,9 +144,17 @@ def build_compiled_patterns(
 ) -> List[Tuple[re.Pattern, str]]:
     compiled: List[Tuple[re.Pattern, str]] = []
     for literal, kind in PROPER_NOUN_LITERALS:
-        # Word-boundary-ish match: we use case-insensitive substring search.
-        # Wrapping in re.escape so that periods etc. are literal.
-        pattern = re.compile(re.escape(literal), re.IGNORECASE)
+        # Identifier *prefixes* (kind tagged "source-code identifier prefix")
+        # match only at a word boundary — substring match was over-eager and
+        # fired on legitimate prose like `column_height` (the substring `mn_`
+        # sits inside the word). Real source-code mentions of `MN_FOO` /
+        # `mn_bar` / etc. always begin at a word boundary, so this preserves
+        # recall while dropping false positives. Other literals (full names
+        # like `mobjtype`, cheat codes, lump names) keep substring match.
+        if kind.startswith("source-code identifier prefix"):
+            pattern = re.compile(r"\b" + re.escape(literal), re.IGNORECASE)
+        else:
+            pattern = re.compile(re.escape(literal), re.IGNORECASE)
         compiled.append((pattern, kind))
     for raw, kind in REGEX_PATTERNS:
         if drop_generic_fallback and kind == GENERIC_SCREAMING_SNAKE_KIND:
