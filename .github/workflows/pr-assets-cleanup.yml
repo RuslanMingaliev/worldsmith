@@ -1,21 +1,33 @@
-name: pr-assets cleanup
+name: pr-assets retention
 
 on:
-  pull_request:
-    types: [closed]
+  schedule:
+    # Daily at 03:00 UTC. GIFs from a freshly-closed PR start aging at
+    # close; they survive RETENTION_DAYS (30) before this job removes
+    # them, so post-merge review of a PR's demo remains possible during
+    # that window.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: "Override retention window (days). Default 30."
+        required: false
+        default: '30'
 
 permissions:
   contents: write
 
 concurrency:
-  group: pr-assets-cleanup-${{ github.event.pull_request.number }}
+  group: pr-assets-retention
   cancel-in-progress: false
 
 jobs:
-  cleanup:
-    name: cleanup
+  purge-expired:
+    name: purge expired demo gifs
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    env:
+      RETENTION_DAYS: ${{ github.event.inputs.retention_days || '30' }}
     steps:
       - name: Check pr-assets branch exists
         id: branch-check
@@ -26,7 +38,7 @@ jobs:
           set -e
           # Distinguish a real 404 (benign no-op) from transient 403/429/5xx,
           # auth failures, or network errors — those must fail the workflow,
-          # not silently leave pr-assets files behind.
+          # not silently leave pr-assets files behind past their retention.
           set +e
           err=$(gh api "/repos/${REPO}/branches/pr-assets" 2>&1 >/dev/null)
           rc=$?
@@ -34,37 +46,64 @@ jobs:
           if [ "$rc" -eq 0 ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           elif printf '%s' "$err" | grep -q "HTTP 404"; then
-            echo "pr-assets branch does not exist; nothing to clean up."
+            echo "pr-assets branch does not exist; nothing to purge."
             echo "exists=false" >> "$GITHUB_OUTPUT"
           else
             echo "gh api failed checking pr-assets branch (exit ${rc}): ${err}" >&2
             exit "$rc"
           fi
 
-      - name: Delete demo gifs for closed PR
+      - name: Purge demo gifs older than retention window
         if: steps.branch-check.outputs.exists == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
         run: |
           set -e
-          PREFIX="pr-${PR}-"
+
+          NOW_EPOCH=$(date -u +%s)
+          CUTOFF_EPOCH=$((NOW_EPOCH - RETENTION_DAYS * 86400))
+          echo "Retention window: ${RETENTION_DAYS} days. Cutoff epoch: ${CUTOFF_EPOCH}."
+
           # Contents API directory listings return up to 1000 entries in one
           # response (no Link-header pagination). If pr-assets ever exceeds
           # that, switch to the Git Trees API.
           gh api "/repos/${REPO}/contents?ref=pr-assets" \
-            --jq ".[] | select(.type == \"file\") | select(.name | startswith(\"${PREFIX}\")) | select(.name | endswith(\"-demo.gif\")) | \"\\(.path)\t\\(.sha)\"" \
-            > /tmp/matches.tsv
-          COUNT=0
-          while IFS=$'\t' read -r p sha; do
-            [ -z "$p" ] && continue
-            gh api --method DELETE "/repos/${REPO}/contents/${p}" \
-              -f message="Cleanup PR #${PR} demo gif: ${p}" \
-              -f branch=pr-assets \
-              -f sha="${sha}" > /dev/null
-            echo "Deleted ${p}"
-            COUNT=$((COUNT + 1))
-          done < /tmp/matches.tsv
-          rm -f /tmp/matches.tsv
-          echo "Removed ${COUNT} gif(s) for PR #${PR}."
+            --jq '.[] | select(.type == "file") | select(.name | startswith("pr-")) | select(.name | endswith("-demo.gif")) | "\(.path)\t\(.sha)"' \
+            > /tmp/gifs.tsv
+
+          DELETED=0
+          KEPT=0
+
+          while IFS=$'\t' read -r path sha; do
+            [ -z "$path" ] && continue
+
+            # Find the most recent commit that touched this file on
+            # pr-assets. The committer date there is the upload time,
+            # since pr.yml commits the gif as part of the upload step.
+            commit_date_iso=$(gh api "/repos/${REPO}/commits?path=${path}&sha=pr-assets&per_page=1" \
+              --jq '.[0].commit.committer.date // empty')
+
+            if [ -z "$commit_date_iso" ]; then
+              echo "WARN: could not resolve commit date for ${path}; skipping (file kept)."
+              KEPT=$((KEPT + 1))
+              continue
+            fi
+
+            commit_epoch=$(date -u -d "$commit_date_iso" +%s)
+            age_days=$(( (NOW_EPOCH - commit_epoch) / 86400 ))
+
+            if [ "$commit_epoch" -lt "$CUTOFF_EPOCH" ]; then
+              gh api --method DELETE "/repos/${REPO}/contents/${path}" \
+                -f message="Cleanup demo gif age=${age_days}d (retention=${RETENTION_DAYS}d): ${path}" \
+                -f branch=pr-assets \
+                -f sha="${sha}" > /dev/null
+              echo "Deleted ${path} (age ${age_days}d)."
+              DELETED=$((DELETED + 1))
+            else
+              KEPT=$((KEPT + 1))
+            fi
+          done < /tmp/gifs.tsv
+
+          rm -f /tmp/gifs.tsv
+          echo "Summary: deleted=${DELETED}, kept=${KEPT}, retention=${RETENTION_DAYS}d."
