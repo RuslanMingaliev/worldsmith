@@ -76,20 +76,29 @@ public_methods:
                        (RAYCASTER_FOV_RADIANS / 2.0).tan()
            At RAYCASTER_FOV_RADIANS = pi/2 this is exactly
            WINDOW_WIDTH / 2 (knowledge § Column Projection Model).
-        3. Grid-DDA walk from player.pos along (theta.cos(), theta.sin())
-           through the level_data::Level grid (knowledge § Wall
-           Traversal Strategy "Alternative — grid-DDA"). Track per-axis
-           cumulative t values so the perpendicular distance can be
-           read directly from the axis on which the last tile boundary
-           was crossed (knowledge § Perpendicular Distance "grid-walk
-           implementation"). Stop when level_data::is_wall(level,
-           tile_x, tile_y) is true OR t exceeds RAYCASTER_MAX_DEPTH.
-        4. perp_dist = the axis-projected ray distance at the hit
-           (NOT sqrt(dx*dx + dy*dy) -- that produces fisheye bow,
-           knowledge § Perpendicular Distance "Feel"). The boolean
-           "did the ray cross a horizontal tile boundary last" picks
-           between "EW wall" (apply RAYCASTER_NSEW_DARKEN_FACTOR) and
-           "NS wall" (nominal).
+        3. Grid-DDA walk from player.pos along ray_dir through the
+           level_data::Level grid (knowledge § Wall Traversal Strategy
+           "Alternative — grid-DDA"). The ray_dir parameterization is a
+           Coder degree of freedom -- the unit-direction form
+           (cos(theta), sin(theta)) is the obvious choice. Track per-
+           axis cumulative t values during the walk. Stop when
+           level_data::is_wall(level, tile_x, tile_y) is true OR t
+           exceeds RAYCASTER_MAX_DEPTH.
+        4. perp_dist = camera-forward projection of the ray's travel
+           to the hit point. Required identity (specs/45 § Perpendicular
+           Distance and Fisheye Correction):
+               perp_dist == dot(hit_pos - player.pos, camera_forward)
+           where camera_forward = (cos(player.facing), sin(player.facing)).
+           Equivalently, with the unit-direction ray of step 3 and t =
+           the matched DDA distance to the hit:
+               perp_dist == t * cos(column_angle_offset[x])
+           The cos(column_angle_offset[x]) multiplication MUST appear
+           explicitly in the implementation. Naive Euclidean t (no
+           cos correction) is FORBIDDEN -- it produces the fisheye
+           bow described in knowledge § Perpendicular Distance "Feel".
+           The boolean "did the ray cross a horizontal tile boundary
+           last" picks between "EW wall" (apply
+           RAYCASTER_NSEW_DARKEN_FACTOR) and "NS wall" (nominal).
         5. column_h_px = ((WALL_HEIGHT_TILES * focal_px) / perp_dist)
                           .clamp(1.0, WINDOW_HEIGHT as f32) as i32
         6. shade_t = (perp_dist / RAYCASTER_MAX_DEPTH).clamp(0.0, 1.0)
