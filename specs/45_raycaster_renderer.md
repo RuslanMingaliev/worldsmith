@@ -2,15 +2,15 @@
 
 ## Overview
 
-This specification defines a column-based first-person renderer that draws walls, a flat floor, a flat ceiling, and screen-aligned billboards for world entities (live enemies, dying enemies, persistent corpses, blood splats, pickups) into the same `Vec<u32>` framebuffer used by the existing top-down renderer. It is the first step in a multi-slice migration that will eventually replace the top-down view with a first-person view authentic to the genre.
+This specification defines a column-based first-person renderer that draws walls, a flat floor, a flat ceiling, screen-aligned billboards for world entities (live enemies, dying enemies, persistent corpses, blood splats, pickups, wall puffs), a screen-space muzzle-flash overlay, a world-space tracer line projected to screen, and the player damage / pickup tint overlays — into the same `Vec<u32>` framebuffer used by the existing top-down renderer. It is the third step in a multi-slice migration that will eventually replace the top-down view with a first-person view authentic to the genre.
 
-This slice (2 of 6) covers:
-- A `raycaster` module that owns the column-based projection math, a grid-DDA wall traversal over `level_data::Level`, a per-column wall-depth (z-buffer-equivalent) array written during the wall pass, and a back-to-front sprite pass that consults that array for per-column occlusion (knowledge: `raycaster_sprites.md` § Per-Column Wall Depth (Z-Buffer Equivalent), § Sort Order: Back-to-Front).
-- The slice-1 `--render-mode={topdown|raycaster}` CLI flag is unchanged; default remains `topdown`.
-- The slice-1 floor-plus-ceiling split is unchanged.
-- A new sprite pass that projects the entity lists owned by `game_loop::GameState` (live enemies, the persistent `VisualEffects` entries — `EnemyDeathFade`, `EnemyCorpse`, `BloodSplat` — and active `Level::pickups`) into screen-aligned billboards, draws them as flat-color rectangles centered on the horizon, and clips each sprite column against the per-column wall-depth array (knowledge: `raycaster_sprites.md` § Per-Sprite Scale and Screen-Space X-Range, § Per-Column Height and Vertical Clip, § Flat-Color vs Textured Choice).
+This slice (3 of 6) builds on slices 1 + 2 (walls, floor, ceiling, sprite billboards, per-column z-buffer) and adds:
+- A **first-person effects pass** that runs after the wall and sprite passes: a screen-space muzzle-flash overlay anchored at a fixed in-viewport position, a world-space tracer line projected to screen with per-column z-occlusion, the wall-puff billboard (special-cased into the slice-2 sprite pass with a full-bright first phase), and an extra-light bias on every wall and non-full-bright sprite color during the firing flash window (knowledge: [`raycaster_effects.md`](../knowledge/raycaster_effects.md) § Effect Pass Ordering, § Extra-Light Bias).
+- **Player damage tint and pickup tint screen-space overlays**, identical to the topdown renderer's overlays, drawn on top of the world layers (knowledge: [`raycaster_effects.md`](../knowledge/raycaster_effects.md) § Effect Pass Ordering item 5; reuses [`40_visual_feedback.md § Player Damage Tint`](40_visual_feedback.md#player-damage-tint) and [`40_visual_feedback.md § Pickup Tint Screen Flash`](40_visual_feedback.md#pickup-tint-screen-flash)).
+- The slice-1 `--render-mode={topdown|raycaster}` CLI flag is unchanged; default remains `topdown` through slice 4.
+- The slice-1 walls + floor + ceiling pass and the slice-2 sprite pass are unchanged in their pixel output for non-firing, non-damaged, non-pickup-recently-consumed frames; only frames with at least one active `MuzzleFlash`, `Tracer`, `WallPuff` Effect, or `damage_count > 0`, or `pickup_tint_count > 0` differ from the slice-2 raycaster baseline.
 
-Subsequent slices add: first-person muzzle/tracer/impact effects (slice 3), the FPS-specific HUD layout (slice 4), the default flip from `topdown` to `raycaster` (slice 5), and removal of the top-down code path (slice 6). Each slice is intentionally small so any single PR is easy to review and revert.
+Subsequent slices add: the FPS-specific HUD layout (slice 4 — bottom chrome strip, crosshair, held-weapon body sprite), the default flip from `topdown` to `raycaster` (slice 5), and removal of the top-down code path (slice 6). Each slice is intentionally small so any single PR is easy to review and revert.
 
 The HUD (top-left health bar + ammo pane, [`50_hud.md`](50_hud.md)) and the game-over border ([`25_game_tuning.md § Visual`](25_game_tuning.md#visual)) draw unchanged on top of the framebuffer in both modes; this spec does not touch their behavior.
 
@@ -59,9 +59,10 @@ This is a deliberate generation-default deviation that cites [`knowledge/raycast
 - `raycaster::draw` writes every pixel of the `WINDOW_WIDTH × WINDOW_HEIGHT` framebuffer (no read-modify-write of unaffected regions). The split is:
   - Above the horizon row (`y < HORIZON_Y`): solid `RAYCASTER_CEILING_COLOR`.
   - At and below the horizon row (`y >= HORIZON_Y`): solid `RAYCASTER_FLOOR_COLOR`, except where covered by a wall column.
-- The raycaster runs in two passes per frame, in this order:
-  1. **Wall pass** — fills the framebuffer with ceiling, walls, and floor, AND populates a per-column wall-depth array `wall_depth: [f32; WINDOW_WIDTH]` (see § Sprites and Billboards → Per-Column Wall Depth Z-Buffer below).
-  2. **Sprite pass** — projects the entity lists (live enemies, the persistent VisualEffects sprite-class entries — `EnemyDeathFade`, `EnemyCorpse`, `BloodSplat` — and active `level.pickups`) into screen-aligned billboards, sorts them back-to-front by forward distance, and overwrites framebuffer pixels per column where the sprite's forward distance is strictly less than that column's `wall_depth[x]` (see § Sprites and Billboards below).
+- The raycaster runs in three passes per frame, in this order (knowledge: [`raycaster_effects.md`](../knowledge/raycaster_effects.md) § Effect Pass Ordering):
+  1. **Wall pass** — fills the framebuffer with ceiling, walls, and floor, AND populates a per-column wall-depth array `wall_depth: [f32; WINDOW_WIDTH]` (see § Sprites and Billboards → Per-Column Wall Depth Z-Buffer below). The wall-color shading lerp applies the **extra-light bias** when the firing flash window is active (§ First-Person Effects § Extra-Light Bias).
+  2. **Sprite pass** — projects the entity lists (live enemies, the persistent VisualEffects sprite-class entries — `EnemyDeathFade`, `EnemyCorpse`, `BloodSplat`, `WallPuff` — and active `level.pickups`) into screen-aligned billboards, sorts them back-to-front by forward distance, and overwrites framebuffer pixels per column where the sprite's forward distance is strictly less than that column's `wall_depth[x]` (see § Sprites and Billboards and § First-Person Effects § Wall Puff Billboard below). The sprite-color shading lerp applies the **extra-light bias** to non-full-bright candidates when the firing flash window is active.
+  3. **Effects pass** — draws the world-space tracer line, the screen-space muzzle-flash overlay, the player damage tint overlay, and the pickup tint overlay in fixed back-to-front order (§ First-Person Effects § Effect Pass Order). The tracer respects `wall_depth[]` per column; the overlays do not.
 - For each screen column `x in 0..WINDOW_WIDTH`, the wall pass computes:
   1. The per-column ray angle `theta = player.facing + column_angle_offset[x]`, where `column_angle_offset[x]` is derived from the FOV and column count (see § Column Projection below).
   2. A grid-DDA walk from `player.pos` along `theta` until the ray enters a tile where `level_data::is_wall` is true OR the per-column ray length reaches `RAYCASTER_MAX_DEPTH`.
@@ -71,8 +72,8 @@ This is a deliberate generation-default deviation that cites [`knowledge/raycast
   6. The framebuffer column is written: rows `[0, ceiling_top)` ← `RAYCASTER_CEILING_COLOR`, rows `[ceiling_top, floor_top)` ← shaded wall color, rows `[floor_top, WINDOW_HEIGHT)` ← `RAYCASTER_FLOOR_COLOR`. `ceiling_top = HORIZON_Y - column_h_px / 2`, `floor_top = HORIZON_Y + column_h_px / 2`, both clamped to `[0, WINDOW_HEIGHT]`.
   7. `wall_depth[x] = perp_dist` (knowledge: `raycaster_sprites.md` § Per-Column Wall Depth (Z-Buffer Equivalent)).
 - If the DDA walk reaches `RAYCASTER_MAX_DEPTH` without hitting a wall, the column is filled with ceiling above the horizon and floor below — no wall slice is drawn — and `wall_depth[x] = RAYCASTER_MAX_DEPTH` (the far-clip sentinel; sprites at that distance or beyond do not draw, sprites closer than the far clip draw normally). This is the far-clip case (knowledge § Max Render Distance / Far Clipping; knowledge: `raycaster_sprites.md` § Per-Column Wall Depth — Initialization sentinel).
-- After the wall pass, the sprite pass runs (§ Sprites and Billboards). After both passes, `raycaster::draw` returns and the existing HUD draw path (`renderer::draw_hud`) runs unchanged. The game-over border (if `game_over.is_some()`) also draws unchanged after the HUD.
-- Wall puffs, muzzle flashes, tracers, the player damage tint, the pickup tint, the player disc, the direction line, and the exit marker are **not** rendered in this slice. These are added in slice 3 (FPS-specific effects) and slice 4 (FPS HUD layout). Pickup inner-detail (the red cross overlay on health pickups) is also deferred — slice 2 draws each pickup as a single flat-color rectangle.
+- After the wall pass, the sprite pass runs (§ Sprites and Billboards), then the effects pass runs (§ First-Person Effects). After all three passes, `raycaster::draw` returns and the existing HUD draw path (`renderer::draw_hud`) runs unchanged. The game-over border (if `game_over.is_some()`) also draws unchanged after the HUD.
+- The player disc, direction line, and exit marker are **not** rendered in raycaster mode (the player is the camera origin in first-person; the exit marker is reachable via gameplay, not via an in-world disc). The held-weapon body sprite (the gun visible at the bottom of the viewport, on which the muzzle flash visually anchors) is **deferred** to slice 4 with the FPS HUD layout — slice 3 ships the muzzle flash without the gun. Pickup inner-detail (the red cross overlay on health pickups) is also deferred — slice 3 still draws each pickup as a single flat-color rectangle.
 
 ### Column Projection
 
@@ -230,7 +231,128 @@ A capped factor (rather than `1.0`) ensures sprites at `RAYCASTER_MAX_DEPTH` ret
 
 #### Multi-Layer Sprite Detail
 
-The topdown renderer draws an inner red cross overlay on health pickups (PICKUP_HEALTH_INNER_COLOR / PICKUP_HEALTH_INNER_THICKNESS_PX). The raycaster slice-2 simplification draws a single flat-color rectangle per sprite — multi-layer sprite detail is **deferred** until either (a) a per-entity-type texture asset is introduced, or (b) a parallel "draw the inner detail as a second smaller billboard" path is added. Both options are out-of-scope for slice 2; the simplification is acceptable because the white outer rectangle is already visually distinct from every other entity color in the level.
+The topdown renderer draws an inner red cross overlay on health pickups (PICKUP_HEALTH_INNER_COLOR / PICKUP_HEALTH_INNER_THICKNESS_PX). The raycaster slice-2 simplification draws a single flat-color rectangle per sprite — multi-layer sprite detail is **deferred** until either (a) a per-entity-type texture asset is introduced, or (b) a parallel "draw the inner detail as a second smaller billboard" path is added. Both options are out-of-scope for slice 3; the simplification is acceptable because the white outer rectangle is already visually distinct from every other entity color in the level.
+
+## First-Person Effects
+
+This section pins the slice-3 visual feedback specific to first-person rendering: the screen-space muzzle-flash overlay, the world-space tracer line projection, the wall-puff billboard (special-cased into the slice-2 sprite pass), the extra-light bias on wall and sprite shading during the firing window, and the player damage / pickup tint screen-space overlays.
+
+Source: [`knowledge/raycaster_effects.md`](../knowledge/raycaster_effects.md). The trigger durations (`MUZZLE_FLASH_DURATION`, `TRACER_DURATION`, `PUFF_DURATION`) and the underlying `Effect` shape are owned by [`40_visual_feedback.md`](40_visual_feedback.md); this section pins only the raycaster-specific projection rules. Numeric constants new to slice 3 are in [`25_game_tuning.md § Renderer (Raycaster) / First-Person Effects`](25_game_tuning.md#renderer-raycaster); this spec only refers to constants by name.
+
+### Generation Default Deviation: Tracer Line
+
+Knowledge [`raycaster_effects.md § Hitscan Trace Endpoint: NO Tracer Line`](../knowledge/raycaster_effects.md#hitscan-trace-endpoint-no-tracer-line) is explicit: the reference engine does not render a tracer line for hitscan weapons. The reference-faithful firing visual is muzzle flash + extra-light bias + impact puff, with the line itself invisible.
+
+**This spec keeps the tracer.** *(Generation default — knowledge says no tracer; we render one because the topdown renderer already draws a tracer per `Tracer` Effect (specs/40 § Hit-Scan Tracer), and a per-mode visual divergence with no gameplay justification would worsen the slice-5 default flip — the project's default firing feedback would silently regress.)* The tracer is short (`TRACER_DURATION = 0.06s`, shorter than the muzzle flash); the visual cost is small and the firing event reads as a directional shot. The deviation is acknowledged at the rule site (§ Bullet Tracer rule 1) and surfaced as an ADR candidate in this run's journal so the PostMortem can elevate the reference-faithful alternative if/when needed.
+
+The reference-faithful visual set (flash + bias + puff, no tracer) remains an option for a future slice that drops `Tracer` Effects entirely from `weapon_system::fire`. That change would touch both renderers and is intentionally out of scope here.
+
+### Effect Pass Order
+
+**Trigger:** Every frame in raycaster mode, after `raycaster::draw`'s wall pass and sprite pass complete.
+
+**Effect:** Effects layer on top of the world in a fixed order, matching knowledge [`raycaster_effects.md § Effect Pass Ordering`](../knowledge/raycaster_effects.md#effect-pass-ordering-per-frame-layering).
+
+**Rules** (in draw order, back to front):
+
+1. Wall pass — walls + floor + ceiling. Wall-color shading lerp applies the **extra-light bias** when active. (Slice 1 + slice-3 bias.)
+2. World-space sprite pass — live enemies, dying enemies, corpses, blood splats, pickups, **wall puffs (slice 3, with full-bright first phase override)**. Sprite-color shading lerp applies the **extra-light bias** to non-full-bright candidates when active. (Slice 2 + slice-3 wall-puff source + slice-3 bias.)
+3. **Tracer (slice 3)** — projected line from the screen-space gun anchor to the projection of `Effect.end_pos`, per-column z-test against `wall_depth[]`.
+4. **Muzzle flash overlay (slice 3)** — fixed-screen-position bright disc; no z-test.
+5. **Damage tint overlay (slice 3)** — viewport-wide alpha blend on top of all world + effect layers.
+6. **Pickup tint overlay (slice 3)** — viewport-wide alpha blend on top of damage tint.
+7. HUD pane — drawn by `renderer::draw_hud` after `raycaster::draw` returns, in `main.rs`. (Unchanged from slice 1.)
+8. Game-over border (if `game_over.is_some()`) — drawn by `renderer::draw_game_over_border` after the HUD. (Unchanged from slice 1.)
+
+Layers 1–6 are the responsibility of `raycaster::draw`. Layers 7–8 remain in `main.rs`'s post-call dispatch (§ Interactions § With renderer (top-down)). The ordering of layers 3–6 inside the effects pass is fixed: tracer (world-occluded) before flash (screen overlay) ensures a near-camera flash never shows behind its own tracer; damage tint before pickup tint matches the topdown renderer's order (`ir/contracts/renderer.yaml § public_methods § draw — layers 8 and 8.5`) so a frame that takes damage on the same tick as a pickup is consumed shows both overlays in the same back-to-front order in both modes.
+
+### Extra-Light Bias on Wall and Sprite Shading
+
+**Trigger:** Every wall column and every non-full-bright sprite shading lookup in raycaster mode, when at least one `MuzzleFlash` Effect is active in `fx.effects`.
+
+**Effect:** During the firing flash window, the wall-pass shading parameter `shade_t` and the sprite-pass shading parameter `sprite_shade_t` are each shifted toward "bright" by `RAYCASTER_EXTRA_LIGHT_SHADE_DELTA`, brightening the entire visible scene by approximately one ramp step (knowledge: [`raycaster_effects.md § Extra-Light Bias`](../knowledge/raycaster_effects.md#extra-light-bias-global-brightness-pulse)).
+
+**Rules:**
+- The bias gate is detected once per frame at the start of the wall pass: `firing_active = fx.effects.iter().any(|e| e.kind == EffectKind::MuzzleFlash && e.lifetime_remaining > 0.0)`. The result is cached for the frame so mid-pass Effect-list state cannot affect mid-frame shading (knowledge: § Effect Pass Ordering — "the renderer caches the player's extra-light counter into a frame-scoped shading offset"). `fx` is borrowed read-only by `raycaster::draw`, so no actual list mutation occurs mid-frame; the once-per-frame compute is a documentation pin, not a defensive copy.
+- When `firing_active`, the wall pass uses `shade_t' = (shade_t - RAYCASTER_EXTRA_LIGHT_SHADE_DELTA).clamp(0.0, 1.0)` in place of `shade_t` for the lerp `lerp_rgb(RAYCASTER_WALL_COLOR_NEAR, RAYCASTER_WALL_COLOR_FAR, shade_t')`. The NS/EW darken factor and the per-column `wall_depth[x]` write are unaffected — only the distance-attenuation lerp parameter shifts.
+- When `firing_active`, the sprite pass uses `sprite_shade_t' = (sprite_shade_t - RAYCASTER_EXTRA_LIGHT_SHADE_DELTA).clamp(0.0, 1.0)` in place of `sprite_shade_t` for non-full-bright sprite candidates (live enemies, dying enemies, corpses, blood splats, pickups, distance-attenuated puffs). Full-bright candidates (the screen-space muzzle flash overlay; the wall puff during its full-bright first phase) skip the bias entirely (knowledge: § Brief Brightness Pulse on Walls — "full-bright sprites are exempt — they always use the brightest ramp entry regardless of the bias").
+- The bias is **set, not stacked** (knowledge: § Brief Brightness Pulse on Walls — "Stacking is not additive"). Two simultaneous `MuzzleFlash` Effects produce the same brightness as one. The pistol's per-shot cooldown (`PISTOL_FIRE_CYCLE = 0.54s`) far exceeds `MUZZLE_FLASH_DURATION = 0.10s`, so simultaneous flashes are not produced by gameplay; the rule still applies as a documented invariant.
+- The 2-step bias (knowledge: § Extra-Light Bias — heavy-weapon settings: "Big single-shot weapons … use the higher setting (2)") is **deferred** — only the pistol exists, and the pistol maps to the small-weapon family (1-step bias). Re-introducing the 2-step bias is a one-line change when a heavy weapon is added.
+- Floors and ceilings have no shading lookup in this slice (slice-2 simplification — § Distance Attenuation (Fog) "Floors and ceilings have no distance attenuation in this slice"), so the bias has no visible effect on them. When floor / ceiling shading is implemented in a future slice, the bias must apply to those lookups identically to walls (knowledge: § Effect Pass Ordering rule 1 — "wall and flat shading lookups apply the extra-light bias").
+
+### Muzzle Flash Screen-Space Overlay
+
+**Trigger:** Every frame in raycaster mode, when at least one `MuzzleFlash` Effect (`kind == EffectKind::MuzzleFlash`, `lifetime_remaining > 0`) is active in `fx.effects`.
+
+**Effect:** A bright filled disc is drawn at a fixed screen position (`RAYCASTER_MUZZLE_FLASH_CENTER_X`, `RAYCASTER_MUZZLE_FLASH_CENTER_Y`) with radius `RAYCASTER_MUZZLE_FLASH_RADIUS_PX` and color `COLOR_MUZZLE_FLASH`. The flash draws on top of the world layers (walls, floor, ceiling, sprites, tracer) and below the HUD (knowledge: [`raycaster_effects.md § Effect Pass Ordering`](../knowledge/raycaster_effects.md#effect-pass-ordering-per-frame-layering) items 4 and 5).
+
+**Rules:**
+- The muzzle flash is rendered as a screen-space overlay at a fixed in-viewport anchor (knowledge: [`raycaster_effects.md § Held-Weapon View Sprite`](../knowledge/raycaster_effects.md#held-weapon-view-sprite-player-sprite) — view-anchored, not world-anchored). The world-space `Effect.pos` (the muzzle position computed by `weapon_system::fire`) is *not consulted* by the raycaster — only the EXISTENCE of an active `MuzzleFlash` Effect triggers the overlay. The same `MuzzleFlash` Effect drives the topdown renderer's world-space disc; the slice-3 raycaster reads only the existence test.
+- The flash is **full-bright**: no distance attenuation, no NS/EW darkening, no extra-light bias modulation (knowledge: [`raycaster_effects.md § Muzzle Flash Sprite`](../knowledge/raycaster_effects.md#muzzle-flash-sprite-view-space-overlay) — "drawn full-bright over the weapon body").
+- No per-column z-test — the flash is a screen-space overlay, drawn on top of the world-layer composition.
+- Multiple simultaneous `MuzzleFlash` Effects do not stack: a single overlay draws if any are active. (The reference's "set, not increment" semantics for the bias counter — knowledge § Brief Brightness Pulse on Walls "Stacking is not additive" — extends to the flash overlay itself: one shot's flash and a subsequent shot's flash render at the same screen radius and color.)
+- The shape (filled disc vs. filled rectangle vs. textured sprite) is a Coder degree of freedom; a filled disc at `RAYCASTER_MUZZLE_FLASH_RADIUS_PX` is the obvious choice. Whichever shape is picked, the same algorithm runs each firing frame so consecutive flashes are visually stable anchors (knowledge: § Held-Weapon View Sprite — "The flash slot does NOT bob — its position is fixed at a per-state coordinate so consecutive shots are stable visual anchors").
+- The two-frame flash sequence (a brighter first frame followed by a dimmer second frame for higher-yield weapons — knowledge § Muzzle Flash Sprite "two-frame sequence") is **deferred** — only the pistol exists, which maps to the single-frame variant.
+- The held-weapon body sprite (the gun itself, on which the flash visually anchors) is **deferred** to slice 4 with the FPS HUD layout (§ Implementation Status / Deferred). Slice 3 ships the flash as an unattached bright disc at the gun-anchor position; the gun body lands later.
+
+### Bullet Tracer (World-Space Line Projection)
+
+**Trigger:** Every frame in raycaster mode, for each active `Tracer` Effect (`kind == EffectKind::Tracer`, `lifetime_remaining > 0`) in `fx.effects`.
+
+**Effect:** A `RAYCASTER_TRACER_THICKNESS_PX`-pixel-wide line connects the screen-space gun anchor to the projection of the tracer's world-space end point on the framebuffer, with per-column occlusion against the wall pass's depth array.
+
+**Rules:**
+1. *(Generation default — knowledge [`raycaster_effects.md § Hitscan Trace Endpoint: NO Tracer Line`](../knowledge/raycaster_effects.md#hitscan-trace-endpoint-no-tracer-line) says the reference renders no tracer for hitscan weapons; we keep one for visual parity with the topdown renderer. See § Generation Default Deviation: Tracer Line above.)*
+2. **Start point:** `(RAYCASTER_MUZZLE_FLASH_CENTER_X, RAYCASTER_MUZZLE_FLASH_CENTER_Y)` — same screen anchor as the muzzle-flash overlay, so the tracer pairs with the flash as a single firing event. The world-space muzzle position (`Effect.pos = player.pos + facing * MUZZLE_OFFSET`) is not projected — projecting a 0.5-tile-forward point at near-plane scale collapses to a near-screen-edge sliver and visually decouples from the gun.
+3. **End point:** project `Effect.end_pos` via the same camera-space transform as the sprite pass (§ Sprites and Billboards § Camera-Space Transform, including the +y-down sign convention).
+   - `tr_end = end_pos - player.pos`.
+   - `forward_dist_end = tr_end.x * cos(player.facing) + tr_end.y * sin(player.facing)`.
+   - `right_offset_end = tr_end.y * cos(player.facing) - tr_end.x * sin(player.facing)`.
+   - If `forward_dist_end < RAYCASTER_SPRITE_NEAR_PLANE`, drop the tracer (impact behind camera — extremely unlikely with a same-frame trace but not impossible after a fast turn within the 0.06s tracer lifetime).
+   - End screen X: `screen_x_end = WINDOW_WIDTH / 2 + right_offset_end * (focal_px / forward_dist_end)`.
+   - End screen Y: `HORIZON_Y` (eye-level convention from § Sprites and Billboards § Per-Sprite Scale and Screen-Space X-Range — entities and impact points share the slice-2 horizon-anchored convention).
+4. **Color:** `COLOR_TRACER` (`#FFFFC0`, full-bright). No distance attenuation, no extra-light bias modulation — the tracer is a discrete firing-event marker, not a world-shaded surface.
+5. **Thickness:** `RAYCASTER_TRACER_THICKNESS_PX` (1 px in slice 3). Single-pixel-line algorithm choice (Bresenham, DDA) is a Coder degree of freedom.
+6. **Per-column z-test:** for each column the line passes through, compare an interpolated tracer forward-distance against `wall_depth[x]`. If `tracer_depth_at_column < wall_depth[x]`, paint; otherwise skip. Linear interpolation along the screen-X span suffices: `tracer_depth_at_x = lerp(MUZZLE_OFFSET, forward_dist_end, (x - x_start) / (x_end - x_start))`. (`MUZZLE_OFFSET` is the start anchor's world-space forward distance from the camera — the muzzle is `MUZZLE_OFFSET` tiles in front of the player.) At equality the wall wins (matches the sprite-pass strict-less-than convention).
+7. The screen-X span may be empty (`x_start == x_end`) when the impact point is directly in front of the player. In that case, paint the single column from `(x_start, RAYCASTER_MUZZLE_FLASH_CENTER_Y)` down to `(x_start, HORIZON_Y)` with the same per-column z-test using a constant `tracer_depth_at_x = forward_dist_end`.
+
+### Wall Puff Billboard (Sprite-Pass Special Case)
+
+**Trigger:** Every frame in raycaster mode, for each active `WallPuff` Effect (`kind == EffectKind::WallPuff`, `lifetime_remaining > 0`) in `fx.effects`. Joins the slice-2 sprite pass with one special case for the full-bright first phase.
+
+**Effect:** A small flat-color billboard is drawn at the puff's world position via the existing sprite-pass pipeline (§ Sprites and Billboards), with a full-bright override during the first half of the puff's lifetime (knowledge: [`raycaster_effects.md § Wall-Hit Impact Puff`](../knowledge/raycaster_effects.md#wall-hit-impact-puff-world-space-billboard) — "First frame uses the full-bright flag: drawn at the brightest colormap regardless of distance/sector light. Subsequent frames use normal distance-attenuated shading").
+
+**Rules:**
+- World half-extent: `PUFF_RADIUS / TILE_SIZE` (= 4 / 32 = 0.125 tile) — derived from the existing `PUFF_RADIUS` constant in `visual_effects`. The same px-to-tile conversion the slice-2 sprite pass uses for blood splats and corpses applies here. No new constant.
+- Color: `COLOR_PUFF` (`#B0B0B0`) — same constant the topdown renderer uses for the puff sprite. Imported from `renderer` like the other slice-2 sprite-pass colors.
+- **Full-bright override:** while `lifetime_remaining / PUFF_DURATION > RAYCASTER_PUFF_FULL_BRIGHT_FRACTION`, the puff renders without distance attenuation, without extra-light-bias modulation, and without the wall-pass's far-color lerp. It uses pure `COLOR_PUFF`. Past that threshold, the puff joins the regular distance-attenuated sprite path. (Knowledge collapses the reference's 4-frame puff with a per-frame full-bright flag to "first half of lifetime full-bright, second half attenuated" in our 1-Effect model.)
+- Camera-space transform, projection, per-column z-test, and back-to-front sort all reuse the slice-2 sprite-pass machinery — the puff appears in the same `(pos, half_extent, color, full_bright_flag)` candidate list, just with a per-candidate boolean for the full-bright phase.
+- The reference's slow upward drift (1 unit per tick), vertical jitter at spawn (±32 fractional units), 4-frame artwork, and 16-tick lifetime jitter are **deferred** — see § Implementation Status / Deferred (knowledge § Wall-Hit Impact Puff — drift / jitter / multi-frame artwork rules). Our `Effect` model has no per-effect velocity field and a single fixed lifetime per kind.
+- Melee-impact suppression of the full-bright first frame (knowledge same § — "Melee impacts (e.g., punch) skip the bright first frame and start at the second frame instead — a punch on stone should not 'spark.'") is **deferred** — only one weapon (hitscan pistol) exists.
+
+### Player Damage Tint Overlay
+
+**Trigger:** Every frame in raycaster mode, after the muzzle flash overlay, when `player.damage_count > 0.0`. Renders identically to the topdown overlay — same constants, same alpha mapping, same color (specs/40 § Player Damage Tint, [`25_game_tuning.md § Visual Feedback / Player Damage Tint`](25_game_tuning.md#player-damage-tint)).
+
+**Effect:** A `COLOR_DAMAGE_TINT` overlay is software-blended over the framebuffer at one of `DAMAGE_TINT_LEVELS` discrete alpha levels, computed from `player.damage_count`.
+
+**Rules:**
+- Mapping: `level = ((player.damage_count * DAMAGE_TINT_LEVELS as f32) / DAMAGE_TINT_CAP).ceil() as u32`, clamped to `[0, DAMAGE_TINT_LEVELS]`. Same formula as `renderer::draw` (`ir/contracts/renderer.yaml § public_methods § draw — layer 8`).
+- Alpha: `alpha_pct = (DAMAGE_TINT_MAX_ALPHA_PCT * level) / DAMAGE_TINT_LEVELS`. Same formula.
+- The overlay covers the entire viewport (no clip-out for the future HUD region — the HUD draws on top after `raycaster::draw` returns).
+- At `level == 0` the overlay is not drawn at all (skips the per-pixel write).
+
+### Pickup Tint Overlay
+
+**Trigger:** Every frame in raycaster mode, after the damage tint overlay, when `fx.pickup_tint_count > 0.0`. Renders identically to the topdown pickup tint overlay (specs/40 § Pickup Tint Screen Flash, [`25_game_tuning.md § Visual Feedback / Pickup Tint`](25_game_tuning.md#pickup-tint)).
+
+**Effect:** A `COLOR_PICKUP_TINT` overlay is software-blended over the framebuffer at one of `PICKUP_TINT_LEVEL_COUNT` discrete alpha levels, computed from `fx.pickup_tint_count`.
+
+**Rules:**
+- Mapping: `level = (fx.pickup_tint_count * PICKUP_TINT_LEVEL_COUNT as f32 / PICKUP_TINT_CAP).ceil() as u32`, clamped to `[0, PICKUP_TINT_LEVEL_COUNT]`. Same formula as `renderer::draw`.
+- Alpha: `alpha_pct = (PICKUP_TINT_MAX_ALPHA_PCT * level) / PICKUP_TINT_LEVEL_COUNT`. Same formula.
+- The overlay is independent of and additive with the damage tint overlay; both may render simultaneously when the player is hurt and grabs a pickup in the same frame.
+- At `level == 0` the overlay is not drawn at all.
 
 ## State
 
@@ -271,9 +393,14 @@ The player's `pos` and `facing` are already tracked by `player_state::Player` (`
 
 ### With visual_effects
 
-- The raycaster reads `fx.effects` (a `&[Effect]` slice) and inspects each entry's `kind`, `pos`, and `lifetime_remaining`. The raycaster filters this slice for the three sprite-class effect kinds (`EnemyDeathFade`, `EnemyCorpse`, `BloodSplat`) and ignores `MuzzleFlash` / `Tracer` / `WallPuff` — those FPS-specific impact effects are deferred to slice 3.
-- `fx.pickup_tint_count` is **not** read by the raycaster this slice. The pickup-tint overlay is part of the slice-3 FPS-effects work.
-- `ENEMY_DEATH_FADE_DURATION`, `ENEMY_CORPSE_RADIUS`, and `BLOOD_RADIUS` are imported from `visual_effects` for the death-fade interpolation divisor and the corpse / blood-splat billboard half-extents.
+- The raycaster reads `fx.effects` (a `&[Effect]` slice) and inspects each entry's `kind`, `pos`, `end_pos` (for `Tracer`), and `lifetime_remaining`. After slice 3 the raycaster consumes ALL `EffectKind` variants:
+  - `EnemyDeathFade`, `EnemyCorpse`, `BloodSplat` → world-space billboards in the slice-2 sprite pass.
+  - `WallPuff` → world-space billboard in the slice-2 sprite pass with a slice-3 full-bright first-phase override (§ First-Person Effects § Wall Puff Billboard).
+  - `MuzzleFlash` → existence-test for the screen-space muzzle-flash overlay (§ First-Person Effects § Muzzle Flash Screen-Space Overlay) AND the wall / sprite extra-light bias gate (§ First-Person Effects § Extra-Light Bias). The world-space `Effect.pos` is not consulted; only the existence and lifetime are.
+  - `Tracer` → world-space line projection for the screen-space tracer line (§ First-Person Effects § Bullet Tracer). Consumes both `pos` (start, ignored — replaced by the screen-space gun anchor) and `end_pos` (impact point, projected via the camera-space transform).
+- `fx.pickup_tint_count` is read by the raycaster (§ First-Person Effects § Pickup Tint Overlay).
+- `player.damage_count` is read by the raycaster (§ First-Person Effects § Player Damage Tint Overlay) — this is the slice-3 addition to the read list. The slice-2 invariant "raycaster does not read `player.damage_count`" is now obsolete and is updated below in § Constraints / Invariants.
+- `ENEMY_DEATH_FADE_DURATION`, `ENEMY_CORPSE_RADIUS`, `BLOOD_RADIUS`, `PUFF_DURATION`, `MUZZLE_FLASH_DURATION`, `TRACER_DURATION`, `DAMAGE_TINT_CAP`, `DAMAGE_TINT_LEVELS`, `PICKUP_TINT_CAP`, and `PICKUP_TINT_LEVEL_COUNT` are imported from `visual_effects` for the corresponding rule formulas.
 - The raycaster does NOT spawn or mutate any `Effect` — it only reads them. `visual_effects::tick` continues to run from `game_loop::update` as before; the raycaster runs after that update phase per `ir/contracts/_shared.yaml § frame_update_order`.
 
 ### With renderer (color constants)
@@ -295,12 +422,12 @@ The player's `pos` and `facing` are already tracked by `player_state::Player` (`
 
 ### Invariants
 
-- `--render-mode=topdown` (the default through slice 4) is byte-for-byte identical to the pre-slice behavior. Every existing autopilot scenario, the canonical PR-preview GIF (`tests/level/local_chase_obstacle.yaml`, specs/35 § Test Scenario Suitability for Demo), and every regression scenario in `tests/**/*.yaml` produces an unchanged frame stream. Slice 2 widens the raycaster's draw signature but does not change the topdown dispatch path.
-- `--render-mode=raycaster` produces a framebuffer in which every pixel is written exactly once by the wall + sprite passes (sprite columns may overwrite wall pixels where the sprite is closer). The HUD and game-over border (if active) draw on top.
-- The raycaster does not allocate per frame. The angle-offset table and the per-column wall-depth array are allocated once at startup (or on first call). Per-frame sprite-collection storage is either a stack-local fixed-size array (Coder degree of freedom — current per-frame entity count is bounded above by ~32) or a module-private `Vec` reused across calls; both shapes meet the no-per-frame-allocation invariant. Per-column DDA state is stack-local.
-- The raycaster reads — but never mutates — `level`, `player`, `enemies`, and `fx`. It does NOT read `fx.pickup_tint_count`, the per-frame `frames` counter, `player.alive`, `player.health`, `player.ammo`, `player.damage_count`, `enemy.health`, `enemy.state`, or any other field outside the explicit sprite-source list above.
-- The raycaster's sprite pass writes `wall_depth[]` exactly once per frame (during the wall pass) and reads it during the sprite pass. No external module reads or writes `wall_depth[]`.
-- The `--render-mode` flag has no effect on RNG seeding, on simulation `dt`, on bot input, or on `game_loop::update`. The simulation is identical between modes; only the draw output differs. Slice 2 does not change this — adding sprite reads in `raycaster::draw` is a render-side change only.
+- `--render-mode=topdown` (the default through slice 4) is byte-for-byte identical to the pre-slice-1 behavior. Every existing autopilot scenario, the canonical PR-preview GIF (`tests/level/local_chase_obstacle.yaml`, specs/35 § Test Scenario Suitability for Demo), and every regression scenario in `tests/**/*.yaml` produces an unchanged frame stream. Slice 3 does not modify the topdown dispatch path or `renderer::draw`'s pixel output (the raycaster's draw signature is unchanged from slice 2 — `&VisualEffects` was already passed in for the sprite pass).
+- `--render-mode=raycaster` produces a framebuffer in which the wall + sprite passes write every pixel exactly once (sprite columns may overwrite wall pixels where the sprite is closer), then the effects pass overlays the tracer (subject to per-column z-test), the muzzle flash (no z-test), and the damage / pickup tint overlays (full-viewport alpha blends, only when `damage_count > 0` or `pickup_tint_count > 0` respectively). The HUD and game-over border (if active) draw on top.
+- The raycaster does not allocate per frame. The angle-offset table and the per-column wall-depth array are allocated once at startup (or on first call). Per-frame sprite-collection storage is either a stack-local fixed-size array (Coder degree of freedom — current per-frame entity count is bounded above by ~32, including any active wall puffs) or a module-private `Vec` reused across calls; both shapes meet the no-per-frame-allocation invariant. Per-column DDA state and tracer-line state are stack-local.
+- The raycaster reads — but never mutates — `level`, `player`, `enemies`, and `fx`. After slice 3 the read set is: `level.tiles`, `level.width`, `level.height`, `level.pickups`; `player.pos`, `player.facing`, **`player.damage_count`** (slice 3 addition for the damage-tint overlay); the `Enemy` fields `pos`, `alive`, `pain_flash_remaining`; `fx.effects[*]` (all `EffectKind` variants, full slice 3 — see § Interactions § With visual_effects), and **`fx.pickup_tint_count`** (slice 3 addition for the pickup-tint overlay). It does NOT read the per-frame `frames` counter, `player.alive`, `player.health`, `player.ammo`, `enemy.health`, `enemy.state`, or any other field outside this list.
+- The raycaster's wall pass writes `wall_depth[]` exactly once per frame, the sprite pass reads it, and the slice-3 tracer rule reads it during the effects pass. No external module reads or writes `wall_depth[]`.
+- The `--render-mode` flag has no effect on RNG seeding, on simulation `dt`, on bot input, or on `game_loop::update`. The simulation is identical between modes; only the draw output differs. Slice 3 does not change this — adding effect reads in `raycaster::draw` is a render-side change only.
 
 ### Determinism
 
@@ -316,9 +443,9 @@ The window is 640 × 480 (`WINDOW_WIDTH × WINDOW_HEIGHT`, presentation contract
 
 ## Test Scenarios
 
-This slice does NOT add a new autopilot fixture. The default `--render-mode=topdown` (in effect through slice 4) remains exercised by every existing fixture (`tests/combat/*.yaml`, `tests/level/*.yaml`); switching to `--render-mode=raycaster` does not change any scenario's pass/fail outcome (the bot drives the simulation, not the renderer). A smoke test for the `raycaster` mode at the binary level is the slice manual verification step — `cargo run --release --manifest-path generated/game/Cargo.toml -- --render-mode=raycaster` should open a window showing flat-color walls + floor + ceiling AND visible flat-colored billboards (red enemy rectangles, white health pickups, yellow ammo pickup) correctly occluded by walls, with no panic.
+This slice does NOT add a new autopilot fixture. The default `--render-mode=topdown` (in effect through slice 4) remains exercised by every existing fixture (`tests/combat/*.yaml`, `tests/level/*.yaml`); switching to `--render-mode=raycaster` does not change any scenario's pass/fail outcome (the bot drives the simulation, not the renderer). A smoke test for the `raycaster` mode at the binary level is the slice manual verification step — `cargo run --release --manifest-path generated/game/Cargo.toml -- --render-mode=raycaster` should open a window showing flat-color walls + floor + ceiling, visible flat-colored billboards (red enemy rectangles, white health pickups, yellow ammo pickup) correctly occluded by walls, AND — when the player fires — a yellow muzzle-flash disc at the bottom-center of the viewport, a near-white tracer line from that disc to the impact point, a gray puff at the wall (or red blood at the enemy), and a brief brightness pulse on the surrounding walls during the flash window, with no panic.
 
-The PR-preview demo GIF is recorded in `--render-mode=raycaster` per the slice-1 environment override (`WORLDSMITH_RENDER_MODE=raycaster` in `tooling/record_autopilot.sh` and `pr.yml`); the slice-2 acceptance criterion is that the GIF visibly shows enemy billboards. The demo scenario is `tests/level/local_chase_obstacle.yaml`, unchanged from the slice-1 baseline.
+The PR-preview demo GIF is recorded in `--render-mode=raycaster` per the slice-1 environment override (`WORLDSMITH_RENDER_MODE=raycaster` in `tooling/record_autopilot.sh` and `pr.yml`); the slice-3 acceptance criterion adds: the GIF must visibly show muzzle flashes, tracer lines, wall puffs, and the brief wall brightness pulse during the firing windows in the bot's run (the bot fires at enemies during `tests/level/local_chase_obstacle.yaml`). The demo scenario is unchanged from the slice-1 baseline.
 
 A unit-test sketch lives in `ir/contracts/raycaster.yaml § notes`. The Coder MUST keep the fisheye-correction regression test from slice 1 (item 3 below); items 1, 2, 4, and 5 are recommended but not required.
 
@@ -332,7 +459,7 @@ These are Coder-internal regression tests; they are not asserted by `autopilot::
 
 ## Implementation Status
 
-**Implemented (after slice 2 lands):**
+**Implemented (after slice 3 lands):**
 - `--render-mode={topdown|raycaster}` CLI flag parsed via `std::env::args`, default `topdown`.
 - `raycaster` module with column-based DDA wall traversal over `level_data::Level`.
 - Wall column projection with perpendicular distance and fisheye correction.
@@ -342,40 +469,50 @@ These are Coder-internal regression tests; they are not asserted by `autopilot::
 - Far-clip at `RAYCASTER_MAX_DEPTH`.
 - HUD and game-over border draw on top of the raycaster framebuffer (delegating to the existing renderer's HUD path).
 - `RenderMode` selection consumed only by `main.rs`; gameplay simulation unchanged.
-- **Per-column wall-depth z-buffer** (`wall_depth: [f32; WINDOW_WIDTH]`) populated during the wall pass, consulted during the sprite pass.
-- **Screen-aligned billboard projection** for live enemies, dying-enemy death-fade effects, persistent corpses, blood splats, and active health/ammo pickups. Each entity is projected to a flat-color rectangle centered on the horizon, with per-column occlusion against `wall_depth[]` and back-to-front compositing among sprites.
-- **Camera-space transform with near-plane reject** (`RAYCASTER_SPRITE_NEAR_PLANE`) for sprites.
+- **Per-column wall-depth z-buffer** (`wall_depth: [f32; WINDOW_WIDTH]`) populated during the wall pass, consulted during the sprite pass and the slice-3 tracer pass.
+- **Screen-aligned billboard projection** for live enemies, dying-enemy death-fade effects, persistent corpses, blood splats, active health/ammo pickups, and (slice 3) wall puffs. Each entity is projected to a flat-color rectangle centered on the horizon, with per-column occlusion against `wall_depth[]` and back-to-front compositing among sprites.
+- **Camera-space transform with near-plane reject** (`RAYCASTER_SPRITE_NEAR_PLANE`) for sprites and (slice 3) tracer end points.
 - **Pain-flash color override** for live enemies whose `pain_flash_remaining > 0` (mirrors the topdown renderer's pain-flash treatment).
 - **Death-fade color interpolation** from `COLOR_ENEMY` toward `COLOR_CORPSE` over the `EnemyDeathFade` effect lifetime.
+- **(Slice 3) Muzzle flash screen-space overlay** — bright disc at a fixed in-viewport position when any `MuzzleFlash` Effect is active; full-bright; no z-test.
+- **(Slice 3) Bullet tracer line** — projected world-space line from the screen-space gun anchor to the projection of `Effect.end_pos`, single-pixel-wide, full-bright `COLOR_TRACER`, per-column z-tested against `wall_depth[]`.
+- **(Slice 3) Wall puff billboard** — `WallPuff` Effect renders as a small flat-color sprite-pass billboard with a full-bright override during the first half of its lifetime (`RAYCASTER_PUFF_FULL_BRIGHT_FRACTION`).
+- **(Slice 3) Extra-light bias** on wall and non-full-bright sprite shading during the firing flash window (any active `MuzzleFlash` Effect), magnitude `RAYCASTER_EXTRA_LIGHT_SHADE_DELTA` (one ramp step toward "near"). Full-bright candidates (muzzle flash overlay, wall puff first phase) skip the bias.
+- **(Slice 3) Player damage tint overlay** — full-viewport `COLOR_DAMAGE_TINT` alpha blend at one of `DAMAGE_TINT_LEVELS` discrete levels, computed from `player.damage_count`. Same formula as `renderer::draw`.
+- **(Slice 3) Pickup tint overlay** — full-viewport `COLOR_PICKUP_TINT` alpha blend at one of `PICKUP_TINT_LEVEL_COUNT` discrete levels, computed from `fx.pickup_tint_count`. Same formula as `renderer::draw`. Independent of and additive with the damage tint overlay.
 
 **Deferred:**
+- **Held-weapon body sprite** — the gun visible at the bottom of the viewport, on which the muzzle flash visually anchors. Reference uses a separate per-player view-sprite slot for the weapon body (knowledge `raycaster_effects.md` § Held-Weapon View Sprite). Lands in slice 4 with the FPS HUD layout. Slice 3 ships the muzzle flash without the gun body.
+- **Crosshair** — fixed center-of-viewport indicator. Lands in slice 4 with the FPS HUD.
+- **Multi-frame muzzle flash sequence** — knowledge § Muzzle Flash Sprite describes 1–4 frames per weapon family, dimmer second frame for higher-yield weapons. Pistol maps to the single-frame variant; multi-frame scaffolding deferred until a heavier weapon is added (knowledge `raycaster_effects.md` § Muzzle Flash Sprite — multi-frame Constants).
+- **2-step extra-light bias for heavy weapons** — knowledge § Extra-Light Bias pins step counts of 1 (small/rapid) vs. 2 (heavy/slow). Pistol is small/rapid (1 step). Re-introducing the 2-step bias is a one-line change when a heavy weapon is added.
+- **Wall puff drift, jitter, and 4-frame artwork** — knowledge `raycaster_effects.md` § Wall-Hit Impact Puff specifies upward drift (1 unit per tick), spawn vertical jitter (±32 fractional units), and 4 distinct sprite frames. Our `Effect` model has no per-effect velocity field and a single fixed lifetime per kind; the puff renders as a single static sprite with a first-half / second-half full-bright split.
+- **Tracer projection of both endpoints** — knowledge would have us project the muzzle position and the impact position into screen space and connect them directly. We anchor the tracer's start at the fixed gun-anchor screen position (matching the muzzle flash overlay) instead. Switching to dual-endpoint projection becomes natural once the held-weapon body sprite lands and the muzzle position has a real screen anchor that respects player view.
+- **Reference-faithful "no tracer" mode** — knowledge `raycaster_effects.md` § Hitscan Trace Endpoint says the reference renders no tracer. We keep the tracer for parity with topdown (§ Generation Default Deviation: Tracer Line). Switching to no-tracer requires removing `Tracer` Effect spawn from `weapon_system::fire` (out of scope here — touches both renderers).
+- **Held-weapon bob** — knowledge § Held-Weapon View Sprite — "weapon body sprite is offset slightly each frame by a 'bob' function based on player movement speed". Deferred with the held-weapon body sprite (slice 4 or later).
 - **Projectile sprites** — the current weapon system is hitscan-only (`ir/game_ir.yaml § combat.attack_type: hitscan`); no projectile entities exist in the world today. The sprite pass framework above is generic enough that adding a `&[Projectile]` source becomes a one-line change to the candidate-collection step when projectile combat is introduced.
 - **Inner-detail multi-layer sprites** — the topdown health pickup's red cross overlay (PICKUP_HEALTH_INNER_COLOR / PICKUP_HEALTH_INNER_THICKNESS_PX) is not drawn in raycaster mode this slice; pickup billboards are single flat-color rectangles. Revisit when textured sprites are introduced.
-- **Sprite distance attenuation** — sprites paint at full saturation; the wall-style lerp toward `RAYCASTER_WALL_COLOR_FAR` is not applied. Knowledge `raycaster_sprites.md` § Flat-Color vs Textured Choice flags this as "optional"; deferred until textured sprites land.
-- **Floor-anchored / world-Z sprites** — sprites center vertically on the horizon (entities treated as eye-level billboards). True floor-anchoring requires an entity-vertical-Z field on `Enemy` / `Effect` / `Pickup`; deferred until any entity gains non-zero height-above-floor (knowledge `raycaster_sprites.md` § Open Questions — Entity vertical motion).
+- **Floor-anchored / world-Z sprites** — sprites center vertically on the horizon (entities treated as eye-level billboards). True floor-anchoring requires an entity-vertical-Z field on `Enemy` / `Effect` / `Pickup`; deferred until any entity gains non-zero height-above-floor (knowledge `raycaster_sprites.md` § Open Questions — Entity vertical motion). The slice-3 wall puff and tracer end-point projections inherit this horizon-anchored convention.
 - **Eight-rotation sprite frames** — single-frame billboards only; deferred (knowledge `raycaster_sprites.md` § Sprite Rotational Frames — Generation default for a simplified renderer).
 - **Sprite texturing** (column-major posts with transparent gaps) — replaced by flat-color rectangles; revisit when an asset pipeline exists.
-- **First-person muzzle/tracer/impact effects** (slice 3) — extra-light bias on muzzle discharge, world-brightness pulse, first-person-style impact sparks. The `MuzzleFlash`, `Tracer`, and `WallPuff` effect kinds are explicitly skipped by the slice-2 sprite source filter.
-- **Player damage tint and pickup tint overlays** (slice 3) — `player.damage_count` and `fx.pickup_tint_count` are not consumed by the raycaster this slice.
-- **Player disc, direction line, and exit marker** — not rendered in first-person mode. Player position is implicit (camera origin); the exit is reachable via gameplay, not via an in-world marker. The exit-marker may return as a different visual treatment in a later slice (e.g. a colored billboard or floor decal).
-- **FPS-specific HUD layout** (slice 4) — bottom chrome strip, crosshair. The current top-left bar + digits HUD draws unchanged in both modes for slices 1–3.
+- **Player disc, direction line, and exit marker** — not rendered in first-person mode. Player position is implicit (camera origin); the exit is reachable via gameplay, not via an in-world marker. The exit marker may return as a different visual treatment in a later slice (e.g. a colored billboard or floor decal).
+- **FPS-specific HUD layout** (slice 4) — bottom chrome strip, crosshair, held-weapon body sprite. The current top-left bar + digits HUD draws unchanged in both modes for slices 1–4.
 - **Default flip from `topdown` to `raycaster`** (slice 5).
 - **Removal of the top-down code path** (slice 6).
-- **Textured walls** (knowledge § Deferred — Texture mapping for walls).
-- **Textured floors and ceilings** (knowledge § Deferred — Texture mapping for floors and ceilings).
-- **Sky as a special floor/ceiling case** (knowledge § Deferred).
-- **Portal / window walls (two-sided lines)** (knowledge § Deferred — moot for our solid/empty tile world).
-- **Sector light levels and the precomputed colormap table** (knowledge § Distance Attenuation 32-brightness-step palette) — replaced by a continuous lerp this slice; revisit when textures and palettes are introduced.
-- **`extra light` per-frame bias** for muzzle-pulse brightening (knowledge § Distance Attenuation) — moves into slice 3 with the FPS effects.
-- **View pitch / vertical look** (knowledge § FOV, Aspect, and the Implicit Pinhole Camera) — out of scope; would require Y-shearing or a true perspective Y projection.
+- **Textured walls** (knowledge `raycaster_renderer.md` § Deferred — Texture mapping for walls).
+- **Textured floors and ceilings** (knowledge same § — Texture mapping for floors and ceilings).
+- **Sky as a special floor/ceiling case** (knowledge same §).
+- **Portal / window walls (two-sided lines)** (knowledge same § — moot for our solid/empty tile world).
+- **Sector light levels and the precomputed colormap table** (knowledge `raycaster_renderer.md` § Distance Attenuation — 32-brightness-step palette) — replaced by a continuous lerp; revisit when textures and palettes are introduced.
+- **View pitch / vertical look** (knowledge `raycaster_renderer.md` § FOV, Aspect, and the Implicit Pinhole Camera) — out of scope; would require Y-shearing or a true perspective Y projection.
 - **Coarser per-column subsampling** (one ray per N columns) — knowledge § Column Projection Model notes the trade-off; the simplest (one ray per pixel column) is picked here.
-- **Discrete-step color attenuation** (knowledge § Distance Attenuation 32 brightness steps) — revisit when palette assets are introduced.
-- **Floor / ceiling distance attenuation** (knowledge § Floor and Ceiling Treatment "Optional: still apply per-row distance attenuation").
-- **Non-square pixel aspect compensation** (knowledge § FOV, Aspect, and the Implicit Pinhole Camera) — we render at 4:3 square pixels.
+- **Discrete-step color attenuation** (knowledge `raycaster_renderer.md` § Distance Attenuation 32 brightness steps) — revisit when palette assets are introduced.
+- **Floor / ceiling distance attenuation** (knowledge `raycaster_renderer.md` § Floor and Ceiling Treatment "Optional: still apply per-row distance attenuation"). When implemented, the slice-3 extra-light bias must apply to those lookups identically to walls.
+- **Non-square pixel aspect compensation** (knowledge `raycaster_renderer.md` § FOV, Aspect, and the Implicit Pinhole Camera) — we render at 4:3 square pixels.
 - **Build-time precomputation of the angle-offset table** (`build.rs`) — only needed if cross-platform float-trig drift becomes observable.
 - **Translucent / "fuzz" sprite rendering** (knowledge `raycaster_sprites.md` § Open Questions — Translucent sprite rendering) — flat-color sprites have no translucent path.
 - **Per-sprite full-bright / damage-flash colormap selection** (knowledge `raycaster_sprites.md` § Deferred) — depends on the colormap-table form of distance attenuation.
-- **Visible-sprite cap** (`MAXVISSPRITES = 128` in the reference) — the active entity count never approaches this in our scenarios; not enforced as a hard limit in slice 2.
+- **Visible-sprite cap** (`MAXVISSPRITES = 128` in the reference) — the active entity count never approaches this in our scenarios; not enforced as a hard limit in slice 3.
 
 ## Related
 

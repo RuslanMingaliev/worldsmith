@@ -1,10 +1,14 @@
 # raycaster module contract.
-# Slice 2 of 6 of the FPS migration (specs/45). Walls + flat
+# Slice 3 of 6 of the FPS migration (specs/45). Walls + flat
 # floor / ceiling from slice 1, plus a per-column wall-depth z-buffer
 # and a back-to-front sprite pass for live enemies, dying enemies,
-# corpses, blood splats, and active pickups. Default --render-mode is
-# `topdown` (through slice 4), so this module does not run by default
-# until slice 5 flips the default.
+# corpses, blood splats, and active pickups from slice 2, plus the
+# slice-3 first-person effects pass: screen-space muzzle-flash overlay,
+# world-space tracer line, wall-puff billboard with a full-bright
+# first phase, extra-light bias on wall and sprite shading during
+# the firing window, and the player damage / pickup tint screen-space
+# overlays. Default --render-mode is `topdown` (through slice 4), so
+# this module does not run by default until slice 5 flips the default.
 name: raycaster
 file: src/raycaster.rs
 depends_on: [level_data, player_state, enemy_logic, visual_effects]
@@ -66,6 +70,32 @@ public_constants:
       type: f32,
       value: "1.0",
       source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (Generation default — caps the projected screen extent of a near-camera billboard so flat-color rectangles do not monopolize the framebuffer; knowledge has no analogue)" }
+  # Slice 3 first-person effects (specs/25 § Renderer (Raycaster) /
+  # First-Person Effects).
+  - { name: RAYCASTER_EXTRA_LIGHT_SHADE_DELTA,
+      type: f32,
+      value: "0.0625",
+      source: "specs/25 § Renderer (Raycaster) / First-Person Effects (knowledge-backed: knowledge/raycaster_effects.md § Extra-Light Bias — '1 ramp-step ≈ 6.25%' on the reference's 16-step ramp)" }
+  - { name: RAYCASTER_MUZZLE_FLASH_CENTER_X,
+      type: usize,
+      value: "WINDOW_WIDTH / 2",
+      source: "specs/25 § Renderer (Raycaster) / First-Person Effects (Generation default — knowledge-backed mechanism: knowledge/raycaster_effects.md § Held-Weapon View Sprite, screen-anchored not world-anchored; pixel coordinate is generation default in that spirit)" }
+  - { name: RAYCASTER_MUZZLE_FLASH_CENTER_Y,
+      type: usize,
+      value: "WINDOW_HEIGHT * 3 / 4",
+      source: "specs/25 § Renderer (Raycaster) / First-Person Effects (Generation default — same rationale as RAYCASTER_MUZZLE_FLASH_CENTER_X; placed where a held pistol's muzzle would exit the bottom of the frame)" }
+  - { name: RAYCASTER_MUZZLE_FLASH_RADIUS_PX,
+      type: i32,
+      value: "24",
+      source: "specs/25 § Renderer (Raycaster) / First-Person Effects (Generation default — sized larger than topdown MUZZLE_FLASH_RADIUS = 6 because the raycaster overlay is screen-space at the gun anchor, not world-space at the player position)" }
+  - { name: RAYCASTER_TRACER_THICKNESS_PX,
+      type: i32,
+      value: "1",
+      source: "specs/25 § Renderer (Raycaster) / First-Person Effects (Generation default — knowledge has no tracer in the reference; we keep one for visual parity with the topdown TRACER_THICKNESS = 1, deliberate generation-default deviation per specs/45 § Generation Default Deviation: Tracer Line)" }
+  - { name: RAYCASTER_PUFF_FULL_BRIGHT_FRACTION,
+      type: f32,
+      value: "0.5",
+      source: "specs/25 § Renderer (Raycaster) / First-Person Effects (knowledge-backed: knowledge/raycaster_effects.md § Wall-Hit Impact Puff — first frame full-bright, subsequent frames distance-attenuated; the 4-frame reference puff collapses to a 'first half / second half' split in our 1-Effect model. Threshold midpoint at 0.5 is generation default in that spirit)" }
 public_methods:
   - signature: |
       pub fn draw(
@@ -86,11 +116,39 @@ public_methods:
       See ir/contracts/_shared.yaml § main_cli § render_mode for the
       dispatch shape.
 
-      Two-pass structure (specs/45 § Per-Frame Draw Dispatch):
-        Pass 1: wall pass (slice 1, unchanged) -- fills ceiling + walls
-                + floor AND populates the per-column wall-depth z-buffer.
-        Pass 2: sprite pass (slice 2) -- back-to-front over the entity
-                lists; per-column z-test against wall_depth[].
+      Three-pass structure (specs/45 § Per-Frame Draw Dispatch;
+      knowledge/raycaster_effects.md § Effect Pass Ordering):
+        Pass 1: wall pass (slice 1, slice-3 extra-light bias on shading)
+                -- fills ceiling + walls + floor AND populates the
+                per-column wall-depth z-buffer.
+        Pass 2: sprite pass (slice 2 + slice-3 wall-puff source +
+                slice-3 extra-light bias) -- back-to-front over the
+                entity lists; per-column z-test against wall_depth[].
+        Pass 3: effects pass (slice 3) -- world-space tracer line
+                (per-column z-test), screen-space muzzle-flash overlay
+                (no z-test), full-viewport damage tint overlay
+                (alpha blend), full-viewport pickup tint overlay
+                (alpha blend). Layers 3-4 inside this pass are
+                world-occluded then screen-overlay then full-viewport
+                blends; ordering is fixed (specs/45 § First-Person
+                Effects § Effect Pass Order rules 3..6).
+
+      Once-per-frame derived state (computed at the top of draw,
+      before Pass 1, cached for the frame -- specs/45 § Extra-Light
+      Bias rule 1):
+        firing_active: bool =
+            fx.effects.iter()
+              .any(|e| e.kind == EffectKind::MuzzleFlash
+                       && e.lifetime_remaining > 0.0);
+      Used by both Pass 1 (wall shading) and Pass 2 (sprite shading
+      for non-full-bright candidates). NOT used by Pass 3 (the muzzle
+      flash overlay tests the same condition independently for its
+      "should I draw?" gate). One read of fx.effects is enough; the
+      Coder MAY collapse the three iterations into one if a single
+      pass over fx.effects produces all three derived sets (sprite-
+      pass effect candidates, tracer list, firing_active flag) --
+      whichever shape, the contract is the once-per-frame compute,
+      not the iteration count.
 
       ----------------------------------------------------------------
       Pass 1 (wall pass) -- per-column algorithm (one ray per pixel
@@ -129,13 +187,21 @@ public_methods:
         5. column_h_px = ((WALL_HEIGHT_TILES * focal_px) / perp_dist)
                           .clamp(1.0, WINDOW_HEIGHT as f32) as i32
         6. shade_t = (perp_dist / RAYCASTER_MAX_DEPTH).clamp(0.0, 1.0)
+           # Slice-3 extra-light bias (specs/45 § Extra-Light Bias).
+           # When firing_active is true, shift shade_t toward "near"
+           # by RAYCASTER_EXTRA_LIGHT_SHADE_DELTA before the lerp.
+           if firing_active:
+               shade_t = (shade_t - RAYCASTER_EXTRA_LIGHT_SHADE_DELTA)
+                          .clamp(0.0, 1.0)
            wall_color = lerp_rgb(RAYCASTER_WALL_COLOR_NEAR,
                                   RAYCASTER_WALL_COLOR_FAR, shade_t)
            if ew_wall: wall_color = scale_rgb(wall_color,
                                               RAYCASTER_NSEW_DARKEN_FACTOR)
            lerp_rgb / scale_rgb are module-private helpers (Coder
            degree of freedom on shape; per-channel multiply is the
-           obvious form).
+           obvious form). The extra-light bias modifies shade_t
+           before the lerp; it does NOT compose with NS/EW darken
+           in any other way.
         7. Write column x into framebuffer:
              - rows [0, ceiling_top) ← RAYCASTER_CEILING_COLOR
              - rows [ceiling_top, floor_top) ← wall_color
@@ -159,12 +225,13 @@ public_methods:
       Pass 2 (sprite pass) -- back-to-front billboard composite:
         a. Build the candidate sprite list. Each candidate carries
            (pos: Vec2, world_half_width: f32, world_half_height: f32,
-            color: u32). Sources (specs/45 § Sprites and Billboards
-            § Sprite Sources):
+            color: u32, full_bright: bool). Sources (specs/45
+            § Sprites and Billboards § Sprite Sources, § First-Person
+            Effects § Wall Puff Billboard):
              - Live enemies: iterate `enemies`; include where
                `enemy.alive`. world_half_* = ENEMY_RADIUS_TILES.
                color = COLOR_PAIN_FLASH if pain_flash_remaining > 0,
-               else COLOR_ENEMY.
+               else COLOR_ENEMY. full_bright = false.
              - Dying-enemy death fade: iterate `fx.effects`; include
                where `kind == EffectKind::EnemyDeathFade`.
                Compute fade_t = 1.0 - lifetime_remaining /
@@ -176,6 +243,7 @@ public_methods:
                  — applied to both world_half_width and
                  world_half_height (sprites are square).
                color = lerp_rgb(COLOR_ENEMY, COLOR_CORPSE, fade_t).
+               full_bright = false.
                At fade_t == 1.0 both extent and color match the
                corpse that spawns next, so the visual transitions
                continuously from live → fading → corpse without a
@@ -184,11 +252,22 @@ public_methods:
              - Enemy corpse: iterate `fx.effects`; include where
                `kind == EffectKind::EnemyCorpse`.
                world_half_* = ENEMY_CORPSE_RADIUS / TILE_SIZE.
-               color = COLOR_CORPSE.
+               color = COLOR_CORPSE. full_bright = false.
              - Blood splat: iterate `fx.effects`; include where
                `kind == EffectKind::BloodSplat`.
                world_half_* = BLOOD_RADIUS / TILE_SIZE.
-               color = COLOR_BLOOD.
+               color = COLOR_BLOOD. full_bright = false.
+             - Wall puff (slice 3): iterate `fx.effects`; include
+               where `kind == EffectKind::WallPuff`.
+               world_half_* = PUFF_RADIUS / TILE_SIZE
+                              (= 4.0 / 32.0 = 0.125 tile).
+               color = COLOR_PUFF.
+               full_bright = lifetime_remaining / PUFF_DURATION
+                             > RAYCASTER_PUFF_FULL_BRIGHT_FRACTION.
+               specs/45 § First-Person Effects § Wall Puff
+               Billboard. The full_bright flag is what selects
+               between the bright-first-phase override and the
+               regular distance-attenuated path in step (d) below.
              - Active pickups: iterate `level.pickups`; include where
                `pickup.active`. Per kind:
                  Health: world_half_* = PICKUP_HEALTH_SIZE_PX as f32 / 2.0
@@ -197,8 +276,13 @@ public_methods:
                  Ammo:   world_half_* = PICKUP_AMMO_SIZE_PX as f32 / 2.0
                                          / TILE_SIZE;
                          color = PICKUP_AMMO_COLOR.
-             Skip (deferred to slice 3): MuzzleFlash, Tracer, WallPuff
-             effect kinds.
+                 full_bright = false (pickups distance-attenuate
+                 like enemies/corpses/blood).
+             Skip: MuzzleFlash and Tracer effect kinds. MuzzleFlash
+             drives the screen-space overlay in Pass 3 (existence
+             test only). Tracer drives the world-space line
+             projection in Pass 3 (consumes pos+end_pos, projected
+             differently from sprite billboards).
         b. For each candidate, compute camera-space transform
            (knowledge § World → Camera-Space Transform; sign of
            right_offset adapted for our +y-down world — see note
@@ -254,13 +338,29 @@ public_methods:
            visually clash with the wall's deep-shade band (specs/45
            § Distance Attenuation (Sprites); knowledge § Flat-Color
            vs Textured Choice — "if applied, follows the same lerp-
-           toward-far convention as the wall pass"):
-             sprite_shade_t = (forward_dist / RAYCASTER_MAX_DEPTH)
-                                 .clamp(0.0, 1.0)
-                              * RAYCASTER_SPRITE_DEPTH_FADE_FACTOR
-             shaded_color = lerp_rgb(sprite.color,
-                                      RAYCASTER_WALL_COLOR_FAR,
-                                      sprite_shade_t)
+           toward-far convention as the wall pass"). Slice-3
+           full-bright candidates and slice-3 extra-light bias
+           branch the attenuation:
+             if candidate.full_bright {
+                 # Slice-3 full-bright path (wall puff first phase,
+                 # specs/45 § Wall Puff Billboard). No distance
+                 # attenuation, no extra-light bias modulation.
+                 shaded_color = candidate.color;
+             } else {
+                 sprite_shade_t = (forward_dist / RAYCASTER_MAX_DEPTH)
+                                     .clamp(0.0, 1.0)
+                                  * RAYCASTER_SPRITE_DEPTH_FADE_FACTOR;
+                 # Slice-3 extra-light bias on non-full-bright sprites
+                 # (specs/45 § Extra-Light Bias).
+                 if firing_active {
+                     sprite_shade_t = (sprite_shade_t
+                                        - RAYCASTER_EXTRA_LIGHT_SHADE_DELTA)
+                                       .clamp(0.0, 1.0);
+                 }
+                 shaded_color = lerp_rgb(candidate.color,
+                                          RAYCASTER_WALL_COLOR_FAR,
+                                          sprite_shade_t);
+             }
              # xscale clamps the projection divisor so a sprite
              # closer than RAYCASTER_SPRITE_MIN_PROJ_DIST renders
              # at the size it would have at MIN_PROJ_DIST instead
@@ -294,17 +394,139 @@ public_methods:
            helper used in Pass 1; no new helper is added.
 
       ----------------------------------------------------------------
+      Pass 3 (effects pass, slice 3) -- runs after Pass 2 returns;
+      reads firing_active and `fx.effects[*]` filtered to MuzzleFlash
+      and Tracer (Pass 2 already consumed the other kinds), plus
+      `player.damage_count` and `fx.pickup_tint_count` for the two
+      overlays. Layering inside this pass is fixed (specs/45 §
+      First-Person Effects § Effect Pass Order):
+        layer 3: tracer line (world-occluded);
+        layer 4: muzzle flash overlay (screen-space, no z-test);
+        layer 5: damage tint overlay (full-viewport blend);
+        layer 6: pickup tint overlay (full-viewport blend).
+
+      Layer 3 -- bullet tracer (specs/45 § Bullet Tracer):
+        for each Effect with kind == EffectKind::Tracer
+                       and lifetime_remaining > 0.0:
+          # Project end_pos via the Pass 2 camera-space transform.
+          tr_end = effect.end_pos - player.pos;
+          forward_dist_end = tr_end.x * cos(player.facing)
+                              + tr_end.y * sin(player.facing);
+          right_offset_end = tr_end.y * cos(player.facing)
+                              - tr_end.x * sin(player.facing);
+          if forward_dist_end < RAYCASTER_SPRITE_NEAR_PLANE { continue; }
+          screen_x_end = (WINDOW_WIDTH as f32 / 2.0)
+                          + right_offset_end * (focal_px / forward_dist_end);
+          x_end_int = screen_x_end.round()
+                       .clamp(0, WINDOW_WIDTH as i32 - 1) as i32;
+          # Start anchor is the screen-space gun anchor; per-column
+          # depth interpolates from MUZZLE_OFFSET to forward_dist_end.
+          x_start_int = RAYCASTER_MUZZLE_FLASH_CENTER_X as i32;
+          y_start_int = RAYCASTER_MUZZLE_FLASH_CENTER_Y as i32;
+          y_end_int = HORIZON_Y as i32;
+          # Walk the line (Bresenham or DDA -- Coder degree of
+          # freedom). For each (x, y) on the line:
+          #   if x in [0, WINDOW_WIDTH) and y in [0, WINDOW_HEIGHT):
+          #     if x_start_int == x_end_int:
+          #       depth = forward_dist_end;
+          #     else:
+          #       depth = lerp(MUZZLE_OFFSET as f32,
+          #                    forward_dist_end,
+          #                    (x - x_start_int) as f32
+          #                    / (x_end_int - x_start_int) as f32);
+          #     if depth < wall_depth[x as usize]:
+          #       framebuffer[y as usize * WINDOW_WIDTH + x as usize]
+          #         = COLOR_TRACER;
+          # Strict-less-than at depth==wall_depth, matching Pass 2's
+          # convention. RAYCASTER_TRACER_THICKNESS_PX = 1 in slice 3
+          # so the inner loop draws a single-pixel line; wider would
+          # require an N-pixel thickening pass per column.
+          # No distance attenuation, no extra-light bias modulation.
+
+      Layer 4 -- muzzle flash overlay (specs/45 § Muzzle Flash
+      Screen-Space Overlay):
+        if firing_active {
+            # filled disc (Coder degree of freedom on shape -- disc
+            # vs rectangle vs textured sprite; disc is the obvious
+            # choice).
+            cx = RAYCASTER_MUZZLE_FLASH_CENTER_X as i32;
+            cy = RAYCASTER_MUZZLE_FLASH_CENTER_Y as i32;
+            r  = RAYCASTER_MUZZLE_FLASH_RADIUS_PX;
+            for y in (cy - r) .. (cy + r):
+              for x in (cx - r) .. (cx + r):
+                if x in [0, WINDOW_WIDTH) and y in [0, WINDOW_HEIGHT)
+                   and (x - cx).pow(2) + (y - cy).pow(2)
+                       <= r.pow(2):
+                  framebuffer[y as usize * WINDOW_WIDTH + x as usize]
+                    = COLOR_MUZZLE_FLASH;
+        }
+        # Full-bright -- no distance attenuation, no extra-light
+        # bias modulation, no z-test. Single overlay regardless of
+        # how many MuzzleFlash effects are active (knowledge §
+        # Brief Brightness Pulse on Walls -- "Stacking is not
+        # additive").
+
+      Layer 5 -- damage tint overlay (specs/45 § Player Damage Tint
+      Overlay; same formula as renderer::draw layer 8):
+        if player.damage_count > 0.0 {
+            level = ((player.damage_count
+                       * DAMAGE_TINT_LEVELS as f32)
+                      / DAMAGE_TINT_CAP).ceil() as u32;
+            level = level.min(DAMAGE_TINT_LEVELS);
+            if level > 0 {
+                alpha_pct = (DAMAGE_TINT_MAX_ALPHA_PCT * level)
+                             / DAMAGE_TINT_LEVELS;
+                # Per-pixel software blend across the full
+                # framebuffer (same blend formula renderer.rs uses).
+                for px in framebuffer.iter_mut() {
+                    *px = blend_rgb(*px, COLOR_DAMAGE_TINT, alpha_pct);
+                }
+            }
+        }
+
+      Layer 6 -- pickup tint overlay (specs/45 § Pickup Tint
+      Overlay; same formula as renderer::draw layer 8.5):
+        if fx.pickup_tint_count > 0.0 {
+            pickup_level = ((fx.pickup_tint_count
+                              * PICKUP_TINT_LEVEL_COUNT as f32)
+                             / PICKUP_TINT_CAP).ceil() as u32;
+            pickup_level = pickup_level.min(PICKUP_TINT_LEVEL_COUNT);
+            if pickup_level > 0 {
+                alpha_pct = (PICKUP_TINT_MAX_ALPHA_PCT * pickup_level)
+                             / PICKUP_TINT_LEVEL_COUNT;
+                for px in framebuffer.iter_mut() {
+                    *px = blend_rgb(*px, COLOR_PICKUP_TINT, alpha_pct);
+                }
+            }
+        }
+        # Independent of and additive with the damage tint overlay --
+        # both may render simultaneously when the player is hurt and
+        # grabs a pickup in the same frame. Same blend_rgb helper as
+        # layer 5; the overlays compose left-to-right (damage first,
+        # then pickup on top).
+
+      blend_rgb is a module-private helper (Coder degree of freedom
+      on shape; the per-channel `out = (alpha_pct * tint + (100 -
+      alpha_pct) * src) / 100` formula renderer.rs already uses for
+      damage tint is the obvious form -- ideally factored out to a
+      shared helper rather than duplicated module-locally).
+
+      ----------------------------------------------------------------
       Reads (no mutation):
         level.tiles, level.width, level.height (via level_data::is_wall);
         level.pickups (sprite source);
         player.pos, player.facing;
+        player.damage_count (slice 3 -- damage tint overlay);
         enemies[*].pos, enemies[*].alive, enemies[*].pain_flash_remaining;
-        fx.effects[*].kind, fx.effects[*].pos, fx.effects[*].lifetime_remaining
-          (filtered to EnemyDeathFade / EnemyCorpse / BloodSplat).
-      Does NOT read VisualEffects::pickup_tint_count, the per-frame
-      frames counter, player.health, player.ammo, player.alive,
-      player.damage_count, enemy.health, enemy.state, or any other
-      gameplay state. Writes the framebuffer; no other side effects.
+        fx.effects[*].kind, fx.effects[*].pos, fx.effects[*].end_pos
+          (Tracer only), fx.effects[*].lifetime_remaining
+          (all kinds: EnemyDeathFade / EnemyCorpse / BloodSplat / WallPuff
+           / MuzzleFlash / Tracer);
+        fx.pickup_tint_count (slice 3 -- pickup tint overlay).
+      Does NOT read the per-frame frames counter, player.health,
+      player.ammo, player.alive, enemy.health, enemy.state, or any
+      other gameplay state. Writes the framebuffer; no other side
+      effects.
 
       Module-private state:
         - column_angle_offset: [f32; WINDOW_WIDTH] -- precomputed
@@ -316,6 +538,10 @@ public_methods:
           ("rewritten end-to-end during the wall pass of every frame;
           never carries state between frames"). The same allocation
           choices as the angle-offset table apply here.
+        - firing_active: bool -- per-frame derived state, computed
+          once at the top of draw and consumed by Pass 1 wall shading,
+          Pass 2 sprite shading (non-full-bright candidates), and
+          Pass 3 muzzle flash overlay gate (slice 3).
 
       Determinism. raycaster::draw is a pure function of
       (level, player, enemies, fx) plus compile-time constants and
@@ -323,24 +549,29 @@ public_methods:
       composes with specs/35's existing determinism chain. The sprite
       pass is order-deterministic IF the back-to-front sort uses a
       total-order comparator (forward_dist + a deterministic
-      secondary tie-breaker).
+      secondary tie-breaker). The slice-3 effects pass is fully
+      deterministic -- no randomness, no time-based jitter; tracer
+      end-point projection and overlay alpha mappings are pure
+      functions of the read set above.
 
 cross_module_borrows:
   - "&mut Vec<u32> (framebuffer; owned by main.rs)"
   - "&Level (read-only; level_data — also reads level.pickups)"
-  - "&Player (read-only; player_state)"
+  - "&Player (read-only; player_state — slice 3 widens reads to include player.damage_count)"
   - "&[Enemy] (read-only; enemy_logic — slice 2)"
-  - "&VisualEffects (read-only; visual_effects — slice 2)"
+  - "&VisualEffects (read-only; visual_effects — slice 3 widens reads to all EffectKind variants AND fx.pickup_tint_count)"
 notes: |
   Single consumer is main.rs in --render-mode=raycaster mode. Not
   consumed by any per-frame gameplay path (game_loop::update,
   autopilot::bot_step, enemy_logic::update, weapon_system::fire all
   stay unaware of this module). Slice 1 ships a walls-only renderer;
   slice 2 of the migration adds entity / sprite drawing inside this
-  module's draw() (this contract); slice 3 adds FPS-specific effects
-  (muzzle flash / tracer / wall puff / damage tint / pickup tint),
-  slice 4 swaps the HUD layout, slice 5 flips the --render-mode
-  default to raycaster, slice 6 removes the topdown code path.
+  module's draw(); slice 3 (this contract) adds the FPS-specific
+  effects pass (muzzle flash / tracer / wall puff / extra-light bias
+  / damage tint / pickup tint); slice 4 will swap the HUD layout
+  and add the held-weapon body sprite; slice 5 flips the
+  --render-mode default to raycaster; slice 6 removes the topdown
+  code path.
 
   Dependency graph: depends_on
   [level_data, player_state, enemy_logic, visual_effects] --
@@ -359,22 +590,42 @@ notes: |
   Imported color and dimensional constants (specs/80 § API Surface
   "constant import is fine; struct import is not"):
     use crate::renderer::{COLOR_ENEMY, COLOR_PAIN_FLASH, COLOR_CORPSE,
-                          COLOR_BLOOD, PICKUP_HEALTH_OUTER_COLOR,
+                          COLOR_BLOOD, COLOR_PUFF, COLOR_MUZZLE_FLASH,
+                          COLOR_TRACER, COLOR_DAMAGE_TINT,
+                          COLOR_PICKUP_TINT,
+                          PICKUP_HEALTH_OUTER_COLOR,
                           PICKUP_AMMO_COLOR, PICKUP_HEALTH_SIZE_PX,
-                          PICKUP_AMMO_SIZE_PX};
+                          PICKUP_AMMO_SIZE_PX,
+                          DAMAGE_TINT_MAX_ALPHA_PCT};
     use crate::enemy_logic::ENEMY_RADIUS_TILES;
     use crate::visual_effects::{ENEMY_DEATH_FADE_DURATION,
-                                ENEMY_CORPSE_RADIUS, BLOOD_RADIUS};
+                                ENEMY_CORPSE_RADIUS, BLOOD_RADIUS,
+                                PUFF_RADIUS, PUFF_DURATION,
+                                DAMAGE_TINT_CAP, DAMAGE_TINT_LEVELS,
+                                PICKUP_TINT_CAP,
+                                PICKUP_TINT_LEVEL_COUNT,
+                                EffectKind, MUZZLE_OFFSET};
     use crate::level_data::TILE_SIZE;
-  These are pure constant imports; raycaster does not call any
-  function on these modules.
+  These are pure constant imports (plus the EffectKind enum, used
+  in `kind == EffectKind::X` filters during the once-per-frame
+  effect partition); raycaster does not call any function on these
+  modules.
+
+  PICKUP_TINT_MAX_ALPHA_PCT is referenced by the layer-6 alpha
+  formula but is NOT pinned as a public constant in renderer's
+  contract today; the Coder either (a) re-derives it inline (as
+  renderer.rs does in the topdown path) or (b) lifts the existing
+  topdown blend helper to a shared spot. Both are spec/80-acceptable.
+  This is a pre-slice-3 documentation gap in renderer.yaml; not an
+  authority gap in the Pickup Tint behavior, which spec/40 + spec/25
+  pin completely (~30% max alpha).
 
   Coder degrees of freedom (per spec/80 § API Surface and
   _shared.yaml § coder_degrees_of_freedom):
-    - Module-private helper shape for lerp_rgb / scale_rgb / DDA
-      step state (single struct vs. paired locals; iterator vs.
-      while-loop). Whichever shape is picked, it MUST stay
-      module-private.
+    - Module-private helper shape for lerp_rgb / scale_rgb /
+      blend_rgb / DDA step state (single struct vs. paired locals;
+      iterator vs. while-loop). Whichever shape is picked, it MUST
+      stay module-private.
     - Whether the angle-offset table is a OnceLock<[f32; W]> or a
       lazy_static-style helper or a function that recomputes per
       call. Same options apply to wall_depth[]. The deterministic-
@@ -396,3 +647,23 @@ notes: |
     - Whether the side-cone early-out (RAYCASTER_SPRITE_SIDE_CONE_FACTOR)
       is applied or skipped in favor of always running the screen-x
       clip. Both are correctness-equivalent.
+    - (Slice 3) Single iteration over fx.effects to partition
+      candidates by kind (sprite-pass items + tracer list +
+      firing_active flag), vs. three separate iterations. The
+      once-per-frame compute is what the contract pins (specs/45
+      § Extra-Light Bias rule 1); the iteration count is not.
+    - (Slice 3) Muzzle flash overlay shape: filled disc vs. filled
+      rectangle vs. (future) textured sprite. Disc is the obvious
+      choice. Pins the screen-space anchor and full-bright color;
+      shape is not.
+    - (Slice 3) Tracer line algorithm: Bresenham vs. DDA vs. any
+      single-pixel-line walker. The per-column z-test against
+      wall_depth[] and the linear-interpolated tracer depth are
+      what the contract pins; the walker is not.
+    - (Slice 3) Whether the per-pixel damage / pickup tint blend
+      shares a `blend_rgb` helper with renderer.rs (lifted to a
+      shared spot, e.g. a `presentation` or `color` helper module)
+      vs. duplicates the formula inline. Both meet spec/80 § API
+      Surface; lifting is the cleaner shape but lifting touches
+      renderer.rs, which is out of scope for slice 3 (the slice
+      only edits raycaster). A future cleanup PR may unify.

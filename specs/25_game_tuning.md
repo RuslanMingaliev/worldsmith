@@ -461,6 +461,42 @@ The raycaster's sprite pass reads existing color constants for each entity type.
 | Health pickup | `PICKUP_HEALTH_OUTER_COLOR` (#FFFFFF) | specs/25 § Pickups § Sprite Visual. Imported from `renderer`. The inner red cross overlay is **deferred** (specs/45 § Deferred — Inner-detail multi-layer sprites). |
 | Ammo pickup | `PICKUP_AMMO_COLOR` (#FFFF00) | specs/25 § Pickups § Sprite Visual. Imported from `renderer`. |
 
+### First-Person Effects
+
+Behavior spec: [`45_raycaster_renderer.md § First-Person Effects`](45_raycaster_renderer.md#first-person-effects). Knowledge: [`knowledge/raycaster_effects.md`](../knowledge/raycaster_effects.md). Constants below pin the slice-3 first-person effects: the screen-space muzzle-flash overlay, the world-space tracer line, the wall-puff billboard's full-bright phase, and the extra-light bias on wall and sprite shading during the firing window.
+
+The trigger durations (`MUZZLE_FLASH_DURATION = 0.10s`, `TRACER_DURATION = 0.06s`, `PUFF_DURATION = 0.30s`) and the effect colors (`COLOR_MUZZLE_FLASH = #FFFF80`, `COLOR_TRACER = #FFFFC0`, `COLOR_PUFF = #B0B0B0`, `COLOR_BLOOD = #C00000`, `COLOR_DAMAGE_TINT = #FF0000`, `COLOR_PICKUP_TINT = #FFCC00`) are reused unchanged from the topdown effect set (§ Visual Feedback) — the raycaster imports them via `visual_effects` (durations) and `renderer` (colors). The constants below are the genuinely new values for the first-person projection.
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| RAYCASTER_EXTRA_LIGHT_SHADE_DELTA | 0.0625 (≈ 1/16 ramp step) | [`knowledge/raycaster_effects.md § Extra-Light Bias`](../knowledge/raycaster_effects.md#extra-light-bias-global-brightness-pulse) — "The world's light-table is structured as a 16-step ramp ... The renderer adds the extra-light counter to this index ... 1 ramp-step ≈ 6.25%". The continuous-lerp pipeline approximates the discrete-step bias by subtracting 0.0625 from the shading-lerp parameter `shade_t` during the firing flash window. Reference uses 1 step for "small/rapid weapons" (handgun); pistol is small/rapid. The 2-step bias for heavy weapons is **deferred** (specs/45 § Deferred — 2-step extra-light bias for heavy weapons). The clamp `(shade_t - DELTA).clamp(0.0, 1.0)` ensures a near-zero `shade_t` (very close wall) does not wrap negative. |
+| RAYCASTER_MUZZLE_FLASH_CENTER_X | `WINDOW_WIDTH / 2` (= 320) | Generation default — knowledge `raycaster_effects.md` § Held-Weapon View Sprite confirms a fixed screen-space anchor ("a fixed offset from the top of the reference 200-row vertical space") but does not pin pixel coordinates (those come from per-asset sprite dimensions, which we don't have). Centered horizontally because the player's gun is held centered in first-person view. Tied to `WINDOW_WIDTH` so the anchor scales correctly if the window dimensions ever change. |
+| RAYCASTER_MUZZLE_FLASH_CENTER_Y | `WINDOW_HEIGHT * 3 / 4` (= 360) | Generation default — knowledge has no pixel value (asset-driven in the reference). Three-quarters down places the flash where the muzzle of a held pistol would exit the bottom of the frame; sits above the top-left HUD pane (which extends down only ~30 px from the top edge — specs/50) with comfortable margin so the flash and HUD never overlap. The held-weapon body sprite (the gun itself, on which the flash visually anchors) is **deferred** to slice 4 with the FPS HUD layout (specs/45 § Deferred — Held-weapon body sprite); slice 3 ships the flash as an unattached bright disc. |
+| RAYCASTER_MUZZLE_FLASH_RADIUS_PX | 24 | Generation default — knowledge has no pixel value (asset-driven). Sized larger than topdown's `MUZZLE_FLASH_RADIUS = 6 px` so the flash reads as a held-weapon flash at screen scale (the topdown flash sits at the player's world position projected to screen, while the raycaster flash is a screen-space overlay at the gun anchor — different scale basis). Bounded so the flash does not occlude the central viewport: at 24 px radius the flash covers ~7.5% of the 640 px screen width and ~10% of the 480 px height, visible without obscuring the player's view of nearby walls / enemies during the 0.10s flash. |
+| RAYCASTER_TRACER_THICKNESS_PX | 1 | Generation default — knowledge `raycaster_effects.md` § Hitscan Trace Endpoint: NO Tracer Line explicitly notes the reference does NOT render a tracer; the tracer in raycaster mode is a deliberate genre-style departure for visual parity with the topdown renderer (specs/45 § Generation Default Deviation: Tracer Line). 1 px matches the topdown `TRACER_THICKNESS`; thicker tracers would visually compete with the muzzle flash overlay. |
+| RAYCASTER_PUFF_FULL_BRIGHT_FRACTION | 0.5 | [`knowledge/raycaster_effects.md § Wall-Hit Impact Puff`](../knowledge/raycaster_effects.md#wall-hit-impact-puff-world-space-billboard) — "First frame uses the full-bright flag: drawn at the brightest colormap regardless of distance/sector light. Subsequent frames use normal distance-attenuated shading". The reference's 4-frame puff is collapsed to "full-bright for the first half of the lifetime, distance-attenuated for the second half" in our 1-Effect model. 0.5 ties at the midpoint; tunable upward (more full-bright) if puffs against far walls do not pop, or downward if they overstay. |
+
+#### Per-Frame Bias Detection (derived, not a new constant)
+
+The "firing window active" gate referenced by both the wall pass and the sprite pass is derived from the per-frame state, not pinned as a constant:
+
+```rust
+let firing_active = fx.effects.iter()
+    .any(|e| e.kind == EffectKind::MuzzleFlash && e.lifetime_remaining > 0.0);
+```
+
+This expression is computed once at the start of `raycaster::draw` and cached for the frame. Knowledge `raycaster_effects.md` § Effect Pass Ordering — "the renderer caches the player's extra-light counter into a frame-scoped shading offset" — pins this once-per-frame compute as a contract requirement; it is not a constant.
+
+#### Per-Effect Half-Extents and Colors (derived, not new constants)
+
+The slice-3 wall puff sprite-pass billboard derives its half-extent from the existing `PUFF_RADIUS` constant in `visual_effects` and uses the existing `COLOR_PUFF` constant in `renderer`:
+
+| Entity | Half-extent | Color | Source |
+|--------|-------------|-------|--------|
+| Wall puff Effect | `PUFF_RADIUS / TILE_SIZE` (0.125 tile, 4 px / 32 px) | `COLOR_PUFF` (#B0B0B0) | specs/25 § Visual Feedback / Wall Puff. Imported from `visual_effects` (px) and `level_data` (TILE_SIZE); color from `renderer`. The puff's full-bright phase override is keyed off `lifetime_remaining / PUFF_DURATION > RAYCASTER_PUFF_FULL_BRIGHT_FRACTION`. |
+
+The screen-space muzzle flash overlay reuses `COLOR_MUZZLE_FLASH` (`#FFFF80`) from `renderer`. The tracer line reuses `COLOR_TRACER` (`#FFFFC0`) from `renderer`. The damage tint overlay reuses `COLOR_DAMAGE_TINT`, `DAMAGE_TINT_CAP`, `DAMAGE_TINT_LEVELS`, and `DAMAGE_TINT_MAX_ALPHA_PCT`. The pickup tint overlay reuses `COLOR_PICKUP_TINT`, `PICKUP_TINT_CAP`, `PICKUP_TINT_LEVEL_COUNT`, and `PICKUP_TINT_MAX_ALPHA_PCT`. None are new constants.
+
 ## Frame Rate
 
 | Property | Value |
