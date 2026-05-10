@@ -139,7 +139,8 @@ main_cli:
                                                     &game.player, &game.enemies,
                                                     &game.fx, game_over),
             RenderMode::Raycaster => {
-                raycaster::draw(&mut framebuffer, &game.level, &game.player);
+                raycaster::draw(&mut framebuffer, &game.level,
+                                &game.player, &game.enemies, &game.fx);
                 renderer::draw_hud(&mut framebuffer, &game.player);
                 if let Some(won) = game_over {
                     renderer::draw_game_over_border(&mut framebuffer, won);
@@ -149,9 +150,16 @@ main_cli:
       The Coder may pick a different code shape for the Raycaster arm
       (one combined helper vs. three explicit calls) so long as the
       visual layer order matches: raycaster fills the framebuffer
-      first, then HUD on top, then game-over border on top of that.
-      See ir/contracts/raycaster.yaml and ir/contracts/renderer.yaml
-      for the function signatures involved.
+      with walls + floor + ceiling + sprites first, then HUD on top,
+      then game-over border on top of that. See
+      ir/contracts/raycaster.yaml and ir/contracts/renderer.yaml for
+      the function signatures involved.
+
+      Slice 2 widens the raycaster::draw signature to accept
+      &game.enemies and &game.fx (read-only) so the raycaster can
+      project entity billboards (specs/45 § Sprites and Billboards).
+      The topdown arm's renderer::draw signature is unchanged; the
+      slice-2 work is render-side only.
 
   modes:
     interactive:
