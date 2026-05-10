@@ -54,10 +54,29 @@ jobs:
         id: pr
         run: |
           set -e
-          PR_NUM=$(gh api "/repos/${{ github.repository }}/commits/${GITHUB_SHA}/pulls" \
-                   --jq '.[0].number // empty')
+          # GitHub's commits/<sha>/pulls endpoint can take several seconds
+          # to associate a freshly-squashed merge commit with its source
+          # PR. Observed on PR #40 (snapshot run #25630678899): workflow
+          # fired 3s after merge, the API returned [], the workflow logged
+          # "Direct push to main" and skipped — ten minutes later the same
+          # query returned the PR. Poll for up to ~30s before giving up.
+          # Legitimate direct pushes to main (no PR exists) still hit the
+          # warning path after the polling window.
+          PR_NUM=""
+          for attempt in 1 2 3 4 5; do
+            PR_NUM=$(gh api "/repos/${{ github.repository }}/commits/${GITHUB_SHA}/pulls" \
+                     --jq '.[0].number // empty')
+            if [ -n "$PR_NUM" ]; then
+              echo "Resolved PR #${PR_NUM} on attempt ${attempt}."
+              break
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              echo "Attempt ${attempt}: no PR yet for ${GITHUB_SHA}; waiting 6s..."
+              sleep 6
+            fi
+          done
           if [ -z "$PR_NUM" ]; then
-            echo "::warning::Direct push to main (no PR found for ${GITHUB_SHA}). Snapshot not updated."
+            echo "::warning::Direct push to main (no PR found for ${GITHUB_SHA} after polling 30s). Snapshot not updated."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
