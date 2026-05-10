@@ -1,0 +1,176 @@
+# raycaster module contract.
+# Slice 1 of 6 of the FPS migration (specs/45). Walls + flat
+# floor / ceiling only; no entities, no FPS-specific effects, no
+# FPS HUD. Default --render-mode is `topdown`, so this module
+# does not run by default until slice 5 flips the default.
+name: raycaster
+file: src/raycaster.rs
+depends_on: [level_data, player_state]
+public_types: []
+public_constants:
+  # All numeric values pinned in specs/25 § Renderer (Raycaster).
+  # Listed here because the raycaster is the single consumer (per the
+  # _shared.yaml § intentionally_unspecified rule "renderer color
+  # values live in the consumer's contract").
+  - { name: RAYCASTER_FOV_RADIANS,
+      type: f32,
+      value: "std::f32::consts::FRAC_PI_2",
+      source: "specs/25 § Renderer (Raycaster) / Projection (knowledge-backed: § Column Projection Model)" }
+  - { name: HORIZON_Y,
+      type: usize,
+      value: "WINDOW_HEIGHT / 2",
+      source: "specs/25 § Renderer (Raycaster) / Projection (knowledge-backed: § FOV, Aspect, and the Implicit Pinhole Camera)" }
+  - { name: WALL_HEIGHT_TILES,
+      type: f32,
+      value: "1.0",
+      source: "specs/25 § Renderer (Raycaster) / Projection (Generation default)" }
+  - { name: RAYCASTER_MAX_DEPTH,
+      type: f32,
+      value: "32.0",
+      source: "specs/25 § Renderer (Raycaster) / Far Clipping (knowledge-backed: § Max Render Distance)" }
+  - { name: RAYCASTER_NSEW_DARKEN_FACTOR,
+      type: f32,
+      value: "0.75",
+      source: "specs/25 § Renderer (Raycaster) / Wall Shading (knowledge-backed mechanism: § NS-vs-EW Wall Shading; factor is generation default in that spirit)" }
+  - { name: RAYCASTER_WALL_COLOR_NEAR,
+      type: u32,
+      value: "0xC0C0C0",
+      source: "specs/25 § Renderer (Raycaster) / Wall Shading (Generation default)" }
+  - { name: RAYCASTER_WALL_COLOR_FAR,
+      type: u32,
+      value: "0x101010",
+      source: "specs/25 § Renderer (Raycaster) / Wall Shading (Generation default)" }
+  - { name: RAYCASTER_FLOOR_COLOR,
+      type: u32,
+      value: "0x404040",
+      source: "specs/25 § Renderer (Raycaster) / Floor / Ceiling (Generation default)" }
+  - { name: RAYCASTER_CEILING_COLOR,
+      type: u32,
+      value: "0x202020",
+      source: "specs/25 § Renderer (Raycaster) / Floor / Ceiling (Generation default)" }
+public_methods:
+  - signature: |
+      pub fn draw(
+          framebuffer: &mut Vec<u32>,
+          level: &Level,
+          player: &Player,
+      )
+    notes: |
+      Single-entry-point world-layer draw for --render-mode=raycaster
+      (specs/45 § Per-Frame Draw Dispatch). Writes EVERY pixel of the
+      framebuffer (no read-modify-write of unaffected regions) so the
+      caller does not need to clear it first. Layering above the
+      raycaster's output (HUD, game-over border) is the caller's
+      responsibility -- main.rs invokes renderer::draw_hud and
+      renderer::draw_game_over_border after raycaster::draw returns.
+      See ir/contracts/_shared.yaml § main_cli § render_mode for the
+      dispatch shape.
+
+      Per-column algorithm (one ray per pixel column, x in
+      0..WINDOW_WIDTH):
+        1. theta = player.facing + column_angle_offset[x]
+           where column_angle_offset[x] = atan2((x - WINDOW_WIDTH / 2) as f32,
+                                                focal_px) -- centered on the
+           middle column, derived from focal_px once at startup.
+        2. focal_px = (WINDOW_WIDTH as f32 / 2.0) /
+                       (RAYCASTER_FOV_RADIANS / 2.0).tan()
+           At RAYCASTER_FOV_RADIANS = pi/2 this is exactly
+           WINDOW_WIDTH / 2 (knowledge § Column Projection Model).
+        3. Grid-DDA walk from player.pos along (theta.cos(), theta.sin())
+           through the level_data::Level grid (knowledge § Wall
+           Traversal Strategy "Alternative — grid-DDA"). Track per-axis
+           cumulative t values so the perpendicular distance can be
+           read directly from the axis on which the last tile boundary
+           was crossed (knowledge § Perpendicular Distance "grid-walk
+           implementation"). Stop when level_data::is_wall(level,
+           tile_x, tile_y) is true OR t exceeds RAYCASTER_MAX_DEPTH.
+        4. perp_dist = the axis-projected ray distance at the hit
+           (NOT sqrt(dx*dx + dy*dy) -- that produces fisheye bow,
+           knowledge § Perpendicular Distance "Feel"). The boolean
+           "did the ray cross a horizontal tile boundary last" picks
+           between "EW wall" (apply RAYCASTER_NSEW_DARKEN_FACTOR) and
+           "NS wall" (nominal).
+        5. column_h_px = ((WALL_HEIGHT_TILES * focal_px) / perp_dist)
+                          .clamp(1.0, WINDOW_HEIGHT as f32) as i32
+        6. shade_t = (perp_dist / RAYCASTER_MAX_DEPTH).clamp(0.0, 1.0)
+           wall_color = lerp_rgb(RAYCASTER_WALL_COLOR_NEAR,
+                                  RAYCASTER_WALL_COLOR_FAR, shade_t)
+           if ew_wall: wall_color = scale_rgb(wall_color,
+                                              RAYCASTER_NSEW_DARKEN_FACTOR)
+           lerp_rgb / scale_rgb are module-private helpers (Coder
+           degree of freedom on shape; per-channel multiply is the
+           obvious form).
+        7. Write column x into framebuffer:
+             - rows [0, ceiling_top) ← RAYCASTER_CEILING_COLOR
+             - rows [ceiling_top, floor_top) ← wall_color
+             - rows [floor_top, WINDOW_HEIGHT) ← RAYCASTER_FLOOR_COLOR
+           where ceiling_top = (HORIZON_Y as i32 - column_h_px / 2)
+                                 .clamp(0, WINDOW_HEIGHT as i32) as usize
+                 floor_top   = (HORIZON_Y as i32 + column_h_px / 2)
+                                 .clamp(0, WINDOW_HEIGHT as i32) as usize
+        8. If the DDA walk exits via RAYCASTER_MAX_DEPTH without a
+           hit, skip step 5/6/7's wall-slice write and only fill the
+           full column with floor + ceiling (specs/45 § Far Clipping).
+
+      Reads (no mutation): level.tiles, level.width, level.height
+      (via level_data::is_wall); player.pos, player.facing. Does NOT
+      read VisualEffects, the enemies slice, player.health,
+      player.alive, the per-frame frames counter, or any other
+      gameplay state. Writes the framebuffer; no other side effects.
+
+      Module-private state. The angle-offset table
+      (column_angle_offset: [f32; WINDOW_WIDTH]) is computed once on
+      first call (lazy via std::sync::OnceLock or similar) or on
+      module init; either shape satisfies specs/45 § Determinism
+      (the table is a pure function of WINDOW_WIDTH and
+      RAYCASTER_FOV_RADIANS). Coder degree of freedom on
+      const-vs-OnceLock; const-fn trig is not stable so OnceLock is
+      the simplest path.
+
+      Determinism. raycaster::draw is a pure function of
+      (level, player) plus compile-time constants and the
+      angle-offset table. specs/45 § Determinism details how this
+      composes with specs/35's existing determinism chain.
+
+cross_module_borrows:
+  - "&mut Vec<u32> (framebuffer; owned by main.rs)"
+  - "&Level (read-only; level_data)"
+  - "&Player (read-only; player_state)"
+notes: |
+  Single consumer is main.rs in --render-mode=raycaster mode. Not
+  consumed by any per-frame gameplay path (game_loop::update,
+  autopilot::bot_step, enemy_logic::update, weapon_system::fire all
+  stay unaware of this module). Slice 1 deliberately ships a
+  walls-only renderer; slice 2 of the migration adds entity / sprite
+  drawing inside this module's draw() (or a sibling pass), slice 3
+  adds FPS-specific effects, slice 4 swaps the HUD layout, slice 5
+  flips the --render-mode default to raycaster, slice 6 removes the
+  topdown code path.
+
+  Dependency graph: depends_on [level_data, player_state] — the
+  same read-only borrows the existing top-down renderer takes. No
+  visual_effects dependency this slice (effects are not drawn in
+  raycaster mode until slice 3). No presentation dependency in
+  module_plan terms, even though the module references
+  presentation's WINDOW_WIDTH / WINDOW_HEIGHT public_constants —
+  presentation is a constants-only sibling and the import is
+  symbol-level, not behavioral; module_plan's depends_on is for
+  regen-ordering closure rather than imports.
+
+  Coder degrees of freedom (per spec/80 § API Surface and
+  _shared.yaml § coder_degrees_of_freedom):
+    - Module-private helper shape for lerp_rgb / scale_rgb / DDA
+      step state (single struct vs. paired locals; iterator vs.
+      while-loop). Whichever shape is picked, it MUST stay
+      module-private.
+    - Whether the angle-offset table is a OnceLock<[f32; W]> or a
+      lazy_static-style helper or a function that recomputes per
+      call (the last is the slowest but the simplest; per-frame
+      recompute of 640 atan2 calls is well under 1 ms at modern
+      speeds and still satisfies the no-allocation invariant if the
+      table lives on the stack). The deterministic-output guarantee
+      is what the contract pins; the storage strategy is not.
+    - Whether NS / EW shading uses 0.75 as a per-channel f32
+      multiply or a fixed-point right-shift on packed u32 channels.
+      Both produce the same visual-result tier within our
+      framebuffer color depth.

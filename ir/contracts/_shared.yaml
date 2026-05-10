@@ -107,12 +107,51 @@ shared_types:
 main_cli:
   argv_parser:
     notes: |
-      Use std::env::args (specs/80). No clap, no argh. Three positional/flag
-      states -- order does not matter, both flags can appear together:
-        --autopilot <path>      bot mode; reads scenario YAML at <path>
-        --record-frames <path>  raw BGRA dump to <path>
+      Use std::env::args (specs/80). No clap, no argh. Flag states --
+      order does not matter, all flags can appear together:
+        --autopilot <path>            bot mode; reads scenario YAML at <path>
+        --record-frames <path>        raw BGRA dump to <path>
+        --render-mode <topdown|raycaster>
+                                      pick draw pipeline (specs/45);
+                                      default `topdown`. Unknown value
+                                      (e.g. `--render-mode foo`) => same
+                                      failure mode as missing argument.
       Unknown flag => print usage to stderr, exit code 2.
       Missing argument to a flag => same.
+
+  render_mode:
+    notes: |
+      Defines `RenderMode` enum (private to main.rs) with variants
+      `Topdown` and `Raycaster`. Parsed from --render-mode <value>:
+        "topdown"   => RenderMode::Topdown   (default if flag absent)
+        "raycaster" => RenderMode::Raycaster
+        anything else => print usage, exit code 2.
+      The selected mode is stored in a local in main() and consulted
+      once per frame to dispatch the world-layer draw call. The flag
+      is NOT threaded through game_loop::update, autopilot::bot_step,
+      input_controller::poll, or any RNG-seeding path -- the simulation
+      step is identical between modes; only the rendered pixels differ.
+      See specs/45 § Render Mode Selection.
+
+      Per-frame dispatch (regardless of --autopilot / --record-frames):
+        match render_mode {
+            RenderMode::Topdown   => renderer::draw(&mut framebuffer, &game.level,
+                                                    &game.player, &game.enemies,
+                                                    &game.fx, game_over),
+            RenderMode::Raycaster => {
+                raycaster::draw(&mut framebuffer, &game.level, &game.player);
+                renderer::draw_hud(&mut framebuffer, &game.player);
+                if let Some(won) = game_over {
+                    renderer::draw_game_over_border(&mut framebuffer, won);
+                }
+            }
+        }
+      The Coder may pick a different code shape for the Raycaster arm
+      (one combined helper vs. three explicit calls) so long as the
+      visual layer order matches: raycaster fills the framebuffer
+      first, then HUD on top, then game-over border on top of that.
+      See ir/contracts/raycaster.yaml and ir/contracts/renderer.yaml
+      for the function signatures involved.
 
   modes:
     interactive:
@@ -125,6 +164,10 @@ main_cli:
         does not parse scenarios so scenario.level is irrelevant here.
             let level = level_data::build_default();
             let mut game = game_loop::new(level);
+        Render mode: --render-mode applies orthogonally; default Topdown
+        (specs/45). All four mode rows below dispatch via the
+        render_mode block above; the trigger column lists only the
+        autopilot/record axes.
     autopilot_only:
       trigger: "--autopilot <path>"
       behavior: |

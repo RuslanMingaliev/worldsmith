@@ -53,7 +53,13 @@ public_methods:
           game_over: Option<bool>,  // None = playing, Some(true) = won, Some(false) = lost
       )
     notes: |
-      Single render entry point invoked once per frame by game_loop.
+      Top-down render entry point. Used by main.rs only when
+      --render-mode=topdown (the default; specs/45,
+      _shared.yaml § main_cli § render_mode). In
+      --render-mode=raycaster, main.rs calls raycaster::draw
+      followed by renderer::draw_hud and (if game_over.is_some())
+      renderer::draw_game_over_border instead — see those entries
+      below.
       Layer order (back to front, per spec/40 § Effect Layering and
       spec/60 § Pickup Rendering / spec/50 § Render Order Update):
         1. Floor + walls (level tiles).
@@ -110,6 +116,39 @@ public_methods:
       Allocates Vec::from_iter([0u32; WINDOW_WIDTH * WINDOW_HEIGHT]).
       Helper so main.rs doesn't need to import WINDOW_WIDTH etc.
       itself.
+  - signature: |
+      pub fn draw_hud(framebuffer: &mut Vec<u32>, player: &Player)
+    notes: |
+      Draws ONLY the HUD layer (specs/50): top-left health bar +
+      digits, ammo pane below, in the same pixel position and same
+      color rules used by the monolithic `draw` above (its layer 9).
+      Used by main.rs in --render-mode=raycaster after raycaster::draw
+      fills the framebuffer (specs/45 § Interactions § With renderer
+      (top-down)). The monolithic `draw` function may also call this
+      helper internally to avoid duplicating the HUD-drawing code;
+      that is a Coder degree of freedom.
+
+      Reads (no mutation): player.health, player.ammo. Writes the
+      framebuffer.
+
+      The HUD draw is identical between --render-mode=topdown and
+      --render-mode=raycaster modes (specs/45 § Constraints — "HUD
+      layout unchanged in this slice").
+  - signature: |
+      pub fn draw_game_over_border(framebuffer: &mut Vec<u32>, won: bool)
+    notes: |
+      Draws ONLY the game-over border (the colored frame around the
+      viewport — specs/25 § Visual): green tint for win
+      (GAME_OVER_BORDER_WIN_COLOR), red for lose
+      (GAME_OVER_BORDER_LOSE_COLOR), thickness GAME_OVER_BORDER_PX.
+      Used by main.rs in --render-mode=raycaster after draw_hud
+      when the per-frame game_over Option<bool> is Some(_)
+      (_shared.yaml § main_cli § render_mode dispatch).
+
+      The monolithic `draw` function may also call this helper
+      internally; same Coder-degree-of-freedom note as draw_hud
+      above. The visual result is identical between modes
+      (specs/45 § Constraints).
 cross_module_borrows:
   - "&mut Vec<u32> (the framebuffer is owned by main.rs/game_loop)"
   - "&Level, &Player, &[Enemy], &VisualEffects (all read-only)"
@@ -118,3 +157,21 @@ notes: |
   from being duplicated (per intentionally_unspecified note below).
   All RGB constants are declared local because the renderer is the
   single consumer.
+
+  --render-mode dispatch (specs/45, _shared.yaml § main_cli §
+  render_mode): this module is the world-layer renderer for
+  --render-mode=topdown (the default), and contributes the HUD layer
+  + game-over border layer only in --render-mode=raycaster (via
+  draw_hud / draw_game_over_border above; the world layer is owned
+  by the raycaster module in that mode). The Coder may either:
+    (a) split the monolithic `draw` into draw_world + draw_hud +
+        draw_game_over_border helpers and have `draw` compose all
+        three, OR
+    (b) keep the monolithic `draw` as-is for the topdown path and
+        only export draw_hud / draw_game_over_border as
+        independently-callable public entry points.
+  Either shape is contracted-equivalent; the visual layer order
+  must remain back-to-front (world → HUD → game-over border) and
+  must produce byte-equal pixels in --render-mode=topdown to the
+  pre-slice-1 behavior. Slice 1 acceptance is "topdown is
+  byte-for-byte unchanged" (specs/45 § Invariants).

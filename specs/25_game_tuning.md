@@ -378,6 +378,48 @@ The autopilot bot in `src/autopilot.rs` exposes a per-frame API always compiled,
 | BOT_WAYPOINT_REACHED_TILES | 0.7 tile | Generation default — no knowledge backing. Distance threshold under which the bot consumes the next BFS waypoint and steers toward the one after. Both tile-equality (`bot.path[0] == floor(player.pos)`) and a distance threshold satisfy the spec (`coder_degrees_of_freedom § "waypoint-consume distance"`); the current Coder picked the threshold form. 0.7 sits comfortably below the 1.0-tile waypoint spacing so the bot consumes a waypoint before reaching the next, while above the per-frame movement step (~0.005 tile @ MAX_SPEED * dt) so a single frame does not skip multiple waypoints. (see reconcile_log#BOT_WAYPOINT_REACHED_TILES) |
 | BOT_STUCK_MOVE_EPSILON | 0.02 tile/frame | Generation default — no knowledge backing. Per-frame movement threshold below which the bot's stuck-counter increments toward `BOT_STUCK_FRAMES`; inlined as a literal in `autopilot::bot_step` stuck-detect block. Spec/30 pins the frame counts but not the movement threshold (Coder degree of freedom under `stuck-detect`). 0.02 sits above f32 noise from collision slides and below the typical friction-tail velocity, so genuine stops trigger and floating-point jitter does not. (see reconcile_log#BOT_STUCK_MOVE_EPSILON) |
 
+## Renderer (Raycaster)
+
+Behavior spec: [`45_raycaster_renderer.md`](45_raycaster_renderer.md). Knowledge: [`knowledge/raycaster_renderer.md`](../knowledge/raycaster_renderer.md). Constants below define the column-based first-person renderer enabled by `--render-mode=raycaster`. Default mode is `topdown` (the existing 2D view) for slice 1 of the migration; the default flips to `raycaster` in slice 5.
+
+### Pipeline Selection
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| RENDER_MODE_DEFAULT | `topdown` | Generation default — no knowledge backing. The default keeps every existing autopilot scenario and the canonical PR-preview GIF byte-for-byte unchanged in this slice. The default flips to `raycaster` in slice 5 of the migration; the top-down code path is removed in slice 6. The flag values themselves (`topdown`, `raycaster`) are project-internal CLI vocabulary, not reference-derived. |
+
+### Projection
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| RAYCASTER_FOV_RADIANS | `std::f32::consts::FRAC_PI_2` (90°) | knowledge/raycaster_renderer.md § Column Projection Model — "Horizontal FOV: 90°" (also § FOV, Aspect, and the Implicit Pinhole Camera "Horizontal FOV: 90° (fixed)"). |
+| RAYCASTER_COLUMN_COUNT | `WINDOW_WIDTH` (640) | Generation default — no knowledge backing. Knowledge § Column Projection Model notes "doubling or halving the column count trades horizontal resolution against fill cost linearly"; we pick one ray per pixel column for the simplest mapping. Coarser subsampling is deferred (specs/45 § Deferred). |
+| HORIZON_Y | `WINDOW_HEIGHT / 2` (240) | knowledge/raycaster_renderer.md § FOV, Aspect, and the Implicit Pinhole Camera — "View-pitch is not supported in the reference's renderer: the camera always points along the horizon. … the horizon is always at row `center_y`." |
+| WALL_HEIGHT_TILES | 1.0 | Generation default — no knowledge backing. The reference uses sector-relative wall heights driven by the world-format's per-sector floor/ceiling Z values; our `level_data::Tile` has no height field, so all walls are unit-height in tile units. Treating walls as cube-shaped (1 tile wide × 1 tile tall) keeps the projection focal-length math (`column_h_px = WALL_HEIGHT_TILES * focal_px / perp_dist`) using the same unit basis as the floor/ceiling split. Per-tile height is deferred (specs/45 § Deferred — Sector light levels and the precomputed colormap table). |
+
+### Far Clipping
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| RAYCASTER_MAX_DEPTH | 32.0 tiles | knowledge/raycaster_renderer.md § Max Render Distance / Far Clipping — "Reasonable far-clip for a 20×15 tile world: 32 tiles is more than the diagonal, so the cap rarely fires; smaller worlds (≤ 16×16) can use 16 tiles safely." Direct knowledge value. |
+
+### Wall Shading
+
+All wall colors are generation defaults — no knowledge backing. Knowledge § NS-vs-EW Wall Shading and § Distance Attenuation describe the *mechanism* (per-segment integer light-step adjustment + colormap-table lookup); the actual hex values come from per-asset palette data we don't have. Hex values pinned here so the Coder doesn't reinvent them.
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_WALL_COLOR_NEAR | — | #C0C0C0 light gray | Generation default — no knowledge backing. Bright neutral gray at zero distance; reads as "close stone wall" without competing for hue with the floor or ceiling. |
+| RAYCASTER_WALL_COLOR_FAR | — | #101010 near-black | Generation default — no knowledge backing. Effectively black at `RAYCASTER_MAX_DEPTH`; matches the reference's saturated-darkest behavior at the colormap's last row (knowledge § Distance Attenuation "the colormap table saturates at its last (darkest) entry"). |
+| RAYCASTER_NSEW_DARKEN_FACTOR | 0.75 | — | knowledge/raycaster_renderer.md § NS-vs-EW Wall Shading — "One light-level step difference between 'darker axis' and nominal". Translation: the reference's discrete-step colormap maps one step to roughly a 25% reduction at typical light levels; 0.75 (per-channel multiply) is the closest continuous equivalent in our colormap-less pipeline. The exact factor is a generation default within that spirit — increase toward 1.0 to reduce the directional-light effect, decrease to amplify it. |
+
+### Floor / Ceiling
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_FLOOR_COLOR | — | #404040 dark gray | Generation default — no knowledge backing. Knowledge § Floor and Ceiling Treatment "Feel" recommends "contrasting hues for floor vs ceiling so the horizon line is unambiguous"; dark gray below contrasts with mid gray above. Re-uses the existing top-down `COLOR_WALL` palette band so both renderers share a visual identity. |
+| RAYCASTER_CEILING_COLOR | — | #202020 darker gray | Generation default — no knowledge backing. Slightly darker than the floor so the horizon line reads downward (player's eye drops to "ground"); same § Floor and Ceiling Treatment "Feel" rationale. Distinct from `RAYCASTER_WALL_COLOR_FAR` (`#101010`) so a far wall does not visually merge with the ceiling. |
+
 ## Frame Rate
 
 | Property | Value |
