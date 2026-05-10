@@ -1,14 +1,19 @@
 # raycaster module contract.
-# Slice 3 of 6 of the FPS migration (specs/45). Walls + flat
+# Slice 4 of 6 of the FPS migration (specs/45). Walls + flat
 # floor / ceiling from slice 1, plus a per-column wall-depth z-buffer
 # and a back-to-front sprite pass for live enemies, dying enemies,
 # corpses, blood splats, and active pickups from slice 2, plus the
-# slice-3 first-person effects pass: screen-space muzzle-flash overlay,
-# world-space tracer line, wall-puff billboard with a full-bright
-# first phase, extra-light bias on wall and sprite shading during
-# the firing window, and the player damage / pickup tint screen-space
-# overlays. Default --render-mode is `topdown` (through slice 4), so
-# this module does not run by default until slice 5 flips the default.
+# slice-3 first-person effects pass (screen-space muzzle-flash
+# overlay, world-space tracer line, wall-puff billboard with a
+# full-bright first phase, extra-light bias on wall and sprite
+# shading during the firing window, player damage / pickup tint
+# screen-space overlays). Slice 4 does NOT add a new pass to this
+# module -- the FPS HUD layer (bottom chrome strip + crosshair) lives
+# in renderer::draw_hud_fps, called from main.rs after raycaster::draw
+# returns, so this module's signature and pass count are unchanged
+# from slice 3. Default --render-mode is `topdown` (through slice 4),
+# so this module does not run by default until slice 5 flips the
+# default.
 name: raycaster
 file: src/raycaster.rs
 depends_on: [level_data, player_state, enemy_logic, visual_effects]
@@ -589,12 +594,16 @@ notes: |
   autopilot::bot_step, enemy_logic::update, weapon_system::fire all
   stay unaware of this module). Slice 1 ships a walls-only renderer;
   slice 2 of the migration adds entity / sprite drawing inside this
-  module's draw(); slice 3 (this contract) adds the FPS-specific
-  effects pass (muzzle flash / tracer / wall puff / extra-light bias
-  / damage tint / pickup tint); slice 4 will swap the HUD layout
-  and add the held-weapon body sprite; slice 5 flips the
-  --render-mode default to raycaster; slice 6 removes the topdown
-  code path.
+  module's draw(); slice 3 adds the FPS-specific effects pass
+  (muzzle flash / tracer / wall puff / extra-light bias / damage
+  tint / pickup tint); slice 4 (this contract) swaps the HUD layout
+  via a NEW renderer-side entry point (renderer::draw_hud_fps) --
+  this module's signature and pass count are unchanged from slice 3
+  because the FPS HUD strip + crosshair live in renderer.rs (it
+  already owns the HUD digit font); slice 5 flips the --render-mode
+  default to raycaster; slice 6 removes the topdown code path. The
+  held-weapon body sprite (originally scoped for slice 4 alongside
+  the HUD) is deferred -- specs/45 § Implementation Status / Deferred.
 
   Dependency graph: depends_on
   [level_data, player_state, enemy_logic, visual_effects] --

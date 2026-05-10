@@ -498,6 +498,95 @@ The slice-3 wall puff sprite-pass billboard derives its half-extent from the exi
 
 The screen-space muzzle flash overlay reuses `COLOR_MUZZLE_FLASH` (`#FFFF80`) from `renderer`. The tracer line reuses `COLOR_TRACER` (`#FFFFC0`) from `renderer`. The damage tint overlay reuses `COLOR_DAMAGE_TINT`, `DAMAGE_TINT_CAP`, `DAMAGE_TINT_LEVELS`, and `DAMAGE_TINT_MAX_ALPHA_PCT`. The pickup tint overlay reuses `COLOR_PICKUP_TINT`, `PICKUP_TINT_CAP`, `PICKUP_TINT_LEVEL_COUNT`, and `PICKUP_TINT_MAX_ALPHA_PCT`. None are new constants.
 
+### FPS HUD Layout
+
+Behavior spec: [`45_raycaster_renderer.md § FPS HUD Layout`](45_raycaster_renderer.md#fps-hud-layout). Knowledge: [`knowledge/raycaster_hud.md`](../knowledge/raycaster_hud.md). Constants below pin the slice-4 first-person HUD: a bottom chrome strip showing health, ammo, and weapon panes, plus a centered crosshair drawn over the world-view region. The strip and crosshair are drawn ONLY in `--render-mode=raycaster`; the `--render-mode=topdown` path keeps the existing top-left text HUD (specs/50) byte-for-byte unchanged.
+
+The reference engine's HUD is bitmap-asset-driven (320 × 32 chrome bitmap blitted into rows 168..199 of a 320 × 200 framebuffer; widget anchors at hard-coded pixel positions reading two pre-loaded digit fonts; weapons-owned subpanel showing slots 2..7 as small colored digits — knowledge `raycaster_hud.md` § Bottom Chrome Strip — Static Background Bitmap, § Widget Layout Within the Strip, § Bottom-Strip Font Treatment). We have no asset pipeline (specs/80 § Dependencies) and only one weapon (`ir/game_ir.yaml § combat`). Constants below adapt the reference's geometry to our 640 × 480 framebuffer at 2× scale (knowledge `raycaster_hud.md` § Open Questions — "Should the crosshair scale with framebuffer resolution?" — "scale ... in integer multiples of the framebuffer scale factor") and substitute a flat-color strip for the chrome bitmap.
+
+#### Strip
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_STRIP_HEIGHT_PX | 80 | — | Generation default — no knowledge backing for the absolute pixel value (the reference's 32-row strip is asset-bitmap-sized). The reference strip occupies 16% of vertical space (32 / 200); 80 / 480 ≈ 16.7%, the closest 2× scale that preserves that proportion at our 640 × 480 framebuffer (knowledge `raycaster_hud.md` § Viewport-to-HUD Vertical Partition — "The strip's height is a fixed bitmap-height constant ... rows 168..199 ... leaving rows 0..167 for the world view"). 80 also gives the digit pane comfortable vertical breathing room at our digit pixel size (below). |
+| RAYCASTER_HUD_STRIP_COLOR | — | #585050 chrome warm-gray | knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — "Chrome warm-gray: a desaturated warm gray, roughly (90, 80, 80)". `#585050` ≈ (88, 80, 80) — the closest 8-bit-per-channel value to the knowledge-suggested chrome. |
+| RAYCASTER_HUD_STRIP_TOP_Y | `WINDOW_HEIGHT - RAYCASTER_HUD_STRIP_HEIGHT_PX` (= 400) | — | Derived. The strip is anchored to the bottom of the framebuffer (knowledge same § — "The strip's vertical origin is `(framebuffer_height - strip_height)`"). |
+
+The world-view region is rows `0..RAYCASTER_HUD_STRIP_TOP_Y` (= 0..400). The wall pass, sprite pass, and effects pass write the entire framebuffer (rows 0..480) — the strip is drawn on top of those layers and overwrites the bottom 80 rows. World-region pixels above the strip remain visible. (The world's bottom 80 rows DO get computed; they're just covered by the strip. Knowledge `raycaster_hud.md` § Viewport-to-HUD Vertical Partition notes the reference avoids the wasted compute by limiting `view_height` to 168 rows; we do not — the strip overlay is simpler and the wasted compute on 80 × 640 = 51 200 pixels is negligible at our scenario complexity.)
+
+#### Per-Pane Layout (Within the Strip)
+
+Knowledge `raycaster_hud.md` § Widget Layout Within the Strip pins the reference's hard-coded absolute widget pixel positions (ammo at x=44, health at x=90, weapons subpanel at x=104, etc.). Our 2× scale-up + single-weapon substitution makes the reference positions inapplicable verbatim. The constants below pin a left-to-right "health → ammo → weapon" reading order (knowledge same § — "The layout reads left-to-right as a sentence"), with explicit anchors so the Coder does not reinvent positions across regens.
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| RAYCASTER_HUD_DIGIT_PIXEL_SIZE | 4 | Generation default — no knowledge backing for the exact value (reference fonts are asset-bitmap-driven). 4× scale on the existing 3 × 5 digit font (specs/25 § Bitmap Font) produces 12 × 20 px digits — closest analogue to the reference's "tall-digit" font (~14 × 16 px, knowledge `raycaster_hud.md` § Bottom-Strip Font Treatment) at our framebuffer size. The topdown HUD uses 2× scale (6 × 10 digits); the FPS strip's bigger panes need bigger digits to read across the player's "instrument panel" attention span. |
+| RAYCASTER_HUD_PANE_X_HEALTH | 32 | Generation default — no knowledge backing. Left padding for the health pane. The reference's tall-digit health % anchors at x=90 in the 320-wide strip (knowledge `raycaster_hud.md` § Widget Layout Within the Strip); 32 in our 640-wide strip is the same fractional position (~10% in from the left edge) accounting for the absence of the reference's ammo pane to the left of health. |
+| RAYCASTER_HUD_PANE_X_AMMO | 256 | Generation default — no knowledge backing. Middle pane anchor; sized to clear the health digits (max width = 3 digits × 12 px + 2 × 1 px kern = ~38 px from the health icon at x≈40) with comfortable margin. |
+| RAYCASTER_HUD_PANE_X_WEAPON | 480 | Generation default — no knowledge backing. Right pane anchor; sized to fit a weapon icon (~80 px wide, see below) inside the strip without overlapping the framebuffer right edge. |
+| RAYCASTER_HUD_PANE_TEXT_Y | `RAYCASTER_HUD_STRIP_TOP_Y + (RAYCASTER_HUD_STRIP_HEIGHT_PX - RAYCASTER_HUD_DIGIT_PIXEL_SIZE * HUD_DIGIT_HEIGHT_PX) / 2` (= 400 + (80 - 20) / 2 = 430) | Vertically centers the digits inside the strip. Derived from the strip dimensions and digit size. |
+
+#### Pane Colors and Glyphs
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_HEALTH_COLOR | — | #D00000 saturated red | knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — "Tall-digit red: a saturated red roughly in the (200, 0, 0) – (220, 0, 0) range". `#D00000` ≈ (208, 0, 0). Distinct from the topdown HUD's `HUD_HEALTH_COLOR_LOW` (`#C00000`) so a topdown→raycaster mode switch reads as deliberately different rather than an accidental color drift. |
+| RAYCASTER_HUD_AMMO_COLOR | reuse `HUD_AMMO_COLOR` (`#FFFF00`) | #FFFF00 yellow | knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — "Short-digit yellow (active weapons-owned): a saturated yellow roughly (220, 220, 0)". `#FFFF00` is the closest 8-bit value and reuses the existing topdown `HUD_AMMO_COLOR` (specs/25 § HUD Ammo Pane) so the on-map ammo pickup, the topdown HUD ammo pane, and the FPS HUD ammo pane all share one yellow. The reference uses two distinct font weights for primary vs secondary readouts; with our monolithic font we substitute pane position (separate strip slot) instead of a separate font (knowledge `raycaster_hud.md` § Bottom-Strip Font Treatment + § Widget Layout). |
+| RAYCASTER_HUD_WEAPON_COLOR | — | #B0B0B0 mid-gray | Generation default — no knowledge backing for a single-weapon icon (reference shows a 6-slot weapons-owned subpanel, knowledge `raycaster_hud.md` § Widget Layout Within the Strip — "Weapons-owned indicators: 6 slots ... gray = unowned, yellow = owned"; we have one weapon and do not need the slot-based representation). Mid-gray reads as "tool / equipment", distinct from the alarm-panel red (health) and the ammo yellow. |
+
+#### Health Icon (Left of Health Digits)
+
+The HUD strip's health pane composes a small icon glyph + the player's health digits, mirroring the topdown HUD's "icon + digits" pattern (specs/25 § HUD Ammo Pane). We have no alphabet font (only digits 0..9), so the pane uses a glyph icon instead of a textual "HEALTH" label.
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_HEALTH_ICON_PX | 16 | — | Generation default — no knowledge backing. ~80% of the digit on-screen height (`HUD_DIGIT_HEIGHT_PX × RAYCASTER_HUD_DIGIT_PIXEL_SIZE = 20`) so the icon sits comfortably alongside the digits. Reuses the red-cross convention from the on-map health pickup (specs/25 § Pickups § Sprite Visual). |
+| RAYCASTER_HUD_HEALTH_ICON_THICKNESS_PX | 4 | — | Generation default — same 1/4-of-icon-width ratio as the on-map health pickup's `PICKUP_HEALTH_INNER_THICKNESS_PX`. |
+| (icon background) | — | reuse `RAYCASTER_HUD_HEALTH_COLOR` | The icon is a simple red plus-cross (no white background) so it composes onto the chrome strip without a second color band. |
+
+#### Ammo Icon (Left of Ammo Digits)
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_AMMO_ICON_PX | 16 | — | Generation default — same size as the health icon for visual symmetry. Reuses the yellow-square convention from the topdown HUD (`HUD_AMMO_ICON_PX = 8` at topdown's 2× digit scale; ours is 16 at the strip's 4× digit scale, preserving the same "icon ≈ digit height" ratio). |
+| (icon color) | — | reuse `RAYCASTER_HUD_AMMO_COLOR` | Single solid yellow square. |
+
+#### Weapon Icon (Right Pane)
+
+The reference's weapons-owned subpanel is a 2-row × 3-column grid of small digit slots showing weapons 2..7 (knowledge `raycaster_hud.md` § Widget Layout Within the Strip). With one weapon (the pistol — slot 1, which the reference renders implicitly), our analogue is a single static icon representing the active weapon.
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_WEAPON_ICON_W_PX | 48 | — | Generation default — no knowledge backing. Sized to read as "the weapon" at the strip's scale — wider than tall to suggest a horizontal pistol silhouette. |
+| RAYCASTER_HUD_WEAPON_ICON_H_PX | 16 | — | Generation default — same height as the health/ammo icons for visual symmetry. |
+
+The exact silhouette (single filled rectangle, T-shape with grip, two-rectangle "barrel + grip" pistol) is a Coder degree of freedom (`ir/contracts/renderer.yaml § coder_degrees_of_freedom`). The simplest shape — a single filled rectangle in `RAYCASTER_HUD_WEAPON_COLOR` at the size above — is the obvious starting point; future iterations may elaborate to a multi-rect silhouette without spec change.
+
+#### Crosshair
+
+The reference engine renders **no crosshair** in its first-person view (knowledge `raycaster_hud.md` § On-View Crosshair — Absent in the Reference's First-Person View — "The reference engine renders no crosshair sprite over the first-person world view"). The single-pixel crosshair the reference does draw lives in the auxiliary overhead-map view (knowledge same § The Auxiliary-Map Single-Pixel Crosshair) and is out of scope for the first-person port.
+
+**This spec adds a static centered crosshair.** *(Generation default — knowledge says the reference has no first-person crosshair; we add one because (a) the topdown renderer's player direction line conveys "where the player is aiming" and removing it without a substitute would worsen the slice-5 default flip, (b) hitscan accuracy without a visible aim point is harder to learn for new players, and (c) knowledge's § Recommended Crosshair Shape for a Port — Inferred, Not Reference-Native explicitly endorses a small static cross as "the smallest possible departure from the reference".)* The crosshair's shape and position follow the knowledge "Recommended" section verbatim, scaled 2× for our 640 × 480 framebuffer (knowledge same § — "A port that runs at higher internal resolutions should scale the crosshair arm length and thickness in integer multiples of the framebuffer scale factor").
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_CROSSHAIR_ARM_LEN_PX | 6 | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Arm length: 7 pixels per arm (3 pixels each side of the center, plus a center gap)". The reference recommends 3 px per side of center on a 320-wide framebuffer; at our 640-wide framebuffer the closest 2× scale is 6 px per side of center (gives a 14-px-wide cross — still well under "intrusive" by knowledge's criterion of "~2% of width"). |
+| RAYCASTER_CROSSHAIR_GAP_PX | 2 | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Center gap: 1 pixel (so the exact center pixel is untouched)". 1 px scaled 2× = 2 px. The center 2 × 2 px region is left untouched so the crosshair does not occlude the smallest distant targets. |
+| RAYCASTER_CROSSHAIR_THICKNESS_PX | 2 | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Thickness: 1 pixel. A 2-pixel-thick crosshair looks heavy at retro resolutions". 1 px scaled 2× = 2 px (knowledge's resolution-scaling rule overrides its "looks heavy at retro resolutions" caveat at our 2× scale). |
+| RAYCASTER_CROSSHAIR_COLOR | — | #A0A0A0 mid-bright gray | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Color: the same mid-bright gray as the reference's overhead-map crosshair, for visual coherence with the rest of the HUD ... approximately (160, 160, 160) in RGB". `#A0A0A0` = (160, 160, 160) exactly. |
+| RAYCASTER_CROSSHAIR_CENTER_X | `WINDOW_WIDTH / 2` (= 320) | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Center position: the geometric center of the world-view region, i.e. `(framebuffer_width / 2, ...)`". |
+| RAYCASTER_CROSSHAIR_CENTER_Y | `RAYCASTER_HUD_STRIP_TOP_Y / 2` (= 200) | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Center position: the geometric center of the world-view region, i.e. `(..., (framebuffer_height - strip_height) / 2)`". Knowledge `raycaster_hud.md` § Key Insights pins this exact rule: "The world-view-region center is NOT the framebuffer center when the strip is visible ... A port that draws a crosshair at the framebuffer center will see the crosshair sit too low — visually under the player's actual line of sight." For a 480-tall framebuffer with an 80-row strip, the world view occupies rows 0..400 and its center is at y = 200, not y = 240. |
+
+#### Effect Composition
+
+The crosshair draws **on top of** the world layers and effect overlays (matching knowledge's "two HUD surfaces compose without interaction" — § Key Insights), but **below** the bottom HUD strip (the strip and crosshair never overlap because the strip occupies rows 400..480 while the crosshair sits centered on row 200 with arm length 6 px → rows 192..208). Concretely, after the slice-3 effects pass returns:
+
+1. Crosshair (mid-gray + shape, anchored on world-view center)
+2. Bottom HUD strip (chrome + health pane + ammo pane + weapon icon)
+3. Game-over border (if `game_over.is_some()`) — unchanged from slice 3
+
+The HUD strip and crosshair are **full-bright** — no distance attenuation, no extra-light-bias modulation, no z-test against `wall_depth[]`.
+
 ## Frame Rate
 
 | Property | Value |

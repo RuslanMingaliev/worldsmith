@@ -38,10 +38,39 @@ public_constants:
   - { name: HUD_PANE_GAP_PX,               type: i32, value: "4",         source: "specs/25 § HUD Ammo Pane (Generation default)" }
   - { name: HUD_AMMO_ICON_PX,              type: i32, value: "8",         source: "specs/25 § HUD Ammo Pane (Generation default)" }
   - { name: HUD_AMMO_COLOR,                type: u32, value: "0xFFFF00",  source: "specs/25 § HUD Ammo Pane (Generation default)" }
-  # NOTE: HUD_* layout/font/band constants from the HUD workflow are
-  # renderer-private and NOT contracted here. Their authoritative source is
-  # `specs/25 § HUD`; the renderer module's source file is the wire-up
-  # checked by Reconciler against that section.
+  # FPS HUD strip constants (slice 4; specs/25 § Renderer (Raycaster) /
+  # FPS HUD Layout). Drawn by draw_hud_fps in --render-mode=raycaster
+  # only; the topdown HUD path (draw_hud / monolithic draw) does not
+  # consume them.
+  - { name: RAYCASTER_HUD_STRIP_HEIGHT_PX,         type: i32, value: "80",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — knowledge-backed mechanism: knowledge/raycaster_hud.md § Viewport-to-HUD Vertical Partition; pixel value is generation default at 2× scale of the reference's 32-row strip on a 200-row framebuffer)" }
+  - { name: RAYCASTER_HUD_STRIP_COLOR,             type: u32, value: "0x585050", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (knowledge-backed: knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — 'Chrome warm-gray: a desaturated warm gray, roughly (90, 80, 80)')" }
+  - { name: RAYCASTER_HUD_DIGIT_PIXEL_SIZE,        type: i32, value: "4",        source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — pixel-scale factor on the existing 3×5 digit font, sized for the strip's tall-digit role)" }
+  - { name: RAYCASTER_HUD_PANE_X_HEALTH,           type: i32, value: "32",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — left padding for the leftmost pane)" }
+  - { name: RAYCASTER_HUD_PANE_X_AMMO,             type: i32, value: "256",      source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — middle pane anchor)" }
+  - { name: RAYCASTER_HUD_PANE_X_WEAPON,           type: i32, value: "480",      source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — right pane anchor)" }
+  - { name: RAYCASTER_HUD_HEALTH_COLOR,            type: u32, value: "0xD00000", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (knowledge-backed: knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — 'Tall-digit red: a saturated red roughly in the (200, 0, 0) – (220, 0, 0) range')" }
+  - { name: RAYCASTER_HUD_AMMO_COLOR,              type: u32, value: "0xFFFF00", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout — reuses HUD_AMMO_COLOR (knowledge-backed: knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — 'Short-digit yellow ... a saturated yellow roughly (220, 220, 0)')" }
+  - { name: RAYCASTER_HUD_WEAPON_COLOR,            type: u32, value: "0xB0B0B0", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — single-weapon icon collapses the reference's 6-slot weapons-owned subpanel; mid-gray reads as 'tool / equipment')" }
+  - { name: RAYCASTER_HUD_HEALTH_ICON_PX,          type: i32, value: "16",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — sized to ~80% of the digit on-screen height)" }
+  - { name: RAYCASTER_HUD_HEALTH_ICON_THICKNESS_PX,type: i32, value: "4",        source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — 1/4 of icon width; mirrors PICKUP_HEALTH_INNER_THICKNESS_PX ratio)" }
+  - { name: RAYCASTER_HUD_AMMO_ICON_PX,            type: i32, value: "16",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — same as HEALTH_ICON_PX for visual symmetry)" }
+  - { name: RAYCASTER_HUD_WEAPON_ICON_W_PX,        type: i32, value: "48",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — wider than tall to suggest a horizontal pistol silhouette)" }
+  - { name: RAYCASTER_HUD_WEAPON_ICON_H_PX,        type: i32, value: "16",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — same height as HEALTH_ICON_PX for visual symmetry)" }
+  # FPS crosshair constants (slice 4; specs/25 § Renderer (Raycaster) /
+  # FPS HUD Layout § Crosshair). Drawn by draw_hud_fps anchored on the
+  # WORLD-VIEW-REGION center, NOT the framebuffer center.
+  - { name: RAYCASTER_CROSSHAIR_ARM_LEN_PX,        type: i32, value: "6",        source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (knowledge-backed: knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — '3 pixels each side of the center'; scaled 2× for our 640-wide framebuffer)" }
+  - { name: RAYCASTER_CROSSHAIR_GAP_PX,            type: i32, value: "2",        source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (knowledge-backed: knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — '1-pixel center gap'; scaled 2×)" }
+  - { name: RAYCASTER_CROSSHAIR_THICKNESS_PX,      type: i32, value: "2",        source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (knowledge-backed: knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — '1-pixel thickness'; scaled 2×)" }
+  - { name: RAYCASTER_CROSSHAIR_COLOR,             type: u32, value: "0xA0A0A0", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (knowledge-backed: knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — 'mid-bright gray, approximately (160, 160, 160)')" }
+  # NOTE: HUD_* layout/font/band constants from the topdown HUD workflow
+  # are renderer-private and NOT contracted here. Their authoritative
+  # source is `specs/25 § HUD`; the renderer module's source file is the
+  # wire-up checked by Reconciler against that section. The same applies
+  # to the FPS HUD's per-pane internal layout: the public_constants
+  # above are the framebuffer-coordinate anchors; the per-pane
+  # icon-then-digits compositing is renderer-internal and not
+  # contracted as a public symbol.
 public_methods:
   - signature: |
       pub fn draw(
@@ -119,21 +148,111 @@ public_methods:
   - signature: |
       pub fn draw_hud(framebuffer: &mut Vec<u32>, player: &Player)
     notes: |
-      Draws ONLY the HUD layer (specs/50): top-left health bar +
-      digits, ammo pane below, in the same pixel position and same
-      color rules used by the monolithic `draw` above (its layer 9).
-      Used by main.rs in --render-mode=raycaster after raycaster::draw
-      fills the framebuffer (specs/45 § Interactions § With renderer
-      (top-down)). The monolithic `draw` function may also call this
-      helper internally to avoid duplicating the HUD-drawing code;
-      that is a Coder degree of freedom.
+      Draws ONLY the topdown HUD layer (specs/50): top-left health
+      bar + digits, ammo pane below, in the same pixel position and
+      same color rules used by the monolithic `draw` above (its layer
+      9). The monolithic `draw` function may also call this helper
+      internally to avoid duplicating the HUD-drawing code; that is a
+      Coder degree of freedom.
+
+      As of slice 4, this function is consumed ONLY by
+      --render-mode=topdown's monolithic draw path. The raycaster mode
+      uses draw_hud_fps (below) instead. Pre-slice-4 contract had
+      raycaster mode consuming this function for HUD overlay; that
+      call site moved to draw_hud_fps in slice 4 (specs/45 § HUD Mode
+      Dispatch).
 
       Reads (no mutation): player.health, player.ammo. Writes the
       framebuffer.
+  - signature: |
+      pub fn draw_hud_fps(framebuffer: &mut Vec<u32>, player: &Player)
+    notes: |
+      Slice-4 FPS HUD entry point (specs/45 § FPS HUD Layout). Draws,
+      in order:
+        1. Centered crosshair (a static + at the world-view-region
+           center, NOT the framebuffer center; specs/45 § Centered
+           Crosshair). Anchor:
+             cx = WINDOW_WIDTH / 2 (= 320)
+             cy = (WINDOW_HEIGHT - RAYCASTER_HUD_STRIP_HEIGHT_PX) / 2
+                  (= (480 - 80) / 2 = 200)
+           Shape: + composed of two perpendicular bars meeting at a
+           center gap of RAYCASTER_CROSSHAIR_GAP_PX cells (the
+           interior 2×2 region centered on (cx, cy) is left
+           untouched). Each bar: arm length RAYCASTER_CROSSHAIR_ARM_LEN_PX,
+           thickness RAYCASTER_CROSSHAIR_THICKNESS_PX, color
+           RAYCASTER_CROSSHAIR_COLOR. Full-bright; no z-test.
+        2. Bottom chrome strip background (specs/45 § Bottom Chrome
+           Strip). A solid RAYCASTER_HUD_STRIP_COLOR rectangle
+           covering rows
+             [WINDOW_HEIGHT - RAYCASTER_HUD_STRIP_HEIGHT_PX,
+              WINDOW_HEIGHT)
+           = [400, 480) at full WINDOW_WIDTH. Overwrites whatever
+           world / effect content the previous passes wrote into
+           those rows.
+        3. Health pane: a red plus-cross icon + the player's health
+           digits (specs/45 § Health Pane). Icon at
+             (RAYCASTER_HUD_PANE_X_HEALTH,
+              RAYCASTER_HUD_STRIP_TOP_Y + ...)
+           where the y-coordinate vertically centers the icon /
+           digits in the strip. Icon shape: a plus-cross of size
+           RAYCASTER_HUD_HEALTH_ICON_PX × RAYCASTER_HUD_HEALTH_ICON_PX,
+           arm thickness RAYCASTER_HUD_HEALTH_ICON_THICKNESS_PX,
+           color RAYCASTER_HUD_HEALTH_COLOR. Digits: render
+           player.health.max(0) as decimal in
+           RAYCASTER_HUD_HEALTH_COLOR using the renderer-private
+           HUD_DIGIT_GLYPHS table at RAYCASTER_HUD_DIGIT_PIXEL_SIZE
+           pixel scale, no leading zeros, zero-special-cased,
+           starting HUD_PANE_GAP_PX to the right of the icon (left-
+           aligned; right-justification is deferred per specs/45 §
+           Implementation Status / Deferred).
+           NO per-value-threshold coloring: health at 5% renders the
+           same red as health at 95% (knowledge raycaster_hud.md §
+           Color Treatment).
+        4. Ammo pane: a yellow square icon + the player's ammo digits
+           (specs/45 § Ammo Pane). Icon at
+             (RAYCASTER_HUD_PANE_X_AMMO, ...)
+           Shape: a filled square
+             RAYCASTER_HUD_AMMO_ICON_PX × RAYCASTER_HUD_AMMO_ICON_PX
+           in RAYCASTER_HUD_AMMO_COLOR. Digits: render player.ammo
+           as decimal in RAYCASTER_HUD_AMMO_COLOR using the same
+           font + scale rules as the health pane. Always drawn,
+           including when ammo == 0.
+        5. Weapon icon: a static gray weapon-shape silhouette
+           (specs/45 § Weapon Icon Pane) at
+             (RAYCASTER_HUD_PANE_X_WEAPON, ...)
+           Default shape: a single filled rectangle of size
+             RAYCASTER_HUD_WEAPON_ICON_W_PX × RAYCASTER_HUD_WEAPON_ICON_H_PX
+           in RAYCASTER_HUD_WEAPON_COLOR. Coder MAY emit a multi-rect
+           silhouette (e.g. T-shape with grip, two-rectangle barrel +
+           grip) without changing the contract — the constants pin
+           the bounding box; the silhouette inside it is a Coder
+           degree of freedom. Static across all frames.
 
-      The HUD draw is identical between --render-mode=topdown and
-      --render-mode=raycaster modes (specs/45 § Constraints — "HUD
-      layout unchanged in this slice").
+      Reads (no mutation): player.health, player.ammo. Writes the
+      framebuffer. Reuses the renderer-private HUD_DIGIT_GLYPHS table
+      (specs/50 § State); no new font is added.
+
+      Used by main.rs in --render-mode=raycaster after raycaster::draw
+      fills the framebuffer (specs/45 § Interactions § With renderer
+      (top-down)). NOT consumed by --render-mode=topdown — the
+      topdown path keeps draw_hud (or the monolithic draw) for its
+      HUD layer (specs/45 § HUD Mode Dispatch).
+
+      Coder degrees of freedom (slice 4):
+        - The exact pistol silhouette (single rectangle, T-shape,
+          two-rectangle barrel + grip) — see § Weapon Icon Pane.
+        - Whether crosshair-then-strip and per-pane sub-orderings
+          are inlined sequentially in draw_hud_fps or split into
+          private helpers (draw_crosshair, draw_strip,
+          draw_health_pane, draw_ammo_pane, draw_weapon_icon).
+          Both shapes meet the spec; private helpers are the
+          obvious refactor for readability but not required.
+        - Whether the icon plus-cross of the health pane reuses the
+          private helper that already draws the on-map health
+          pickup's red cross (renderer.rs internal — not contracted
+          as a public symbol; specs/60 § Pickup Rendering owns the
+          on-map version). Both reusing and re-implementing meet
+          the spec; reuse is the cleaner shape.
   - signature: |
       pub fn draw_game_over_border(framebuffer: &mut Vec<u32>, won: bool)
     notes: |

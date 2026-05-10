@@ -2,17 +2,17 @@
 
 ## Overview
 
-This specification defines a column-based first-person renderer that draws walls, a flat floor, a flat ceiling, screen-aligned billboards for world entities (live enemies, dying enemies, persistent corpses, blood splats, pickups, wall puffs), a screen-space muzzle-flash overlay, a world-space tracer line projected to screen, and the player damage / pickup tint overlays — into the same `Vec<u32>` framebuffer used by the existing top-down renderer. It is the third step in a multi-slice migration that will eventually replace the top-down view with a first-person view authentic to the genre.
+This specification defines a column-based first-person renderer that draws walls, a flat floor, a flat ceiling, screen-aligned billboards for world entities (live enemies, dying enemies, persistent corpses, blood splats, pickups, wall puffs), a screen-space muzzle-flash overlay, a world-space tracer line projected to screen, the player damage / pickup tint overlays, and (slice 4) a first-person HUD comprising a bottom chrome strip and a centered crosshair — into the same `Vec<u32>` framebuffer used by the existing top-down renderer. It is the fourth step in a multi-slice migration that will eventually replace the top-down view with a first-person view authentic to the genre.
 
-This slice (3 of 6) builds on slices 1 + 2 (walls, floor, ceiling, sprite billboards, per-column z-buffer) and adds:
-- A **first-person effects pass** that runs after the wall and sprite passes: a screen-space muzzle-flash overlay anchored at a fixed in-viewport position, a world-space tracer line projected to screen with per-column z-occlusion, the wall-puff billboard (special-cased into the slice-2 sprite pass with a full-bright first phase), and an extra-light bias on every wall and non-full-bright sprite color during the firing flash window (knowledge: [`raycaster_effects.md`](../knowledge/raycaster_effects.md) § Effect Pass Ordering, § Extra-Light Bias).
-- **Player damage tint and pickup tint screen-space overlays**, identical to the topdown renderer's overlays, drawn on top of the world layers (knowledge: [`raycaster_effects.md`](../knowledge/raycaster_effects.md) § Effect Pass Ordering item 5; reuses [`40_visual_feedback.md § Player Damage Tint`](40_visual_feedback.md#player-damage-tint) and [`40_visual_feedback.md § Pickup Tint Screen Flash`](40_visual_feedback.md#pickup-tint-screen-flash)).
-- The slice-1 `--render-mode={topdown|raycaster}` CLI flag is unchanged; default remains `topdown` through slice 4.
-- The slice-1 walls + floor + ceiling pass and the slice-2 sprite pass are unchanged in their pixel output for non-firing, non-damaged, non-pickup-recently-consumed frames; only frames with at least one active `MuzzleFlash`, `Tracer`, `WallPuff` Effect, or `damage_count > 0`, or `pickup_tint_count > 0` differ from the slice-2 raycaster baseline.
+This slice (4 of 6) builds on slices 1 + 2 + 3 (walls, floor, ceiling, sprite billboards, per-column z-buffer, first-person effects, damage / pickup tint overlays) and adds:
+- A **bottom HUD chrome strip** anchored to the bottom 80 rows of the framebuffer, showing health digits, ammo digits, and a weapon icon in three left-to-right panes (knowledge: [`raycaster_hud.md`](../knowledge/raycaster_hud.md) § Viewport-to-HUD Vertical Partition, § Bottom Chrome Strip — Static Background Bitmap, § Widget Layout Within the Strip, § Bottom-Strip Font Treatment, § Bottom-Strip Palette Reference).
+- A **centered crosshair** over the world-view region, a static + shape rendered at the geometric center of the world view (NOT the framebuffer center) so the crosshair sits where the player's hitscan rays project (knowledge: [`raycaster_hud.md`](../knowledge/raycaster_hud.md) § Recommended Crosshair Shape for a Port, § Key Insights — "The world-view-region center is NOT the framebuffer center"; deliberate generation-default deviation from § On-View Crosshair — Absent in the Reference's First-Person View — see § FPS HUD Layout § Generation Default Deviation: First-Person Crosshair below).
+- The slice-1 `--render-mode={topdown|raycaster}` CLI flag is unchanged; default remains `topdown` through slice 4 (this slice). The default flips to `raycaster` in slice 5.
+- The slice 1–3 wall, sprite, and effect passes are unchanged in their pixel output for the world-view region (rows 0..400). The FPS HUD strip overwrites the bottom 80 rows; without an active strip the world-view content of those rows would still render, but the strip covers it. Per-mode dispatch in `main.rs` selects between the existing top-left text HUD (`renderer::draw_hud`, used for `--render-mode=topdown`) and the new FPS HUD (`renderer::draw_hud_fps`, used for `--render-mode=raycaster`); the topdown path's HUD is unchanged.
 
-Subsequent slices add: the FPS-specific HUD layout (slice 4 — bottom chrome strip, crosshair, held-weapon body sprite), the default flip from `topdown` to `raycaster` (slice 5), and removal of the top-down code path (slice 6). Each slice is intentionally small so any single PR is easy to review and revert.
+Subsequent slices add: the default flip from `topdown` to `raycaster` (slice 5), and removal of the top-down code path (slice 6). The held-weapon body sprite (the gun visible at the bottom-center of the viewport, on which the muzzle flash visually anchors) was originally scoped to slice 4 alongside the HUD; it is **deferred** out of slice 4 and remains an open follow-up — the FPS HUD strip and crosshair land in this slice without it. See § Implementation Status / Deferred for the carry-over rationale.
 
-The HUD (top-left health bar + ammo pane, [`50_hud.md`](50_hud.md)) and the game-over border ([`25_game_tuning.md § Visual`](25_game_tuning.md#visual)) draw unchanged on top of the framebuffer in both modes; this spec does not touch their behavior.
+The top-left text HUD (`50_hud.md`) draws unchanged in `--render-mode=topdown`; the FPS HUD strip + crosshair replace it in `--render-mode=raycaster`. The game-over border ([`25_game_tuning.md § Visual`](25_game_tuning.md#visual)) draws unchanged on top of either HUD path in both modes.
 
 Source: [`knowledge/raycaster_renderer.md`](../knowledge/raycaster_renderer.md). Per-row constants and color values are defined by name in [`25_game_tuning.md § Renderer (Raycaster)`](25_game_tuning.md#renderer-raycaster); this spec only refers to constants by name.
 
@@ -53,7 +53,7 @@ This is a deliberate generation-default deviation that cites [`knowledge/raycast
 
 **Trigger:** Every frame in `--render-mode=raycaster`, after `game_loop::update` returns and before `window.update_with_buffer`.
 
-**Effect:** The framebuffer is filled via `raycaster::draw(&mut framebuffer, &level, &player, &enemies, &fx)` (full signature in `ir/contracts/raycaster.yaml`), then the existing HUD and game-over border draw on top.
+**Effect:** The framebuffer is filled via `raycaster::draw(&mut framebuffer, &level, &player, &enemies, &fx)` (full signature in `ir/contracts/raycaster.yaml`), then the FPS HUD (`renderer::draw_hud_fps`) and game-over border draw on top. The FPS HUD replaces the top-left text HUD in `--render-mode=raycaster` only; `--render-mode=topdown` continues to call `renderer::draw_hud` (or the monolithic `renderer::draw`) and shows the original top-left bar + digits HUD byte-for-byte unchanged.
 
 **Rules:**
 - `raycaster::draw` writes every pixel of the `WINDOW_WIDTH × WINDOW_HEIGHT` framebuffer (no read-modify-write of unaffected regions). The split is:
@@ -72,7 +72,7 @@ This is a deliberate generation-default deviation that cites [`knowledge/raycast
   6. The framebuffer column is written: rows `[0, ceiling_top)` ← `RAYCASTER_CEILING_COLOR`, rows `[ceiling_top, floor_top)` ← shaded wall color, rows `[floor_top, WINDOW_HEIGHT)` ← `RAYCASTER_FLOOR_COLOR`. With the asymmetric split: `ceiling_top = clamp(HORIZON_Y − (1 − EYE_HEIGHT_FRACTION) × column_h_unclamped, 0, WINDOW_HEIGHT)`, `floor_top = clamp(HORIZON_Y + EYE_HEIGHT_FRACTION × column_h_unclamped, 0, WINDOW_HEIGHT)`. Clamping the screen Y coordinates after the split (rather than clamping `column_h_unclamped` first) is what lets a wall the player is pressed against fill the entire viewport without a leftover floor sliver beneath it.
   7. `wall_depth[x] = perp_dist` (knowledge: `raycaster_sprites.md` § Per-Column Wall Depth (Z-Buffer Equivalent)).
 - If the DDA walk reaches `RAYCASTER_MAX_DEPTH` without hitting a wall, the column is filled with ceiling above the horizon and floor below — no wall slice is drawn — and `wall_depth[x] = RAYCASTER_MAX_DEPTH` (the far-clip sentinel; sprites at that distance or beyond do not draw, sprites closer than the far clip draw normally). This is the far-clip case (knowledge § Max Render Distance / Far Clipping; knowledge: `raycaster_sprites.md` § Per-Column Wall Depth — Initialization sentinel).
-- After the wall pass, the sprite pass runs (§ Sprites and Billboards), then the effects pass runs (§ First-Person Effects). After all three passes, `raycaster::draw` returns and the existing HUD draw path (`renderer::draw_hud`) runs unchanged. The game-over border (if `game_over.is_some()`) also draws unchanged after the HUD.
+- After the wall pass, the sprite pass runs (§ Sprites and Billboards), then the effects pass runs (§ First-Person Effects). After all three passes, `raycaster::draw` returns and the FPS HUD draw path (`renderer::draw_hud_fps`, § FPS HUD Layout) runs in `--render-mode=raycaster`. The game-over border (if `game_over.is_some()`) draws unchanged after the HUD in both modes.
 - The player disc, direction line, and exit marker are **not** rendered in raycaster mode (the player is the camera origin in first-person; the exit marker is reachable via gameplay, not via an in-world disc). The held-weapon body sprite (the gun visible at the bottom of the viewport, on which the muzzle flash visually anchors) is **deferred** to slice 4 with the FPS HUD layout — slice 3 ships the muzzle flash without the gun. Pickup inner-detail (the red cross overlay on health pickups) is also deferred — slice 3 still draws each pickup as a single flat-color rectangle.
 
 ### Column Projection
@@ -277,8 +277,8 @@ The reference-faithful visual set (flash + bias + puff, no tracer) remains an op
 4. **Muzzle flash overlay (slice 3)** — fixed-screen-position bright disc; no z-test.
 5. **Damage tint overlay (slice 3)** — viewport-wide alpha blend on top of all world + effect layers.
 6. **Pickup tint overlay (slice 3)** — viewport-wide alpha blend on top of damage tint.
-7. HUD pane — drawn by `renderer::draw_hud` after `raycaster::draw` returns, in `main.rs`. (Unchanged from slice 1.)
-8. Game-over border (if `game_over.is_some()`) — drawn by `renderer::draw_game_over_border` after the HUD. (Unchanged from slice 1.)
+7. **(Slice 4) FPS HUD layer** — drawn by `renderer::draw_hud_fps` after `raycaster::draw` returns, in `main.rs`. Composes (a) the centered crosshair anchored on the world-view center (§ FPS HUD Layout § Centered Crosshair), then (b) the bottom chrome strip with health, ammo, and weapon panes (§ FPS HUD Layout § Bottom Chrome Strip). Crosshair before strip is a documentation pin only — the two surfaces never overlap (the strip occupies rows 400..480 while the crosshair sits centered at row 200 with arm length 6 px → rows 192..208), so paint order is observable only when one is later changed.
+8. Game-over border (if `game_over.is_some()`) — drawn by `renderer::draw_game_over_border` after the HUD. (Unchanged from slice 3.)
 
 Layers 1–6 are the responsibility of `raycaster::draw`. Layers 7–8 remain in `main.rs`'s post-call dispatch (§ Interactions § With renderer (top-down)). The ordering of layers 3–6 inside the effects pass is fixed: tracer (world-occluded) before flash (screen overlay) ensures a near-camera flash never shows behind its own tracer; damage tint before pickup tint matches the topdown renderer's order (`ir/contracts/renderer.yaml § public_methods § draw — layers 8 and 8.5`) so a frame that takes damage on the same tick as a pickup is consumed shows both overlays in the same back-to-front order in both modes.
 
@@ -370,6 +370,94 @@ Layers 1–6 are the responsibility of `raycaster::draw`. Layers 7–8 remain in
 - The overlay is independent of and additive with the damage tint overlay; both may render simultaneously when the player is hurt and grabs a pickup in the same frame.
 - At `level == 0` the overlay is not drawn at all.
 
+## FPS HUD Layout
+
+This section pins the slice-4 first-person HUD: a bottom chrome strip with three panes (health, ammo, weapon icon) and a centered crosshair over the world-view region. Both surfaces draw on top of the world + effect layers in `--render-mode=raycaster` only. `--render-mode=topdown` continues to render the existing top-left text HUD (specs/50) byte-for-byte unchanged.
+
+Source: [`knowledge/raycaster_hud.md`](../knowledge/raycaster_hud.md). Numeric constants are defined by name in [`25_game_tuning.md § Renderer (Raycaster) / FPS HUD Layout`](25_game_tuning.md#fps-hud-layout); this section only refers to constants by name.
+
+### Generation Default Deviation: First-Person Crosshair
+
+Knowledge [`raycaster_hud.md § On-View Crosshair — Absent in the Reference's First-Person View`](../knowledge/raycaster_hud.md#on-view-crosshair--absent-in-the-references-first-person-view) is explicit: **the reference engine renders no crosshair sprite over the first-person world view.** Hitscan accuracy in the reference is conveyed exclusively by the held-weapon view-sprite anchoring the eye to the bottom-center plus the implicit "the camera ray's center IS the screen center" projection. The only crosshair the reference draws is a single mid-gray pixel at the geometric center of an auxiliary overhead-map view (knowledge same § The Auxiliary-Map Single-Pixel Crosshair), which is out of scope for this port.
+
+**This spec adds a static centered crosshair.** *(Generation default — knowledge says the reference has no first-person crosshair; we add one because (a) the topdown renderer's player direction line conveys "where the player is aiming" and removing it without a substitute would worsen the slice-5 default flip, (b) hitscan accuracy without a visible aim point is harder for a new player to learn, and (c) knowledge's § Recommended Crosshair Shape for a Port — Inferred, Not Reference-Native explicitly endorses a small static + as "the smallest possible departure from the reference".)* The crosshair shape, gap, thickness, and color follow the knowledge "Recommended" section verbatim, scaled 2× for our 640 × 480 framebuffer per knowledge's resolution-scaling rule. The deviation is acknowledged at the rule site (§ Centered Crosshair rule 1) and surfaced as an ADR candidate in this run's journal so the PostMortem can elevate the reference-faithful "no crosshair" alternative if/when needed.
+
+The reference-faithful alternative (no crosshair, rely on the held-weapon body sprite to anchor center-screen) remains an option. It becomes naturally available once the held-weapon body sprite (deferred — see § Implementation Status / Deferred) lands; at that point the crosshair could be removed without losing the "where am I aiming" affordance. That removal would touch only this spec's § Centered Crosshair section and `renderer::draw_hud_fps`'s crosshair branch.
+
+### HUD Mode Dispatch
+
+**Trigger:** Every frame, after `raycaster::draw` returns and before `window.update_with_buffer`, in `--render-mode=raycaster`.
+
+**Effect:** `renderer::draw_hud_fps(&mut framebuffer, &player)` is called in place of the topdown `renderer::draw_hud`. The FPS HUD function composes the crosshair and the bottom chrome strip in one call.
+
+**Rules:**
+- `main.rs` selects between `draw_hud` and `draw_hud_fps` based on the `RenderMode` enum (`ir/contracts/_shared.yaml § main_cli § render_mode`). Topdown mode's HUD path is byte-for-byte unchanged (slice-1 invariant).
+- Both `draw_hud` and `draw_hud_fps` take `(framebuffer: &mut Vec<u32>, player: &Player)`. The FPS variant reads the same `player.health` and `player.ammo` fields the topdown variant does — no new `Player` field is added by slice 4.
+- The game-over border (`renderer::draw_game_over_border`) draws after either HUD path. The colored border draws on top of the FPS strip and crosshair; this is intentional — game-over is a state the player must register regardless of HUD mode.
+
+### Bottom Chrome Strip
+
+**Trigger:** Every frame in `--render-mode=raycaster`, inside `renderer::draw_hud_fps`.
+
+**Effect:** A horizontal strip of `RAYCASTER_HUD_STRIP_HEIGHT_PX` rows is filled with `RAYCASTER_HUD_STRIP_COLOR` at the bottom of the framebuffer (rows `RAYCASTER_HUD_STRIP_TOP_Y..WINDOW_HEIGHT`). Three panes overlay the chrome at fixed pixel positions, left-to-right: health pane, ammo pane, weapon icon (knowledge [`raycaster_hud.md § Widget Layout Within the Strip`](../knowledge/raycaster_hud.md#widget-layout-within-the-strip) — "The layout reads left-to-right as a sentence").
+
+**Rules:**
+- The strip background is filled FIRST (a solid `RAYCASTER_HUD_STRIP_COLOR` rectangle covering the full strip rectangle). Pane glyphs are layered on top.
+- The strip overwrites whatever world-layer / effect content the previous passes wrote into rows 400..479. Knowledge [`raycaster_hud.md § Viewport-to-HUD Vertical Partition`](../knowledge/raycaster_hud.md#viewport-to-hud-vertical-partition) notes the reference avoids the wasted compute by limiting `view_height` to the world-region height; we do not — the strip overlay is simpler and the wasted compute (~51 200 pixels) is negligible at our scenario complexity. *(Generation default — knowledge says the reference clips the world view to avoid the wasted compute; we overdraw because the simpler dispatch shape is worth the negligible cost.)*
+- The strip has no embossed wells, no chrome bitmap art, no two-color border. *(Generation default — knowledge says the reference uses a 320 × 32 chrome bitmap with embossed widget wells; we have no asset pipeline (specs/80 § Dependencies) so we substitute a flat-color rectangle.)*
+
+#### Health Pane
+
+**Position:** anchored at `(RAYCASTER_HUD_PANE_X_HEALTH, RAYCASTER_HUD_STRIP_TOP_Y + ...)`. The icon and digits sit on a single horizontal row vertically centered in the strip (`RAYCASTER_HUD_PANE_TEXT_Y`).
+
+**Rules:**
+- A red plus-cross icon (`RAYCASTER_HUD_HEALTH_ICON_PX × RAYCASTER_HUD_HEALTH_ICON_PX`, arm thickness `RAYCASTER_HUD_HEALTH_ICON_THICKNESS_PX`, color `RAYCASTER_HUD_HEALTH_COLOR`) is drawn first at `(RAYCASTER_HUD_PANE_X_HEALTH, RAYCASTER_HUD_PANE_TEXT_Y)`.
+- The player's health value `player.health.max(0)` is drawn immediately to the right of the icon with a `HUD_PANE_GAP_PX` gap, in `RAYCASTER_HUD_HEALTH_COLOR`, using the existing renderer-private digit font scaled by `RAYCASTER_HUD_DIGIT_PIXEL_SIZE`. No leading zeros; `0` renders as the `0` glyph (knowledge [`raycaster_hud.md § Bottom-Strip Font Treatment`](../knowledge/raycaster_hud.md#bottom-strip-font-treatment) — "right-justified inside their widget's reserved rectangle ... no leading zeros"). Right-justification within a fixed-width field is **deferred** — the digits are drawn left-to-right from the icon-end x position, matching the topdown HUD's existing pattern (specs/50 § Deferred — "Right-justified digit field").
+- Digit color does NOT change with the value (knowledge [`raycaster_hud.md § Color Treatment (Bottom Strip)`](../knowledge/raycaster_hud.md#color-treatment-bottom-strip) — "Within the strip itself there is no per-widget threshold coloring — health at 5% renders in the same baseline color as health at 95%"). The topdown HUD's HIGH/MID/LOW band coloring (specs/25 § Health Bands) does NOT apply to the FPS strip — the FPS strip's health pane uses a single saturated red `RAYCASTER_HUD_HEALTH_COLOR` always.
+
+#### Ammo Pane
+
+**Position:** anchored at `(RAYCASTER_HUD_PANE_X_AMMO, RAYCASTER_HUD_PANE_TEXT_Y)`.
+
+**Rules:**
+- A small filled yellow square icon (`RAYCASTER_HUD_AMMO_ICON_PX × RAYCASTER_HUD_HEALTH_ICON_PX`, color `RAYCASTER_HUD_AMMO_COLOR`) is drawn first.
+- The player's ammo value `player.ammo` is drawn immediately to the right of the icon with a `HUD_PANE_GAP_PX` gap, in `RAYCASTER_HUD_AMMO_COLOR`, using the same digit font + scale rules as the health pane. No leading zeros. Always drawn — including when `ammo == 0` (specs/50 § Ammo Pane "Always drawn — including when `ammo == 0`").
+- Same single-color, no per-value-threshold coloring as the health pane (knowledge same § Color Treatment).
+
+#### Weapon Icon Pane
+
+**Position:** anchored at `(RAYCASTER_HUD_PANE_X_WEAPON, RAYCASTER_HUD_PANE_TEXT_Y)`.
+
+**Rules:**
+- A weapon-shape icon of size `RAYCASTER_HUD_WEAPON_ICON_W_PX × RAYCASTER_HUD_WEAPON_ICON_H_PX` in `RAYCASTER_HUD_WEAPON_COLOR` is drawn at the anchor.
+- The exact silhouette (single filled rectangle, T-shape with grip, two-rectangle barrel + grip) is a Coder degree of freedom — the simplest shape (a single filled rectangle at the constants' size) meets the spec; richer silhouettes do not change the contract.
+- The icon does NOT change shape, color, or position based on the player's state. *(Generation default — knowledge [`raycaster_hud.md § Widget Layout Within the Strip`](../knowledge/raycaster_hud.md#widget-layout-within-the-strip) describes a 6-slot weapons-owned subpanel with per-slot color states (gray = unowned, yellow = owned). With one weapon (the pistol) we have one slot and one state, so the per-slot gray-vs-yellow channel collapses to a single static icon.)*
+
+### Centered Crosshair
+
+**Trigger:** Every frame in `--render-mode=raycaster`, inside `renderer::draw_hud_fps`.
+
+**Effect:** A static + shape is drawn at `(RAYCASTER_CROSSHAIR_CENTER_X, RAYCASTER_CROSSHAIR_CENTER_Y)` in `RAYCASTER_CROSSHAIR_COLOR`, with arm length `RAYCASTER_CROSSHAIR_ARM_LEN_PX`, center gap `RAYCASTER_CROSSHAIR_GAP_PX`, and arm thickness `RAYCASTER_CROSSHAIR_THICKNESS_PX`.
+
+**Rules:**
+1. *(Generation default — knowledge [`raycaster_hud.md § On-View Crosshair — Absent in the Reference's First-Person View`](../knowledge/raycaster_hud.md#on-view-crosshair--absent-in-the-references-first-person-view) says the reference renders no crosshair in the first-person view; we add one. See § Generation Default Deviation: First-Person Crosshair above.)*
+2. The crosshair anchor `(RAYCASTER_CROSSHAIR_CENTER_X, RAYCASTER_CROSSHAIR_CENTER_Y)` is the geometric center of the **world-view region** (rows `0..RAYCASTER_HUD_STRIP_TOP_Y`), NOT the geometric center of the framebuffer. With a 480-tall framebuffer and an 80-row strip, the world view occupies rows 0..400 and its center is at `(320, 200)`, not `(320, 240)` (knowledge [`raycaster_hud.md § Key Insights`](../knowledge/raycaster_hud.md#key-insights) — "A port that draws a crosshair at the framebuffer center will see the crosshair sit too low — visually under the player's actual line of sight").
+3. The shape is a + composed of two perpendicular bars meeting at a 1-cell-radius center gap:
+   - Horizontal bar: rows `[CENTER_Y - THICKNESS_PX/2, CENTER_Y + THICKNESS_PX/2)`, columns `[CENTER_X - GAP_PX - ARM_LEN_PX, CENTER_X - GAP_PX) ∪ [CENTER_X + GAP_PX, CENTER_X + GAP_PX + ARM_LEN_PX)`.
+   - Vertical bar: columns `[CENTER_X - THICKNESS_PX/2, CENTER_X + THICKNESS_PX/2)`, rows `[CENTER_Y - GAP_PX - ARM_LEN_PX, CENTER_Y - GAP_PX) ∪ [CENTER_Y + GAP_PX, CENTER_Y + GAP_PX + ARM_LEN_PX)`.
+   - The center cell `[CENTER_X - GAP_PX, CENTER_X + GAP_PX) × [CENTER_Y - GAP_PX, CENTER_Y + GAP_PX)` is left untouched so the crosshair does not occlude the smallest distant targets (knowledge [`raycaster_hud.md § Recommended Crosshair Shape for a Port`](../knowledge/raycaster_hud.md#recommended-crosshair-shape-for-a-port-inferred-not-reference-native) — "Center pixel: leave empty (transparent / unmodified) so the crosshair does not occlude small distant targets").
+4. The crosshair is **completely static**: it does not animate with weapon firing, expand with spread, contract on aim, change color on enemy-hover, or scale with hit confirmation (knowledge same § — "Behavior: completely static. Does not animate, scale, or change color on hit"). Animated / dynamic crosshair behaviors are **deferred** (§ Implementation Status / Deferred).
+5. The crosshair is **full-bright** — no distance attenuation, no extra-light-bias modulation, no z-test against `wall_depth[]`. It always reads at the geometric world-view center.
+6. The crosshair draws BEFORE the bottom chrome strip in paint order. The two surfaces never overlap in this slice (the strip occupies rows 400..480 while the crosshair sits centered at row 200 with arm length 6 px → rows 192..208), so paint order is observable only when one is later changed; the documented ordering is for Coder-determinism.
+
+### Implementation Notes
+
+- `renderer::draw_hud_fps` reuses the renderer-private digit font glyphs (`HUD_DIGIT_GLYPHS`) already shipped for the topdown HUD (specs/50 § State). The only difference is the per-glyph pixel scale (`RAYCASTER_HUD_DIGIT_PIXEL_SIZE = 4` vs. the topdown HUD's `HUD_DIGIT_PIXEL_SIZE = 2`); all other glyph-rendering rules (no leading zeros, zero special-cased) are unchanged.
+- The strip and crosshair draw orders inside `renderer::draw_hud_fps` are: (a) crosshair (over the world-view region), (b) strip background fill, (c) strip pane icons, (d) strip pane digits, (e) strip weapon icon. Within the strip, the background must precede every pane to avoid background-on-pane occlusion bugs.
+- No new `Player` field is consumed. `draw_hud_fps` reads `player.health`, `player.ammo`, and nothing else from `Player`.
+- No new `VisualEffects` field is consumed. The HUD is entirely a function of `Player` state plus compile-time constants.
+- The FPS HUD is **stateless across frames** — every per-frame value is recomputed from `player.health` and `player.ammo`, matching the topdown HUD's read-only contract (specs/50 § State).
+
 ## State
 
 The raycaster is **stateless across frames** — it owns no per-frame data that persists between `raycaster::draw` calls. Each call reads `level`, `player`, `enemies`, and `fx` (all read-only borrows) and writes the framebuffer. The per-column angle-offset table is a private constant precomputed once on first call (or at compile time if `const fn` trig becomes available). The per-column wall-depth array `wall_depth: [f32; WINDOW_WIDTH]` is module-private and is rewritten end-to-end during the wall pass of every frame; it never carries state between frames. Storage strategy for the depth array (stack-local, `OnceLock`-backed, or a lazily-initialized fixed-size array reused across calls) is a Coder degree of freedom (`ir/contracts/raycaster.yaml § notes`).
@@ -385,11 +473,12 @@ The player's `pos` and `facing` are already tracked by `player_state::Player` (`
 
 ### With renderer (top-down)
 
-- The top-down renderer (`renderer::draw`) is unchanged in this slice — its signature, its layer order, and its pixel output remain exactly as documented in `ir/contracts/renderer.yaml`. The `--render-mode=topdown` mode dispatches to it byte-for-byte unchanged.
-- In `--render-mode=raycaster` mode, `renderer::draw` is **not called for the world layers**; the raycaster fills the framebuffer instead. The HUD and game-over border (currently invoked from inside `renderer::draw`) must remain reachable. Two equally valid implementation shapes (Coder degree of freedom):
-  - (a) Split the existing `renderer::draw` into `renderer::draw_world` + `renderer::draw_hud` + `renderer::draw_game_over_border`, and `main.rs` composes them per mode.
-  - (b) Keep `renderer::draw` monolithic for top-down mode, expose `renderer::draw_hud` + `renderer::draw_game_over_border` as separate public entry points, and have `main.rs` call those directly after `raycaster::draw`.
-  Either shape preserves the contract that the HUD and game-over border draw last and identically in both modes.
+- The top-down renderer (`renderer::draw`) is unchanged in this slice — its signature, its layer order, and its pixel output remain exactly as documented in `ir/contracts/renderer.yaml`. The `--render-mode=topdown` mode dispatches to it byte-for-byte unchanged, and the existing top-left text HUD is part of its layer 9.
+- In `--render-mode=raycaster` mode, `renderer::draw` is **not called for the world layers**; the raycaster fills the framebuffer instead. After `raycaster::draw` returns, `main.rs` calls **`renderer::draw_hud_fps`** (the slice-4 FPS HUD) followed by `renderer::draw_game_over_border` if the per-frame `game_over` Option is `Some(_)`. The slice-1..3 dispatch shape that called `renderer::draw_hud` (the topdown text HUD) in raycaster mode is **superseded** — slice 4 replaces that call site with `draw_hud_fps`. The topdown mode continues to use `renderer::draw_hud` (or the monolithic `renderer::draw`) unchanged.
+- Two equally valid implementation shapes (Coder degree of freedom) for `renderer::draw`:
+  - (a) Split the existing `renderer::draw` into `renderer::draw_world` + `renderer::draw_hud` + `renderer::draw_game_over_border`, and `main.rs` composes them per mode (topdown calls all three; raycaster calls `draw_hud_fps` instead of `draw_hud`).
+  - (b) Keep `renderer::draw` monolithic for top-down mode, expose `renderer::draw_hud` + `renderer::draw_hud_fps` + `renderer::draw_game_over_border` as separate public entry points, and have `main.rs` call the appropriate HUD entry-point + game-over border after `raycaster::draw` (raycaster mode) or just call monolithic `draw` (topdown mode).
+  Either shape preserves the contract that the HUD layer (topdown text or FPS strip + crosshair) draws after the world layers and the game-over border draws last in both modes.
 
 ### With level_data
 
@@ -459,9 +548,9 @@ The window is 640 × 480 (`WINDOW_WIDTH × WINDOW_HEIGHT`, presentation contract
 
 ## Test Scenarios
 
-This slice does NOT add a new autopilot fixture. The default `--render-mode=topdown` (in effect through slice 4) remains exercised by every existing fixture (`tests/combat/*.yaml`, `tests/level/*.yaml`); switching to `--render-mode=raycaster` does not change any scenario's pass/fail outcome (the bot drives the simulation, not the renderer). A smoke test for the `raycaster` mode at the binary level is the slice manual verification step — `cargo run --release --manifest-path generated/game/Cargo.toml -- --render-mode=raycaster` should open a window showing flat-color walls + floor + ceiling, visible flat-colored billboards (red enemy rectangles, white health pickups, yellow ammo pickup) correctly occluded by walls, AND — when the player fires — a yellow muzzle-flash disc at the bottom-center of the viewport, a near-white tracer line from that disc to the impact point, a gray puff at the wall (or red blood at the enemy), and a brief brightness pulse on the surrounding walls during the flash window, with no panic.
+This slice does NOT add a new autopilot fixture. The default `--render-mode=topdown` (in effect through slice 4) remains exercised by every existing fixture (`tests/combat/*.yaml`, `tests/level/*.yaml`); switching to `--render-mode=raycaster` does not change any scenario's pass/fail outcome (the bot drives the simulation, not the renderer). A smoke test for the `raycaster` mode at the binary level is the slice manual verification step — `cargo run --release --manifest-path generated/game/Cargo.toml -- --render-mode=raycaster` should open a window showing flat-color walls + floor + ceiling, visible flat-colored billboards (red enemy rectangles, white health pickups, yellow ammo pickup) correctly occluded by walls, AND — when the player fires — a yellow muzzle-flash disc at the bottom-center of the viewport, a near-white tracer line from that disc to the impact point, a gray puff at the wall (or red blood at the enemy), and a brief brightness pulse on the surrounding walls during the flash window, AND — at all times — a centered gray + crosshair over the world view plus a chrome-gray bottom strip showing red health digits, yellow ammo digits, and a gray weapon icon, with no panic.
 
-The PR-preview demo GIF is recorded in `--render-mode=raycaster` per the slice-1 environment override (`WORLDSMITH_RENDER_MODE=raycaster` in `tooling/record_autopilot.sh` and `pr.yml`); the slice-3 acceptance criterion adds: the GIF must visibly show muzzle flashes, tracer lines, wall puffs, and the brief wall brightness pulse during the firing windows in the bot's run (the bot fires at enemies during `tests/level/local_chase_obstacle.yaml`). The demo scenario is unchanged from the slice-1 baseline.
+The PR-preview demo GIF is recorded in `--render-mode=raycaster` per the slice-1 environment override (`WORLDSMITH_RENDER_MODE=raycaster` in `tooling/record_autopilot.sh` and `pr.yml`); the slice-4 acceptance criterion adds: the GIF must visibly show the bottom HUD strip with the three panes (red health digits, yellow ammo digits, gray weapon icon) and the centered gray + crosshair over the world view across the bot's run. Demo events from slice 3 (muzzle flashes, tracers, wall puffs, brightness pulse) must remain visible — the HUD strip and crosshair never overlap with the muzzle-flash anchor at row 360 (the strip starts at row 400, the crosshair sits centered at row 200) so the slice-3 firing visuals are unaffected. The demo scenario is unchanged from the slice-1 baseline.
 
 A unit-test sketch lives in `ir/contracts/raycaster.yaml § notes`. The Coder MUST keep the fisheye-correction regression test from slice 1 (item 3 below); items 1, 2, 4, and 5 are recommended but not required.
 
@@ -475,7 +564,7 @@ These are Coder-internal regression tests; they are not asserted by `autopilot::
 
 ## Implementation Status
 
-**Implemented (after slice 3 lands):**
+**Implemented (after slice 4 lands):**
 - `--render-mode={topdown|raycaster}` CLI flag parsed via `std::env::args`, default `topdown`.
 - `raycaster` module with column-based DDA wall traversal over `level_data::Level`.
 - Wall column projection with perpendicular distance and fisheye correction.
@@ -496,10 +585,23 @@ These are Coder-internal regression tests; they are not asserted by `autopilot::
 - **(Slice 3) Extra-light bias** on wall and non-full-bright sprite shading during the firing flash window (any active `MuzzleFlash` Effect), magnitude `RAYCASTER_EXTRA_LIGHT_SHADE_DELTA` (one ramp step toward "near"). Full-bright candidates (muzzle flash overlay, wall puff first phase) skip the bias.
 - **(Slice 3) Player damage tint overlay** — full-viewport `COLOR_DAMAGE_TINT` alpha blend at one of `DAMAGE_TINT_LEVELS` discrete levels, computed from `player.damage_count`. Same formula as `renderer::draw`.
 - **(Slice 3) Pickup tint overlay** — full-viewport `COLOR_PICKUP_TINT` alpha blend at one of `PICKUP_TINT_LEVEL_COUNT` discrete levels, computed from `fx.pickup_tint_count`. Same formula as `renderer::draw`. Independent of and additive with the damage tint overlay.
+- **(Slice 4) FPS HUD bottom chrome strip** — `RAYCASTER_HUD_STRIP_HEIGHT_PX` rows of `RAYCASTER_HUD_STRIP_COLOR` chrome at the bottom of the framebuffer, overlaid with three panes (left-to-right): a health pane (red plus-cross icon + red digits showing `player.health`), an ammo pane (yellow square icon + yellow digits showing `player.ammo`), and a weapon-icon pane (a static gray weapon silhouette). Single saturated color per pane; no per-value-threshold coloring (knowledge `raycaster_hud.md` § Color Treatment).
+- **(Slice 4) Centered crosshair** — static + shape anchored on the world-view region center `(WINDOW_WIDTH / 2, RAYCASTER_HUD_STRIP_TOP_Y / 2)` (NOT the framebuffer center), `RAYCASTER_CROSSHAIR_ARM_LEN_PX` arms with a `RAYCASTER_CROSSHAIR_GAP_PX` empty center, in `RAYCASTER_CROSSHAIR_COLOR` mid-bright gray. Full-bright; static across all frames; no z-test.
+- **(Slice 4) Per-mode HUD dispatch** — `main.rs` calls `renderer::draw_hud_fps` in `--render-mode=raycaster` (in place of `renderer::draw_hud`); `--render-mode=topdown` continues to render the existing top-left text HUD byte-for-byte unchanged.
 
 **Deferred:**
-- **Held-weapon body sprite** — the gun visible at the bottom of the viewport, on which the muzzle flash visually anchors. Reference uses a separate per-player view-sprite slot for the weapon body (knowledge `raycaster_effects.md` § Held-Weapon View Sprite). Lands in slice 4 with the FPS HUD layout. Slice 3 ships the muzzle flash without the gun body.
-- **Crosshair** — fixed center-of-viewport indicator. Lands in slice 4 with the FPS HUD.
+- **Held-weapon body sprite** — the gun visible at the bottom of the viewport, on which the muzzle flash visually anchors. Reference uses a separate per-player view-sprite slot for the weapon body (knowledge `raycaster_effects.md` § Held-Weapon View Sprite). Originally scoped for slice 4 alongside the HUD; deferred out of slice 4 to keep slice 4's diff focused on the HUD strip + crosshair (the goal scope was explicitly "bottom chrome strip showing health, ammo, and weapon, plus a centered crosshair"). Slice 5 (default flip) does not depend on it; the held-weapon body sprite can land in a follow-up that does not block the migration. Until then, the muzzle flash remains anchored at the gun-anchor screen position (`RAYCASTER_MUZZLE_FLASH_CENTER_X`, `RAYCASTER_MUZZLE_FLASH_CENTER_Y`) without a gun body underneath it.
+- **Animated / dynamic crosshair behaviors** — color-change on enemy-hover, expand-on-fire, dot-when-aiming-at-pickup. None are in the reference; all are later-engine conventions (knowledge `raycaster_hud.md` § Deferred — "Animated / dynamic crosshair behaviors"). Static crosshair is the slice-4 commitment.
+- **Per-weapon crosshair variants** — knowledge `raycaster_hud.md` § Open Questions. With one weapon there is one crosshair; revisit when a second weapon is added.
+- **Right-justified digit field in the FPS HUD strip** — knowledge `raycaster_hud.md` § Bottom-Strip Font Treatment specifies right-justification ("the widget's anchor x is the right edge of the rightmost digit"); slice 4 inherits the topdown HUD's left-aligned-from-fixed-x rendering (specs/50 § Deferred — "Right-justified digit field"). Causes the right edge of the field to shift when health crosses a digit-count boundary (e.g. 100→99); low-priority polish.
+- **Avatar face slot** — knowledge `raycaster_hud.md` § Widget Layout Within the Strip describes a multi-state animated portrait at (143, 168). Requires a full sprite expression set (5 pain levels × ~7 expressions ≈ 35 frames) we do not have. Knowledge same § Deferred lists this as a port-side decision; we omit the slot entirely (no placeholder block).
+- **Armor pane and key-card slots** — knowledge `raycaster_hud.md` § Widget Layout Within the Strip describes additional widgets (armor %, three key-card slots). Out of scope: we have no armor system (specs/25 § Deferred Combat Features) and no key-card mechanics. Slots omitted entirely.
+- **Weapons-owned 6-slot subpanel** — with one weapon the 6-slot grid (knowledge `raycaster_hud.md` § Widget Layout Within the Strip — "Weapons-owned indicators: 6 slots") collapses to a single static icon. Reintroduce when a second weapon is added; the per-slot gray-vs-yellow channel becomes meaningful again at that point.
+- **Secondary per-ammo-type counts** — knowledge `raycaster_hud.md` § Widget Layout Within the Strip — "Secondary ammo counts (4 ammo types × 2 fields each)". With one ammo type, four counters collapse to one (already shown in the primary ammo pane). Right-side block omitted entirely.
+- **Multi-line message overlay** above the world view — knowledge `raycaster_hud.md` § Deferred. Out of scope; no in-game messages are emitted by current gameplay.
+- **Bottom HUD chrome bitmap art** (embossed wells, two-tone gradient) — knowledge `raycaster_hud.md` § Bottom Chrome Strip — Static Background Bitmap describes a 320 × 32 pre-rendered chrome bitmap with embossed widget wells. We have no asset pipeline; the strip is a flat `RAYCASTER_HUD_STRIP_COLOR` rectangle. Revisit when textured sprites are introduced.
+- **Strip tall-vs-short font split** — knowledge `raycaster_hud.md` § Bottom-Strip Font Treatment describes two parallel digit fonts (tall for primary readouts, short for secondary). With one font we substitute pane-position differentiation (separate strip slots) for font-weight differentiation. Reintroduce when an asset pipeline allows multiple fonts.
+- **Global palette-shift damage / pickup tint applied to the strip** — knowledge `raycaster_hud.md` § Color Treatment (Bottom Strip) describes the framebuffer-wide palette tint affecting the chrome strip and digits. Our existing damage / pickup tint overlays (specs/45 § Player Damage Tint Overlay, § Pickup Tint Overlay) draw OVER the world layers and BELOW the HUD; the HUD itself is therefore unaffected by tint. Re-evaluate alongside the bottom HUD chrome bitmap art deferral.
 - **Multi-frame muzzle flash sequence** — knowledge § Muzzle Flash Sprite describes 1–4 frames per weapon family, dimmer second frame for higher-yield weapons. Pistol maps to the single-frame variant; multi-frame scaffolding deferred until a heavier weapon is added (knowledge `raycaster_effects.md` § Muzzle Flash Sprite — multi-frame Constants).
 - **2-step extra-light bias for heavy weapons** — knowledge § Extra-Light Bias pins step counts of 1 (small/rapid) vs. 2 (heavy/slow). Pistol is small/rapid (1 step). Re-introducing the 2-step bias is a one-line change when a heavy weapon is added.
 - **Wall puff drift, jitter, and 4-frame artwork** — knowledge `raycaster_effects.md` § Wall-Hit Impact Puff specifies upward drift (1 unit per tick), spawn vertical jitter (±32 fractional units), and 4 distinct sprite frames. Our `Effect` model has no per-effect velocity field and a single fixed lifetime per kind; the puff renders as a single static sprite with a first-half / second-half full-bright split.
@@ -512,7 +614,6 @@ These are Coder-internal regression tests; they are not asserted by `autopilot::
 - **Eight-rotation sprite frames** — single-frame billboards only; deferred (knowledge `raycaster_sprites.md` § Sprite Rotational Frames — Generation default for a simplified renderer).
 - **Sprite texturing** (column-major posts with transparent gaps) — replaced by flat-color rectangles; revisit when an asset pipeline exists.
 - **Player disc, direction line, and exit marker** — not rendered in first-person mode. Player position is implicit (camera origin); the exit is reachable via gameplay, not via an in-world marker. The exit marker may return as a different visual treatment in a later slice (e.g. a colored billboard or floor decal).
-- **FPS-specific HUD layout** (slice 4) — bottom chrome strip, crosshair, held-weapon body sprite. The current top-left bar + digits HUD draws unchanged in both modes for slices 1–4.
 - **Default flip from `topdown` to `raycaster`** (slice 5).
 - **Removal of the top-down code path** (slice 6).
 - **Textured walls** (knowledge `raycaster_renderer.md` § Deferred — Texture mapping for walls).
@@ -534,6 +635,7 @@ These are Coder-internal regression tests; they are not asserted by `autopilot::
 
 - [`knowledge/raycaster_renderer.md`](../knowledge/raycaster_renderer.md) — knowledge basis for column projection, perpendicular distance, fisheye correction, NS/EW shading, distance attenuation, floor/ceiling treatment, FOV, far clipping, and traversal strategy.
 - [`knowledge/raycaster_sprites.md`](../knowledge/raycaster_sprites.md) — knowledge basis for camera-space transform, per-sprite scale, screen-space x-range, per-column wall-depth z-buffer, per-column height and vertical clip, back-to-front sort, and the flat-color vs textured choice (slice 2).
+- [`knowledge/raycaster_hud.md`](../knowledge/raycaster_hud.md) — knowledge basis for bottom chrome strip layout (vertical partition, widget positions, font treatment, color palette) and the crosshair (the reference's "no first-person crosshair" finding plus the inferred-not-reference-native recommended port shape) (slice 4).
 - [`25_game_tuning.md § Renderer (Raycaster)`](25_game_tuning.md#renderer-raycaster) — numeric constants for FOV, max depth, NS/EW darken factor, near/far wall shade, floor/ceiling colors, horizon row, sprite near-plane, and the `--render-mode` flag default.
 - [`10_system_model.md`](10_system_model.md) — system-level mention of the `raycaster` module alongside `presentation` / `renderer`.
 - [`80_generation_rules.md § Dependencies`](80_generation_rules.md#dependencies) — `std::env::args` constraint for CLI parsing; no new crates.
