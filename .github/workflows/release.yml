@@ -162,17 +162,17 @@ jobs:
           - platform: linux-x86_64
             os: ubuntu-latest
             archive: tar.gz
-            bin: game
+            bin: worldsmith-game
             ext: ""
           - platform: macos-aarch64
             os: macos-latest
             archive: tar.gz
-            bin: game
+            bin: worldsmith-game
             ext: ""
           - platform: windows-x86_64
             os: windows-latest
             archive: zip
-            bin: game.exe
+            bin: worldsmith-game.exe
             ext: ".exe"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
