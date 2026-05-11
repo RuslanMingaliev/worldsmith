@@ -90,10 +90,10 @@ Source: [`knowledge/pickups.md`](../knowledge/pickups.md). Spec values that are 
 
 **Effect:** A second pane is drawn directly below the health pane:
 - A `HUD_AMMO_ICON_PX × HUD_AMMO_ICON_PX` filled square in `HUD_AMMO_COLOR` (mirrors the on-map ammo pickup color so the connection reads at a glance).
-- Immediately to the right of the icon (gap `HUD_DIGIT_GAP_PX`), the player's `ammo` value drawn with the same bitmap font as health digits, color `HUD_AMMO_COLOR`. Vertical baseline centered against the icon. Right-justified, no leading zeros, zero special-cased per the same knowledge-backed rules used in spec/50 § Numeric Widget.
+- Immediately to the right of the icon (gap `HUD_PANE_GAP_PX`), the player's `ammo` value drawn with the same bitmap font as health digits, color `HUD_AMMO_COLOR`. Vertical baseline centered against the icon. Right-justified, no leading zeros, zero special-cased per the same knowledge-backed rules used in spec/50 § Numeric Widget. *(Note: the code constant is `HUD_PANE_GAP_PX`; no separate `HUD_DIGIT_GAP_PX` constant exists — see specs/25 § HUD and specs/50 § Ammo Pane.)*
 
 **Rules:**
-- Pane origin: `(HUD_MARGIN_PX, HUD_MARGIN_PX + HUD_HEALTH_BAR_HEIGHT_PX + HUD_PANE_GAP_PX)`.
+- Pane origin: `(HUD_MARGIN, HUD_MARGIN + HUD_HEALTH_BAR_HEIGHT_PX + HUD_PANE_GAP_PX)` (note: code constant is `HUD_MARGIN`, not `HUD_MARGIN_PX` — see specs/50 § Ammo Pane).
 - No background bar (icon + digits only).
 - Single color (yellow). Low-ammo warning color is **deferred**.
 - Drawn whether ammo is zero or not.

@@ -145,13 +145,14 @@ Before submitting:
 - [ ] Code follows generation rules
 - [ ] No unnecessary changes to other modules
 - [ ] Tests cover key behaviors
+- [ ] **Test-count parity vs baseline.** Before submitting, for each regenerated module run `git show origin/generated-snapshot:src/<module>.rs | grep -c '#\[test\]'` and compare against the same grep on your regenerated file. If `POST < PRE` for any module, restore the missing tests from the snapshot or escalate with a contract-change rationale. The 2026-05-08 and 2026-05-11 release regens shipped silent -27 and -45 test-count drops respectively; bare "32 passed; 0 failed" in the report did not surface them. Cite both PRE and POST counts under the `### Build validation run` section.
 - [ ] Every spec constant referenced in your target module is actually wired into runtime code (not just `pub const` on the side)
 
 ## CI mode output
 
 In CI mode (when an `artifacts/` directory is present at the repo root before you start), write `artifacts/coder_report.md` after generation. The report exists so Reconciler can complement your work instead of re-discovering everything from scratch, and so PostMortem has a Coder activity trail to reason about.
 
-Structure (omit a section by writing "None." rather than skipping it):
+Structure (omit a section by writing "None." rather than skipping it). The six `###` headings below are LITERAL — copy them verbatim into your report, in order. Renaming `### API Surface compromises` to `### Fixes Applied` or "Compilation Fixes Applied During Generation" is the 2026-05-09 and 2026-05-11 regression: Reconciler's section-name grep misses the bucket and has to re-discover masks mechanically. If a section is empty, write "None." under the literal heading. Do NOT invent new top-level sections (e.g. "## Modules Generated", "## Fixes Applied", "## Test Results") — Reconciler keys off the literal heading set below.
 
 ```
 ## Coder Report

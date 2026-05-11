@@ -6,7 +6,7 @@ This specification defines the in-game heads-up display: a persistent on-screen 
 
 Scope is the current 2D top-down prototype. The HUD is drawn directly into the framebuffer; no separate UI layer or font asset file is introduced.
 
-All numeric sizes, colors, and positions referenced by name (e.g. `HUD_MARGIN_PX`, `HUD_HEALTH_BAR_WIDTH_PX`) are defined in [`25_game_tuning.md`](25_game_tuning.md#hud). The behavior spec only refers to constants by name.
+All numeric sizes, colors, and positions referenced by name (e.g. `HUD_MARGIN`, `HUD_HEALTH_BAR_WIDTH_PX`) are defined in [`25_game_tuning.md`](25_game_tuning.md#hud). The behavior spec only refers to constants by name.
 
 Source: [`knowledge/hud.md`](../knowledge/hud.md). Spec values that are NOT directly grounded in knowledge are marked `Generation default — no knowledge backing` in spec/25, with the rationale recorded in this spec.
 
@@ -122,7 +122,7 @@ The bitmap font is a compile-time constant table (`HUD_DIGIT_GLYPHS`) of ten ent
 
 ### Invariants
 - `player.health` is read but never written by the HUD.
-- The HUD pane never overlaps gameplay-critical pixels at the top-left corner of the framebuffer (the pane footprint is `HUD_MARGIN_PX + bar_width + gap + 3*digit_width + HUD_MARGIN_PX` wide and `HUD_MARGIN_PX + max(bar_height, digit_height) + HUD_MARGIN_PX` tall).
+- The HUD pane never overlaps gameplay-critical pixels at the top-left corner of the framebuffer (the pane footprint is `HUD_MARGIN + bar_width + gap + 3*digit_width + HUD_MARGIN` wide and `HUD_MARGIN + max(bar_height, digit_height) + HUD_MARGIN` tall).
 - The HUD is drawn every frame `draw()` is called, including the first frame.
 
 ### Determinism
