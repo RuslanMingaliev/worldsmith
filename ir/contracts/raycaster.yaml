@@ -1,5 +1,5 @@
 # raycaster module contract.
-# Slice 4 of 6 of the FPS migration (specs/45). Walls + flat
+# Production renderer for Phase 1 (specs/00 § Phase 1). Walls + flat
 # floor / ceiling from slice 1, plus a per-column wall-depth z-buffer
 # and a back-to-front sprite pass for live enemies, dying enemies,
 # corpses, blood splats, and active pickups from slice 2, plus the
@@ -11,10 +11,11 @@
 # module -- the FPS HUD layer (bottom chrome strip; no on-view crosshair per knowledge/raycaster_hud.md § On-View Crosshair — Absent in the Reference's First-Person View) lives
 # in renderer::draw_hud_fps, called from main.rs after raycaster::draw
 # returns, so this module's signature and pass count are unchanged
-# from slice 3. Slice 5 flips the --render-mode default from `topdown`
-# to `raycaster`, so this module now runs by default; `topdown`
-# remains a one-cycle opt-in until slice 6 removes the topdown code
-# path.
+# from slice 3. Slice 5 flipped the --render-mode default from `topdown`
+# to `raycaster`, so this module now runs by default. Slice 6 re-frames
+# the migration: `--render-mode=topdown` is permanently retained as a
+# debug-only alternate mode (specs/00 § Phase 1) rather than being
+# removed; this module's contract is unchanged by that re-framing.
 name: raycaster
 file: src/raycaster.rs
 depends_on: [level_data, player_state, enemy_logic, visual_effects]
@@ -603,8 +604,10 @@ notes: |
   because the FPS HUD strip lives in renderer.rs (it
   already owns the HUD digit font); slice 5 (now landed) flips the
   --render-mode default from topdown to raycaster, so this module
-  runs by default; slice 6 removes the topdown code path. The
-  held-weapon body sprite (originally scoped for slice 4 alongside
+  runs by default; slice 6 (the terminal slice) permanently retains
+  the topdown path as a debug-only alternate mode rather than removing
+  it -- specs/00 § Phase 1, specs/45 § Implementation Status / Deferred.
+  The held-weapon body sprite (originally scoped for slice 4 alongside
   the HUD) is deferred -- specs/45 § Implementation Status / Deferred.
 
   Dependency graph: depends_on

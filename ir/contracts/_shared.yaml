@@ -115,9 +115,11 @@ main_cli:
                                       pick draw pipeline (specs/45);
                                       default `raycaster` (slice 5
                                       flipped from `topdown`; the
-                                      topdown opt-in is retained for
-                                      one cycle and removed in slice
-                                      6). Unknown value (e.g.
+                                      topdown path is permanently
+                                      retained as a debug-only
+                                      alternate mode for development
+                                      use -- specs/00 § Phase 1).
+                                      Unknown value (e.g.
                                       `--render-mode foo`) => same
                                       failure mode as missing argument.
       Unknown flag => print usage to stderr, exit code 2.
@@ -127,11 +129,11 @@ main_cli:
     notes: |
       Defines `RenderMode` enum (private to main.rs) with variants
       `Topdown` and `Raycaster`. Parsed from --render-mode <value>:
-        "topdown"   => RenderMode::Topdown
+        "topdown"   => RenderMode::Topdown (debug-only alternate mode
+                       permanently retained for development use --
+                       specs/00 § Phase 1)
         "raycaster" => RenderMode::Raycaster (default if flag absent --
-                       flipped from Topdown in slice 5; the Topdown
-                       opt-in remains callable for one cycle and is
-                       removed in slice 6)
+                       flipped from Topdown in slice 5)
         anything else => print usage, exit code 2.
       The selected mode is stored in a local in main() and consulted
       once per frame to dispatch the world-layer draw call. The flag
@@ -198,9 +200,10 @@ main_cli:
             let mut game = game_loop::new(level);
         Render mode: --render-mode applies orthogonally; default
         Raycaster as of slice 5 (specs/45). --render-mode=topdown is a
-        callable opt-in until slice 6 removes the topdown code path.
-        All four mode rows below dispatch via the render_mode block
-        above; the trigger column lists only the autopilot/record axes.
+        permanently retained debug-only alternate mode for development
+        use (specs/00 § Phase 1). All four mode rows below dispatch via
+        the render_mode block above; the trigger column lists only the
+        autopilot/record axes.
     autopilot_only:
       trigger: "--autopilot <path>"
       behavior: |
