@@ -380,13 +380,13 @@ The autopilot bot in `src/autopilot.rs` exposes a per-frame API always compiled,
 
 ## Renderer (Raycaster)
 
-Behavior spec: [`45_raycaster_renderer.md`](45_raycaster_renderer.md). Knowledge: [`knowledge/raycaster_renderer.md`](../knowledge/raycaster_renderer.md). Constants below define the column-based first-person renderer. As of slice 5 it is the default mode (`cargo run` with no flag); `--render-mode=topdown` remains a callable one-cycle opt-in for the existing 2D view, removed in slice 6.
+Behavior spec: [`45_raycaster_renderer.md`](45_raycaster_renderer.md). Knowledge: [`knowledge/raycaster_renderer.md`](../knowledge/raycaster_renderer.md). Constants below define the column-based first-person renderer. As of slice 5 it is the default mode (`cargo run` with no flag); `--render-mode=topdown` is permanently retained as a debug-only alternate mode for development use (specs/00 § Phase 1).
 
 ### Pipeline Selection
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| RENDER_MODE_DEFAULT | `raycaster` | Generation default — no knowledge backing. Flipped from `topdown` to `raycaster` in slice 5 of the migration so `cargo run` (no flag) and the canonical PR-preview GIF render the first-person view by default. `--render-mode=topdown` remains a one-cycle opt-in for the existing 2D view; the top-down code path is removed in slice 6. The flag values themselves (`topdown`, `raycaster`) are project-internal CLI vocabulary, not reference-derived. |
+| RENDER_MODE_DEFAULT | `raycaster` | Generation default — no knowledge backing. Flipped from `topdown` to `raycaster` in slice 5 of the migration so `cargo run` (no flag) and the canonical PR-preview GIF render the first-person view by default. `--render-mode=topdown` remains available as a debug visualization (permanently retained per specs/00 § Phase 1). The flag values themselves (`topdown`, `raycaster`) are project-internal CLI vocabulary, not reference-derived. |
 
 ### Projection
 

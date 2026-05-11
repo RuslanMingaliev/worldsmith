@@ -52,23 +52,22 @@ modules:
 
   - name: raycaster
     responsibility: |
-      Column-based first-person renderer (specs/45). Fills the framebuffer
+      Column-based first-person renderer (specs/45) — the production
+      renderer for Phase 1 (specs/00 § Phase 1). Fills the framebuffer
       with walls (DDA traversal over level_data::Level, perpendicular-distance
       column scaling, NS/EW shading, distance attenuation) plus a flat
       floor / ceiling split at the horizon, plus a back-to-front sprite
       pass for live enemies, dying enemies, corpses, blood splats, and
       active pickups (per-column z-test against a wall_depth[] array
-      written during the wall pass). Stateless across frames — reads
-      (level, player, enemies, fx) and writes the framebuffer;
-      module-private wall_depth[] and angle-offset[] tables are
-      rewritten or precomputed, never carrying state between frames.
-      Only consumed by main.rs in --render-mode=raycaster mode; the
-      per-frame gameplay pipeline does not reference it. Slice 2 of 6
-      of the FPS migration: walls + floor + ceiling + entity sprites,
-      but NO FPS effects (muzzle flash / tracer / wall puff / damage
-      tint / pickup tint), NO FPS HUD. Default --render-mode remains
-      `topdown` (through slice 4) so the existing topdown behavior is
-      byte-for-byte unchanged.
+      written during the wall pass), plus the FPS effects pass (muzzle
+      flash / tracer / wall puff / damage tint / pickup tint). Stateless
+      across frames — reads (level, player, enemies, fx) and writes the
+      framebuffer; module-private wall_depth[] and angle-offset[] tables
+      are rewritten or precomputed, never carrying state between frames.
+      Only consumed by main.rs in --render-mode=raycaster mode (the
+      default since slice 5); the per-frame gameplay pipeline does not
+      reference it. --render-mode=topdown is permanently retained as a
+      debug-only alternate mode dispatched to `renderer` instead.
     depends_on: [level_data, player_state, enemy_logic, visual_effects]
 
   - name: game_loop
