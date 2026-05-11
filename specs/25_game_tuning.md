@@ -500,9 +500,9 @@ The screen-space muzzle flash overlay reuses `COLOR_MUZZLE_FLASH` (`#FFFF80`) fr
 
 ### FPS HUD Layout
 
-Behavior spec: [`45_raycaster_renderer.md § FPS HUD Layout`](45_raycaster_renderer.md#fps-hud-layout). Knowledge: [`knowledge/raycaster_hud.md`](../knowledge/raycaster_hud.md). Constants below pin the slice-4 first-person HUD: a bottom chrome strip showing health, ammo, and weapon panes, plus a centered crosshair drawn over the world-view region. The strip and crosshair are drawn ONLY in `--render-mode=raycaster`; the `--render-mode=topdown` path keeps the existing top-left text HUD (specs/50) byte-for-byte unchanged.
+Behavior spec: [`45_raycaster_renderer.md § FPS HUD Layout`](45_raycaster_renderer.md#fps-hud-layout). Knowledge: [`knowledge/raycaster_hud.md`](../knowledge/raycaster_hud.md). Constants below pin the slice-4 first-person HUD: a bottom chrome strip showing health, ammo, and weapon panes. The strip is drawn ONLY in `--render-mode=raycaster`; the `--render-mode=topdown` path keeps the existing top-left text HUD (specs/50) byte-for-byte unchanged. **No on-view crosshair is drawn** — the reference engine renders none in its first-person view (knowledge `raycaster_hud.md` § On-View Crosshair — Absent in the Reference's First-Person View), and slice 4 follows the reference; see specs/45 § Reference-Faithful No-Crosshair Choice.
 
-The reference engine's HUD is bitmap-asset-driven (320 × 32 chrome bitmap blitted into rows 168..199 of a 320 × 200 framebuffer; widget anchors at hard-coded pixel positions reading two pre-loaded digit fonts; weapons-owned subpanel showing slots 2..7 as small colored digits — knowledge `raycaster_hud.md` § Bottom Chrome Strip — Static Background Bitmap, § Widget Layout Within the Strip, § Bottom-Strip Font Treatment). We have no asset pipeline (specs/80 § Dependencies) and only one weapon (`ir/game_ir.yaml § combat`). Constants below adapt the reference's geometry to our 640 × 480 framebuffer at 2× scale (knowledge `raycaster_hud.md` § Open Questions — "Should the crosshair scale with framebuffer resolution?" — "scale ... in integer multiples of the framebuffer scale factor") and substitute a flat-color strip for the chrome bitmap.
+The reference engine's HUD is bitmap-asset-driven (320 × 32 chrome bitmap blitted into rows 168..199 of a 320 × 200 framebuffer; widget anchors at hard-coded pixel positions reading two pre-loaded digit fonts; weapons-owned subpanel showing slots 2..7 as small colored digits — knowledge `raycaster_hud.md` § Bottom Chrome Strip — Static Background Bitmap, § Widget Layout Within the Strip, § Bottom-Strip Font Treatment). We have no asset pipeline (specs/80 § Dependencies) and only one weapon (`ir/game_ir.yaml § combat`). Constants below adapt the reference's geometry to our 640 × 480 framebuffer at 2× scale and substitute a flat-color strip for the chrome bitmap.
 
 #### Strip
 
@@ -562,30 +562,14 @@ The reference's weapons-owned subpanel is a 2-row × 3-column grid of small digi
 
 The exact silhouette (single filled rectangle, T-shape with grip, two-rectangle "barrel + grip" pistol) is a Coder degree of freedom (`ir/contracts/renderer.yaml § coder_degrees_of_freedom`). The simplest shape — a single filled rectangle in `RAYCASTER_HUD_WEAPON_COLOR` at the size above — is the obvious starting point; future iterations may elaborate to a multi-rect silhouette without spec change.
 
-#### Crosshair
-
-The reference engine renders **no crosshair** in its first-person view (knowledge `raycaster_hud.md` § On-View Crosshair — Absent in the Reference's First-Person View — "The reference engine renders no crosshair sprite over the first-person world view"). The single-pixel crosshair the reference does draw lives in the auxiliary overhead-map view (knowledge same § The Auxiliary-Map Single-Pixel Crosshair) and is out of scope for the first-person port.
-
-**This spec adds a static centered crosshair.** *(Generation default — knowledge says the reference has no first-person crosshair; we add one because (a) the topdown renderer's player direction line conveys "where the player is aiming" and removing it without a substitute would worsen the slice-5 default flip, (b) hitscan accuracy without a visible aim point is harder to learn for new players, and (c) knowledge's § Recommended Crosshair Shape for a Port — Inferred, Not Reference-Native explicitly endorses a small static cross as "the smallest possible departure from the reference".)* The crosshair's shape and position follow the knowledge "Recommended" section verbatim, scaled 2× for our 640 × 480 framebuffer (knowledge same § — "A port that runs at higher internal resolutions should scale the crosshair arm length and thickness in integer multiples of the framebuffer scale factor").
-
-| Constant | Value | Color | Source |
-|----------|-------|-------|--------|
-| RAYCASTER_CROSSHAIR_ARM_LEN_PX | 6 | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Arm length: 7 pixels per arm (3 pixels each side of the center, plus a center gap)". The reference recommends 3 px per side of center on a 320-wide framebuffer; at our 640-wide framebuffer the closest 2× scale is 6 px per side of center (gives a 14-px-wide cross — still well under "intrusive" by knowledge's criterion of "~2% of width"). |
-| RAYCASTER_CROSSHAIR_GAP_PX | 2 | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Center gap: 1 pixel (so the exact center pixel is untouched)". 1 px scaled 2× = 2 px. The center 2 × 2 px region is left untouched so the crosshair does not occlude the smallest distant targets. |
-| RAYCASTER_CROSSHAIR_THICKNESS_PX | 2 | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Thickness: 1 pixel. A 2-pixel-thick crosshair looks heavy at retro resolutions". 1 px scaled 2× = 2 px (knowledge's resolution-scaling rule overrides its "looks heavy at retro resolutions" caveat at our 2× scale). |
-| RAYCASTER_CROSSHAIR_COLOR | — | #A0A0A0 mid-bright gray | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Color: the same mid-bright gray as the reference's overhead-map crosshair, for visual coherence with the rest of the HUD ... approximately (160, 160, 160) in RGB". `#A0A0A0` = (160, 160, 160) exactly. |
-| RAYCASTER_CROSSHAIR_CENTER_X | `WINDOW_WIDTH / 2` (= 320) | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Center position: the geometric center of the world-view region, i.e. `(framebuffer_width / 2, ...)`". |
-| RAYCASTER_CROSSHAIR_CENTER_Y | `RAYCASTER_HUD_STRIP_TOP_Y / 2` (= 200) | — | knowledge/raycaster_hud.md § Recommended Crosshair Shape for a Port — "Center position: the geometric center of the world-view region, i.e. `(..., (framebuffer_height - strip_height) / 2)`". Knowledge `raycaster_hud.md` § Key Insights pins this exact rule: "The world-view-region center is NOT the framebuffer center when the strip is visible ... A port that draws a crosshair at the framebuffer center will see the crosshair sit too low — visually under the player's actual line of sight." For a 480-tall framebuffer with an 80-row strip, the world view occupies rows 0..400 and its center is at y = 200, not y = 240. |
-
 #### Effect Composition
 
-The crosshair draws **on top of** the world layers and effect overlays (matching knowledge's "two HUD surfaces compose without interaction" — § Key Insights), but **below** the bottom HUD strip (the strip and crosshair never overlap because the strip occupies rows 400..480 while the crosshair sits centered on row 200 with arm length 6 px → rows 192..208). Concretely, after the slice-3 effects pass returns:
+The HUD strip draws **on top of** the world layers and effect overlays (matching knowledge's "two HUD surfaces compose without interaction" — § Key Insights). Concretely, after the slice-3 effects pass returns:
 
-1. Crosshair (mid-gray + shape, anchored on world-view center)
-2. Bottom HUD strip (chrome + health pane + ammo pane + weapon icon)
-3. Game-over border (if `game_over.is_some()`) — unchanged from slice 3
+1. Bottom HUD strip (chrome + health pane + ammo pane + weapon icon)
+2. Game-over border (if `game_over.is_some()`) — unchanged from slice 3
 
-The HUD strip and crosshair are **full-bright** — no distance attenuation, no extra-light-bias modulation, no z-test against `wall_depth[]`.
+The HUD strip is **full-bright** — no distance attenuation, no extra-light-bias modulation, no z-test against `wall_depth[]`.
 
 ## Frame Rate
 

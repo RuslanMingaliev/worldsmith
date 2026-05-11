@@ -8,7 +8,7 @@
 # full-bright first phase, extra-light bias on wall and sprite
 # shading during the firing window, player damage / pickup tint
 # screen-space overlays). Slice 4 does NOT add a new pass to this
-# module -- the FPS HUD layer (bottom chrome strip + crosshair) lives
+# module -- the FPS HUD layer (bottom chrome strip; no on-view crosshair per knowledge/raycaster_hud.md § On-View Crosshair — Absent in the Reference's First-Person View) lives
 # in renderer::draw_hud_fps, called from main.rs after raycaster::draw
 # returns, so this module's signature and pass count are unchanged
 # from slice 3. Default --render-mode is `topdown` (through slice 4),
@@ -599,7 +599,7 @@ notes: |
   tint / pickup tint); slice 4 (this contract) swaps the HUD layout
   via a NEW renderer-side entry point (renderer::draw_hud_fps) --
   this module's signature and pass count are unchanged from slice 3
-  because the FPS HUD strip + crosshair live in renderer.rs (it
+  because the FPS HUD strip lives in renderer.rs (it
   already owns the HUD digit font); slice 5 flips the --render-mode
   default to raycaster; slice 6 removes the topdown code path. The
   held-weapon body sprite (originally scoped for slice 4 alongside
