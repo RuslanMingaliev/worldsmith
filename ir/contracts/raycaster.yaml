@@ -30,6 +30,10 @@ public_constants:
       type: f32,
       value: "1.0",
       source: "specs/25 § Renderer (Raycaster) / Projection (Generation default)" }
+  - { name: EYE_HEIGHT_FRACTION,
+      type: f32,
+      value: "41.0 / 128.0",
+      source: "specs/25 § Renderer (Raycaster) / Projection (numerator knowledge-backed: knowledge/player_movement.md 'View height | 41 units'; denominator Generation default — canonical room-height citation pending an Extractor pass)" }
   - { name: RAYCASTER_MAX_DEPTH,
       type: f32,
       value: "32.0",
@@ -184,8 +188,15 @@ public_methods:
            The boolean "did the ray cross a horizontal tile boundary
            last" picks between "EW wall" (apply
            RAYCASTER_NSEW_DARKEN_FACTOR) and "NS wall" (nominal).
-        5. column_h_px = ((WALL_HEIGHT_TILES * focal_px) / perp_dist)
-                          .clamp(1.0, WINDOW_HEIGHT as f32) as i32
+        5. column_h_unclamped = ((WALL_HEIGHT_TILES * focal_px) / perp_dist)
+                                  .max(1.0)
+           # Asymmetric split (specs/45 § Column Projection): eye sits at
+           # EYE_HEIGHT_FRACTION × WALL_HEIGHT_TILES above the floor, so
+           # more wall extends above the eye than below. Split runs on the
+           # UNCLAMPED column; each resulting screen-Y is clamped
+           # independently in step 7. Clamping before the split would
+           # leave a floor sliver beneath walls the player is pressed
+           # against.
         6. shade_t = (perp_dist / RAYCASTER_MAX_DEPTH).clamp(0.0, 1.0)
            # Slice-3 extra-light bias (specs/45 § Extra-Light Bias).
            # When firing_active is true, shift shade_t toward "near"
@@ -206,10 +217,14 @@ public_methods:
              - rows [0, ceiling_top) ← RAYCASTER_CEILING_COLOR
              - rows [ceiling_top, floor_top) ← wall_color
              - rows [floor_top, WINDOW_HEIGHT) ← RAYCASTER_FLOOR_COLOR
-           where ceiling_top = (HORIZON_Y as i32 - column_h_px / 2)
-                                 .clamp(0, WINDOW_HEIGHT as i32) as usize
-                 floor_top   = (HORIZON_Y as i32 + column_h_px / 2)
-                                 .clamp(0, WINDOW_HEIGHT as i32) as usize
+           where ceiling_top = (HORIZON_Y as f32
+                                 - (1.0 - EYE_HEIGHT_FRACTION)
+                                 * column_h_unclamped)
+                                 .clamp(0.0, WINDOW_HEIGHT as f32) as usize
+                 floor_top   = (HORIZON_Y as f32
+                                 + EYE_HEIGHT_FRACTION
+                                 * column_h_unclamped)
+                                 .clamp(0.0, WINDOW_HEIGHT as f32) as usize
         8. Write wall_depth[x] = perp_dist (knowledge:
            knowledge/raycaster_sprites.md § Per-Column Wall Depth
            (Z-Buffer Equivalent)).
@@ -380,9 +395,17 @@ public_methods:
              x2 = (screen_x_center + half_w_px).round()
                     .clamp(0, WINDOW_WIDTH as i32 - 1) as usize
              if x2 < x1 { continue; }   // fully off-screen
-             y1 = (HORIZON_Y as f32 - half_h_px).round()
+             # Floor-anchored sprite (specs/45 § Sprite Vertical Anchor):
+             # sprite bottom == floor at this distance, mirroring the
+             # reference engine's "entity world Y == floor Y" convention.
+             # Older slices centered sprites on HORIZON_Y, which floated
+             # everything at eye height regardless of sprite size.
+             screen_y_center = HORIZON_Y as f32
+                                + (EYE_HEIGHT_FRACTION
+                                   - sprite.world_half_height) * xscale
+             y1 = (screen_y_center - half_h_px).round()
                     .clamp(0, WINDOW_HEIGHT as i32) as usize
-             y2 = (HORIZON_Y as f32 + half_h_px).round()
+             y2 = (screen_y_center + half_h_px).round()
                     .clamp(0, WINDOW_HEIGHT as i32) as usize
              for x in x1..=x2:
                if forward_dist < wall_depth[x]:
