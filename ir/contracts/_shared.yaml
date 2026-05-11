@@ -113,8 +113,12 @@ main_cli:
         --record-frames <path>        raw BGRA dump to <path>
         --render-mode <topdown|raycaster>
                                       pick draw pipeline (specs/45);
-                                      default `topdown`. Unknown value
-                                      (e.g. `--render-mode foo`) => same
+                                      default `raycaster` (slice 5
+                                      flipped from `topdown`; the
+                                      topdown opt-in is retained for
+                                      one cycle and removed in slice
+                                      6). Unknown value (e.g.
+                                      `--render-mode foo`) => same
                                       failure mode as missing argument.
       Unknown flag => print usage to stderr, exit code 2.
       Missing argument to a flag => same.
@@ -123,8 +127,11 @@ main_cli:
     notes: |
       Defines `RenderMode` enum (private to main.rs) with variants
       `Topdown` and `Raycaster`. Parsed from --render-mode <value>:
-        "topdown"   => RenderMode::Topdown   (default if flag absent)
-        "raycaster" => RenderMode::Raycaster
+        "topdown"   => RenderMode::Topdown
+        "raycaster" => RenderMode::Raycaster (default if flag absent --
+                       flipped from Topdown in slice 5; the Topdown
+                       opt-in remains callable for one cycle and is
+                       removed in slice 6)
         anything else => print usage, exit code 2.
       The selected mode is stored in a local in main() and consulted
       once per frame to dispatch the world-layer draw call. The flag
@@ -189,10 +196,11 @@ main_cli:
         does not parse scenarios so scenario.level is irrelevant here.
             let level = level_data::build_default();
             let mut game = game_loop::new(level);
-        Render mode: --render-mode applies orthogonally; default Topdown
-        (specs/45). All four mode rows below dispatch via the
-        render_mode block above; the trigger column lists only the
-        autopilot/record axes.
+        Render mode: --render-mode applies orthogonally; default
+        Raycaster as of slice 5 (specs/45). --render-mode=topdown is a
+        callable opt-in until slice 6 removes the topdown code path.
+        All four mode rows below dispatch via the render_mode block
+        above; the trigger column lists only the autopilot/record axes.
     autopilot_only:
       trigger: "--autopilot <path>"
       behavior: |
