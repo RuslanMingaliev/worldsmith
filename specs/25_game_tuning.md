@@ -498,6 +498,79 @@ The slice-3 wall puff sprite-pass billboard derives its half-extent from the exi
 
 The screen-space muzzle flash overlay reuses `COLOR_MUZZLE_FLASH` (`#FFFF80`) from `renderer`. The tracer line reuses `COLOR_TRACER` (`#FFFFC0`) from `renderer`. The damage tint overlay reuses `COLOR_DAMAGE_TINT`, `DAMAGE_TINT_CAP`, `DAMAGE_TINT_LEVELS`, and `DAMAGE_TINT_MAX_ALPHA_PCT`. The pickup tint overlay reuses `COLOR_PICKUP_TINT`, `PICKUP_TINT_CAP`, `PICKUP_TINT_LEVEL_COUNT`, and `PICKUP_TINT_MAX_ALPHA_PCT`. None are new constants.
 
+### FPS HUD Layout
+
+Behavior spec: [`45_raycaster_renderer.md § FPS HUD Layout`](45_raycaster_renderer.md#fps-hud-layout). Knowledge: [`knowledge/raycaster_hud.md`](../knowledge/raycaster_hud.md). Constants below pin the slice-4 first-person HUD: a bottom chrome strip showing health, ammo, and weapon panes. The strip is drawn ONLY in `--render-mode=raycaster`; the `--render-mode=topdown` path keeps the existing top-left text HUD (specs/50) byte-for-byte unchanged. **No on-view crosshair is drawn** — the reference engine renders none in its first-person view (knowledge `raycaster_hud.md` § On-View Crosshair — Absent in the Reference's First-Person View), and slice 4 follows the reference; see specs/45 § Reference-Faithful No-Crosshair Choice.
+
+The reference engine's HUD is bitmap-asset-driven (320 × 32 chrome bitmap blitted into rows 168..199 of a 320 × 200 framebuffer; widget anchors at hard-coded pixel positions reading two pre-loaded digit fonts; weapons-owned subpanel showing slots 2..7 as small colored digits — knowledge `raycaster_hud.md` § Bottom Chrome Strip — Static Background Bitmap, § Widget Layout Within the Strip, § Bottom-Strip Font Treatment). We have no asset pipeline (specs/80 § Dependencies) and only one weapon (`ir/game_ir.yaml § combat`). Constants below adapt the reference's geometry to our 640 × 480 framebuffer at 2× scale and substitute a flat-color strip for the chrome bitmap.
+
+#### Strip
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_STRIP_HEIGHT_PX | 80 | — | Generation default — no knowledge backing for the absolute pixel value (the reference's 32-row strip is asset-bitmap-sized). The reference strip occupies 16% of vertical space (32 / 200); 80 / 480 ≈ 16.7%, the closest 2× scale that preserves that proportion at our 640 × 480 framebuffer (knowledge `raycaster_hud.md` § Viewport-to-HUD Vertical Partition — "The strip's height is a fixed bitmap-height constant ... rows 168..199 ... leaving rows 0..167 for the world view"). 80 also gives the digit pane comfortable vertical breathing room at our digit pixel size (below). |
+| RAYCASTER_HUD_STRIP_COLOR | — | #585050 chrome warm-gray | knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — "Chrome warm-gray: a desaturated warm gray, roughly (90, 80, 80)". `#585050` ≈ (88, 80, 80) — the closest 8-bit-per-channel value to the knowledge-suggested chrome. |
+| RAYCASTER_HUD_STRIP_TOP_Y | `WINDOW_HEIGHT - RAYCASTER_HUD_STRIP_HEIGHT_PX` (= 400) | — | Derived. The strip is anchored to the bottom of the framebuffer (knowledge same § — "The strip's vertical origin is `(framebuffer_height - strip_height)`"). |
+
+The world-view region is rows `0..RAYCASTER_HUD_STRIP_TOP_Y` (= 0..400). The wall pass, sprite pass, and effects pass write the entire framebuffer (rows 0..480) — the strip is drawn on top of those layers and overwrites the bottom 80 rows. World-region pixels above the strip remain visible. (The world's bottom 80 rows DO get computed; they're just covered by the strip. Knowledge `raycaster_hud.md` § Viewport-to-HUD Vertical Partition notes the reference avoids the wasted compute by limiting `view_height` to 168 rows; we do not — the strip overlay is simpler and the wasted compute on 80 × 640 = 51 200 pixels is negligible at our scenario complexity.)
+
+#### Per-Pane Layout (Within the Strip)
+
+Knowledge `raycaster_hud.md` § Widget Layout Within the Strip pins the reference's hard-coded absolute widget pixel positions (ammo at x=44, health at x=90, weapons subpanel at x=104, etc.). Our 2× scale-up + single-weapon substitution makes the reference positions inapplicable verbatim. The constants below pin a left-to-right "health → ammo → weapon" reading order (knowledge same § — "The layout reads left-to-right as a sentence"), with explicit anchors so the Coder does not reinvent positions across regens.
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| RAYCASTER_HUD_DIGIT_PIXEL_SIZE | 4 | Generation default — no knowledge backing for the exact value (reference fonts are asset-bitmap-driven). 4× scale on the existing 3 × 5 digit font (specs/25 § Bitmap Font) produces 12 × 20 px digits — closest analogue to the reference's "tall-digit" font (~14 × 16 px, knowledge `raycaster_hud.md` § Bottom-Strip Font Treatment) at our framebuffer size. The topdown HUD uses 2× scale (6 × 10 digits); the FPS strip's bigger panes need bigger digits to read across the player's "instrument panel" attention span. |
+| RAYCASTER_HUD_PANE_X_HEALTH | 32 | Generation default — no knowledge backing. Left padding for the health pane. The reference's tall-digit health % anchors at x=90 in the 320-wide strip (knowledge `raycaster_hud.md` § Widget Layout Within the Strip); 32 in our 640-wide strip is the same fractional position (~10% in from the left edge) accounting for the absence of the reference's ammo pane to the left of health. |
+| RAYCASTER_HUD_PANE_X_AMMO | 256 | Generation default — no knowledge backing. Middle pane anchor; sized to clear the health digits (max width = 3 digits × 12 px + 2 × 1 px kern = ~38 px from the health icon at x≈40) with comfortable margin. |
+| RAYCASTER_HUD_PANE_X_WEAPON | 480 | Generation default — no knowledge backing. Right pane anchor; sized to fit a weapon icon (~80 px wide, see below) inside the strip without overlapping the framebuffer right edge. |
+| RAYCASTER_HUD_PANE_TEXT_Y | `RAYCASTER_HUD_STRIP_TOP_Y + (RAYCASTER_HUD_STRIP_HEIGHT_PX - RAYCASTER_HUD_DIGIT_PIXEL_SIZE * HUD_DIGIT_HEIGHT_PX) / 2` (= 400 + (80 - 20) / 2 = 430) | Vertically centers the digits inside the strip. Derived from the strip dimensions and digit size. |
+
+#### Pane Colors and Glyphs
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_HEALTH_COLOR | — | #D00000 saturated red | knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — "Tall-digit red: a saturated red roughly in the (200, 0, 0) – (220, 0, 0) range". `#D00000` ≈ (208, 0, 0). Distinct from the topdown HUD's `HUD_HEALTH_COLOR_LOW` (`#C00000`) so a topdown→raycaster mode switch reads as deliberately different rather than an accidental color drift. |
+| RAYCASTER_HUD_AMMO_COLOR | reuse `HUD_AMMO_COLOR` (`#FFFF00`) | #FFFF00 yellow | knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — "Short-digit yellow (active weapons-owned): a saturated yellow roughly (220, 220, 0)". `#FFFF00` is the closest 8-bit value and reuses the existing topdown `HUD_AMMO_COLOR` (specs/25 § HUD Ammo Pane) so the on-map ammo pickup, the topdown HUD ammo pane, and the FPS HUD ammo pane all share one yellow. The reference uses two distinct font weights for primary vs secondary readouts; with our monolithic font we substitute pane position (separate strip slot) instead of a separate font (knowledge `raycaster_hud.md` § Bottom-Strip Font Treatment + § Widget Layout). |
+| RAYCASTER_HUD_WEAPON_COLOR | — | #B0B0B0 mid-gray | Generation default — no knowledge backing for a single-weapon icon (reference shows a 6-slot weapons-owned subpanel, knowledge `raycaster_hud.md` § Widget Layout Within the Strip — "Weapons-owned indicators: 6 slots ... gray = unowned, yellow = owned"; we have one weapon and do not need the slot-based representation). Mid-gray reads as "tool / equipment", distinct from the alarm-panel red (health) and the ammo yellow. |
+
+#### Health Icon (Left of Health Digits)
+
+The HUD strip's health pane composes a small icon glyph + the player's health digits, mirroring the topdown HUD's "icon + digits" pattern (specs/25 § HUD Ammo Pane). We have no alphabet font (only digits 0..9), so the pane uses a glyph icon instead of a textual "HEALTH" label.
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_HEALTH_ICON_PX | 16 | — | Generation default — no knowledge backing. ~80% of the digit on-screen height (`HUD_DIGIT_HEIGHT_PX × RAYCASTER_HUD_DIGIT_PIXEL_SIZE = 20`) so the icon sits comfortably alongside the digits. Reuses the red-cross convention from the on-map health pickup (specs/25 § Pickups § Sprite Visual). |
+| RAYCASTER_HUD_HEALTH_ICON_THICKNESS_PX | 4 | — | Generation default — same 1/4-of-icon-width ratio as the on-map health pickup's `PICKUP_HEALTH_INNER_THICKNESS_PX`. |
+| (icon background) | — | reuse `RAYCASTER_HUD_HEALTH_COLOR` | The icon is a simple red plus-cross (no white background) so it composes onto the chrome strip without a second color band. |
+
+#### Ammo Icon (Left of Ammo Digits)
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_AMMO_ICON_PX | 16 | — | Generation default — same size as the health icon for visual symmetry. Reuses the yellow-square convention from the topdown HUD (`HUD_AMMO_ICON_PX = 8` at topdown's 2× digit scale; ours is 16 at the strip's 4× digit scale, preserving the same "icon ≈ digit height" ratio). |
+| (icon color) | — | reuse `RAYCASTER_HUD_AMMO_COLOR` | Single solid yellow square. |
+
+#### Weapon Icon (Right Pane)
+
+The reference's weapons-owned subpanel is a 2-row × 3-column grid of small digit slots showing weapons 2..7 (knowledge `raycaster_hud.md` § Widget Layout Within the Strip). With one weapon (the pistol — slot 1, which the reference renders implicitly), our analogue is a single static icon representing the active weapon.
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_WEAPON_ICON_W_PX | 48 | — | Generation default — no knowledge backing. Sized to read as "the weapon" at the strip's scale — wider than tall to suggest a horizontal pistol silhouette. |
+| RAYCASTER_HUD_WEAPON_ICON_H_PX | 16 | — | Generation default — same height as the health/ammo icons for visual symmetry. |
+
+The exact silhouette (single filled rectangle, T-shape with grip, two-rectangle "barrel + grip" pistol) is a Coder degree of freedom (`ir/contracts/renderer.yaml § coder_degrees_of_freedom`). The simplest shape — a single filled rectangle in `RAYCASTER_HUD_WEAPON_COLOR` at the size above — is the obvious starting point; future iterations may elaborate to a multi-rect silhouette without spec change.
+
+#### Effect Composition
+
+The HUD strip draws **on top of** the world layers and effect overlays (matching knowledge's "two HUD surfaces compose without interaction" — § Key Insights). Concretely, after the slice-3 effects pass returns:
+
+1. Bottom HUD strip (chrome + health pane + ammo pane + weapon icon)
+2. Game-over border (if `game_over.is_some()`) — unchanged from slice 3
+
+The HUD strip is **full-bright** — no distance attenuation, no extra-light-bias modulation, no z-test against `wall_depth[]`.
+
 ## Frame Rate
 
 | Property | Value |

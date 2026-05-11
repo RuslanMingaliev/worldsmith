@@ -1,14 +1,19 @@
 # raycaster module contract.
-# Slice 3 of 6 of the FPS migration (specs/45). Walls + flat
+# Slice 4 of 6 of the FPS migration (specs/45). Walls + flat
 # floor / ceiling from slice 1, plus a per-column wall-depth z-buffer
 # and a back-to-front sprite pass for live enemies, dying enemies,
 # corpses, blood splats, and active pickups from slice 2, plus the
-# slice-3 first-person effects pass: screen-space muzzle-flash overlay,
-# world-space tracer line, wall-puff billboard with a full-bright
-# first phase, extra-light bias on wall and sprite shading during
-# the firing window, and the player damage / pickup tint screen-space
-# overlays. Default --render-mode is `topdown` (through slice 4), so
-# this module does not run by default until slice 5 flips the default.
+# slice-3 first-person effects pass (screen-space muzzle-flash
+# overlay, world-space tracer line, wall-puff billboard with a
+# full-bright first phase, extra-light bias on wall and sprite
+# shading during the firing window, player damage / pickup tint
+# screen-space overlays). Slice 4 does NOT add a new pass to this
+# module -- the FPS HUD layer (bottom chrome strip; no on-view crosshair per knowledge/raycaster_hud.md § On-View Crosshair — Absent in the Reference's First-Person View) lives
+# in renderer::draw_hud_fps, called from main.rs after raycaster::draw
+# returns, so this module's signature and pass count are unchanged
+# from slice 3. Default --render-mode is `topdown` (through slice 4),
+# so this module does not run by default until slice 5 flips the
+# default.
 name: raycaster
 file: src/raycaster.rs
 depends_on: [level_data, player_state, enemy_logic, visual_effects]
@@ -24,8 +29,8 @@ public_constants:
       source: "specs/25 § Renderer (Raycaster) / Projection (knowledge-backed: § Column Projection Model)" }
   - { name: HORIZON_Y,
       type: usize,
-      value: "WINDOW_HEIGHT / 2",
-      source: "specs/25 § Renderer (Raycaster) / Projection (knowledge-backed: § FOV, Aspect, and the Implicit Pinhole Camera)" }
+      value: "(WINDOW_HEIGHT - crate::renderer::RAYCASTER_HUD_STRIP_HEIGHT_PX as usize) / 2",
+      source: "specs/25 § Renderer (Raycaster) / Projection (knowledge-backed: knowledge/raycaster_renderer.md § Floor and Ceiling Treatment — 'Status-bar carve-out … centerY is half the viewport height'). The formula collapses to `WINDOW_HEIGHT / 2` when RAYCASTER_HUD_STRIP_HEIGHT_PX is 0, so pre-slice-4 callers are unaffected." }
   - { name: WALL_HEIGHT_TILES,
       type: f32,
       value: "1.0",
@@ -589,12 +594,16 @@ notes: |
   autopilot::bot_step, enemy_logic::update, weapon_system::fire all
   stay unaware of this module). Slice 1 ships a walls-only renderer;
   slice 2 of the migration adds entity / sprite drawing inside this
-  module's draw(); slice 3 (this contract) adds the FPS-specific
-  effects pass (muzzle flash / tracer / wall puff / extra-light bias
-  / damage tint / pickup tint); slice 4 will swap the HUD layout
-  and add the held-weapon body sprite; slice 5 flips the
-  --render-mode default to raycaster; slice 6 removes the topdown
-  code path.
+  module's draw(); slice 3 adds the FPS-specific effects pass
+  (muzzle flash / tracer / wall puff / extra-light bias / damage
+  tint / pickup tint); slice 4 (this contract) swaps the HUD layout
+  via a NEW renderer-side entry point (renderer::draw_hud_fps) --
+  this module's signature and pass count are unchanged from slice 3
+  because the FPS HUD strip lives in renderer.rs (it
+  already owns the HUD digit font); slice 5 flips the --render-mode
+  default to raycaster; slice 6 removes the topdown code path. The
+  held-weapon body sprite (originally scoped for slice 4 alongside
+  the HUD) is deferred -- specs/45 § Implementation Status / Deferred.
 
   Dependency graph: depends_on
   [level_data, player_state, enemy_logic, visual_effects] --
