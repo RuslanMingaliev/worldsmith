@@ -83,8 +83,9 @@ public_methods:
       )
     notes: |
       Top-down render entry point. Used by main.rs only when
-      --render-mode=topdown (the default; specs/45,
-      _shared.yaml § main_cli § render_mode). In
+      --render-mode=topdown (an opt-in for one cycle; slice 5 flipped
+      the default to raycaster, slice 6 removes this path entirely --
+      specs/45, _shared.yaml § main_cli § render_mode). In
       --render-mode=raycaster, main.rs calls raycaster::draw
       followed by renderer::draw_hud and (if game_over.is_some())
       renderer::draw_game_over_border instead — see those entries
@@ -271,10 +272,11 @@ notes: |
 
   --render-mode dispatch (specs/45, _shared.yaml § main_cli §
   render_mode): this module is the world-layer renderer for
-  --render-mode=topdown (the default), and contributes the HUD layer
-  + game-over border layer only in --render-mode=raycaster (via
-  draw_hud / draw_game_over_border above; the world layer is owned
-  by the raycaster module in that mode). The Coder may either:
+  --render-mode=topdown (a one-cycle opt-in after the slice-5 default
+  flip; removed in slice 6), and contributes the HUD layer + game-over
+  border layer only in --render-mode=raycaster (via draw_hud /
+  draw_game_over_border above; the world layer is owned by the
+  raycaster module in that mode). The Coder may either:
     (a) split the monolithic `draw` into draw_world + draw_hud +
         draw_game_over_border helpers and have `draw` compose all
         three, OR
