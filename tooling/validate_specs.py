@@ -301,10 +301,18 @@ REFERENCE_BASELINE = {".gitignore", "README.md"}
 
 
 def reference_is_empty() -> bool:
-    """True iff reference/ contains only the baseline placeholder files."""
+    """True iff reference/ contains only the baseline placeholder files.
+
+    `reference/textures/` is excluded from this check: it is the texture
+    corpus directory (committed README scaffold plus gitignored image
+    binaries), orthogonal to raycaster-knowledge extraction. See
+    adr/0001-textures-evals-as-source-of-truth.md.
+    """
     if not REFERENCE_DIR.is_dir():
         return True
     for entry in REFERENCE_DIR.iterdir():
+        if entry.name == "textures":
+            continue
         if entry.name not in REFERENCE_BASELINE:
             return False
     return True
@@ -386,21 +394,30 @@ def validate_reference_knowledge_integrity() -> List[ValidationIssue]:
 # ---------------------------------------------------------------------------
 #
 # Forbidden-token detection lives in `tooling/check_sanitization.py` (the
-# single source of truth). Any leak in a `knowledge/*.md` file is a hard
-# validation error: the public knowledge artifact must be source-identifier
-# clean regardless of whether the offending file is committed or freshly
-# modified.
+# single source of truth). Any leak in a `knowledge/*.md` or
+# `evals/textures/*.md` file is a hard validation error: both directories
+# hold public artifacts that must be source-identifier clean regardless of
+# whether the offending file is committed or freshly modified. The
+# `check_sanitization.py --all` CLI still scans only `knowledge/` so the
+# Extractor agent's existing flow is unaffected; this wrapper uses the
+# path-arguments form to widen the scope.
 
 CHECK_SANITIZATION_SCRIPT = REPO_ROOT / "tooling" / "check_sanitization.py"
 CHECK_ORPHAN_FILES_SCRIPT = REPO_ROOT / "tooling" / "check_orphan_files.py"
+TEXTURE_EVALS_DIR = REPO_ROOT / "evals" / "textures"
 
 
-def validate_knowledge_sanitization() -> List[ValidationIssue]:
-    """Fail validation if any `knowledge/*.md` file has a forbidden token."""
+def validate_public_sanitization() -> List[ValidationIssue]:
+    """Fail validation if any public markdown has a forbidden token.
+
+    Covers `knowledge/*.md` and `evals/textures/*.md`.
+    """
     if not CHECK_SANITIZATION_SCRIPT.exists():
         return []
 
     all_files = sorted(KNOWLEDGE_DIR.glob("*.md"))
+    if TEXTURE_EVALS_DIR.is_dir():
+        all_files.extend(sorted(TEXTURE_EVALS_DIR.glob("*.md")))
     if not all_files:
         return []
 
@@ -412,8 +429,9 @@ def validate_knowledge_sanitization() -> List[ValidationIssue]:
         return []
     return [
         ValidationIssue(
-            KNOWLEDGE_DIR,
-            "sanitization leak — see tooling/check_sanitization.py output above",
+            REPO_ROOT,
+            "sanitization leak in knowledge/ or evals/textures/ — see "
+            "tooling/check_sanitization.py output above",
         )
     ]
 
@@ -474,7 +492,7 @@ def main() -> None:
         )
     )
     issues.extend(validate_reference_knowledge_integrity())
-    issues.extend(validate_knowledge_sanitization())
+    issues.extend(validate_public_sanitization())
     issues.extend(validate_orphan_files())
 
     if issues:
