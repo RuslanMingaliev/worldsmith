@@ -62,9 +62,9 @@ This is a deliberate generation-default deviation that cites [`knowledge/raycast
   1. The per-column ray angle `theta = player.facing + column_angle_offset[x]`, where `column_angle_offset[x]` is derived from the FOV and column count (see § Column Projection below).
   2. A grid-DDA walk from `player.pos` along `theta` until the ray enters a tile where `level_data::is_wall` is true OR the per-column ray length reaches `RAYCASTER_MAX_DEPTH`.
   3. The perpendicular distance `perp_dist` (the axis-projected distance — knowledge § Perpendicular Distance, § Fisheye Correction "grid-walk implementation").
-  4. A wall column height `column_h_px = (WALL_HEIGHT_TILES * focal_px) / perp_dist`, clamped to `[1, WINDOW_HEIGHT]`. Centered vertically on `HORIZON_Y` (no view-pitch — knowledge § FOV, Aspect, and the Implicit Pinhole Camera).
+  4. A wall column height `column_h_unclamped = (WALL_HEIGHT_TILES * focal_px) / perp_dist`, with a `max(1.0, ...)` floor to keep the column at least one pixel tall. The column is split **asymmetrically** around `HORIZON_Y` by `EYE_HEIGHT_FRACTION` (specs/25 § Projection): the wall extends `(1 − EYE_HEIGHT_FRACTION) × column_h_unclamped` pixels above `HORIZON_Y` and `EYE_HEIGHT_FRACTION × column_h_unclamped` pixels below it. The split is applied to the UNCLAMPED value; the resulting screen-Y coordinates are then clamped independently to `[0, WINDOW_HEIGHT]` (no view-pitch — knowledge § FOV, Aspect, and the Implicit Pinhole Camera).
   5. A shaded wall color: starting from `RAYCASTER_WALL_COLOR_NEAR`, multiply each channel by `(1 - min(perp_dist / RAYCASTER_MAX_DEPTH, 1.0))` interpolated toward `RAYCASTER_WALL_COLOR_FAR`. If the ray entered the tile crossing a north-south boundary (an "EW wall" in knowledge § NS-vs-EW Wall Shading), the color is darkened by `RAYCASTER_NSEW_DARKEN_FACTOR`; otherwise it is left at the nominal shade. (Pick one axis convention and use it consistently — knowledge § NS-vs-EW Wall Shading allows either.)
-  6. The framebuffer column is written: rows `[0, ceiling_top)` ← `RAYCASTER_CEILING_COLOR`, rows `[ceiling_top, floor_top)` ← shaded wall color, rows `[floor_top, WINDOW_HEIGHT)` ← `RAYCASTER_FLOOR_COLOR`. `ceiling_top = HORIZON_Y - column_h_px / 2`, `floor_top = HORIZON_Y + column_h_px / 2`, both clamped to `[0, WINDOW_HEIGHT]`.
+  6. The framebuffer column is written: rows `[0, ceiling_top)` ← `RAYCASTER_CEILING_COLOR`, rows `[ceiling_top, floor_top)` ← shaded wall color, rows `[floor_top, WINDOW_HEIGHT)` ← `RAYCASTER_FLOOR_COLOR`. With the asymmetric split: `ceiling_top = clamp(HORIZON_Y − (1 − EYE_HEIGHT_FRACTION) × column_h_unclamped, 0, WINDOW_HEIGHT)`, `floor_top = clamp(HORIZON_Y + EYE_HEIGHT_FRACTION × column_h_unclamped, 0, WINDOW_HEIGHT)`. Clamping the screen Y coordinates after the split (rather than clamping `column_h_px` first and then dividing) is what lets a wall the player is pressed against fill the entire viewport without a leftover floor sliver beneath it.
 - If the DDA walk reaches `RAYCASTER_MAX_DEPTH` without hitting a wall, the column is filled with ceiling above the horizon and floor below — no wall slice is drawn. This is the far-clip case (knowledge § Max Render Distance / Far Clipping).
 - After `raycaster::draw` returns, the existing HUD draw path (`renderer::draw_hud` or its current equivalent) runs unchanged. The game-over border (if `game_over.is_some()`) also draws unchanged after the HUD.
 - Sprites, projectiles, pickups, corpses, blood splats, wall puffs, muzzle flashes, tracers, the player damage tint, the pickup tint, the player disc, the direction line, and the exit marker are **not** rendered in this slice. These are added in slice 2 (entities/sprites), slice 3 (FPS-specific effects), and slice 4 (FPS HUD layout). The per-frame `VisualEffects` continues to tick (game_loop owns it; raycaster does not read it this slice).
@@ -93,7 +93,7 @@ This is a deliberate generation-default deviation that cites [`knowledge/raycast
 - The choice of how `t` is recovered from the DDA walk depends on the ray parameterization. Two equivalent options:
   - **Option A (unit-direction ray):** Cast `ray_dir = (cos(player.facing + angle_offset), sin(player.facing + angle_offset))`. The DDA's matched `side_dist` value is the Euclidean distance to the hit, so the spec rule becomes `perp_dist = side_dist * cos(angle_offset)`. The `cos(angle_offset)` multiplication MUST appear explicitly in the implementation.
   - **Option B (camera-plane ray):** Cast `ray_dir = camera_forward + camera_plane * camera_x` where `camera_plane` is perpendicular to `camera_forward` with length `tan(RAYCASTER_FOV_RADIANS / 2)` and `camera_x = (2*x - WINDOW_WIDTH) / WINDOW_WIDTH ∈ [-1, 1]`. With this non-unit ray, the DDA's matched `side_dist` value equals the camera-forward projected distance directly, so `perp_dist = side_dist` with no further trig (knowledge § Perpendicular Distance "grid-walk implementation").
-- Per-column wall height: `column_h_px = (WALL_HEIGHT_TILES * focal_px) / perp_dist`, clamped to `[1, WINDOW_HEIGHT]`. The clamp serves as both a near-plane (against extremely close walls) and a soft cap at extremely large heights (knowledge § Perpendicular Distance "Per-column scale is clamped").
+- Per-column wall height: `column_h_unclamped = (WALL_HEIGHT_TILES * focal_px) / perp_dist`, with a `max(1.0, ...)` floor as a near-plane against extremely close walls (knowledge § Perpendicular Distance "Per-column scale is clamped" — the reference's far-plane behavior corresponds to our `RAYCASTER_MAX_DEPTH` far clip, applied to `perp_dist` not `column_h_px`). The unclamped value is split by `EYE_HEIGHT_FRACTION` into above-eye and below-eye pixel offsets; each resulting screen Y is then clamped to `[0, WINDOW_HEIGHT]` independently (see § main pipeline rule 6 — clamping after the split is what avoids the leftover-floor-sliver bug for walls the player is pressed against).
 - Naive Euclidean distance to the wall (`sqrt(dx*dx + dy*dy)` from camera to hit, equivalently `t` for a unit-direction ray with no `cos(angle_offset)` correction) is **forbidden** for wall column scaling — it produces the classic fisheye bow described in knowledge § Perpendicular Distance "Feel". The implementation must visibly apply either Option A's `cos(angle_offset)` multiplication or Option B's camera-plane ray construction; raw DDA `side_dist` from a unit-direction ray must not flow into `column_h_px` unmodified.
 
 ### NS / EW Wall Shading (Fake Directional Light)
@@ -127,9 +127,25 @@ This is a deliberate generation-default deviation that cites [`knowledge/raycast
 **Effect:** Rows above `HORIZON_Y` are filled with `RAYCASTER_CEILING_COLOR`; rows at/below `HORIZON_Y` are filled with `RAYCASTER_FLOOR_COLOR`, except where covered by a wall column (knowledge § Floor and Ceiling Treatment "simplified flat-colour" alternative).
 
 **Rules:**
-- The horizon row is `HORIZON_Y = WINDOW_HEIGHT / 2` (no view pitch — knowledge § FOV, Aspect, and the Implicit Pinhole Camera).
+- The horizon row is `HORIZON_Y = (WINDOW_HEIGHT − RAYCASTER_HUD_STRIP_HEIGHT_PX) / 2` (the viewport center, not the framebuffer center — knowledge § Floor and Ceiling Treatment "Status-bar carve-out: full screen height minus a fixed bottom strip is the actual render viewport; centerY is half the viewport height"). In slices without a bottom HUD strip `RAYCASTER_HUD_STRIP_HEIGHT_PX = 0` and the formula collapses to `WINDOW_HEIGHT / 2`. No view pitch (knowledge § FOV, Aspect, and the Implicit Pinhole Camera).
 - The reference's textured horizontal-span technique (knowledge § Floor and Ceiling Treatment "Rules — textured floor/ceiling") is **deferred**: we have no texture asset pipeline (spec/80 § Dependencies) and the simplified flat-colour alternative is explicitly endorsed as an equivalent (knowledge § Floor and Ceiling Treatment "Rules — simplified flat-colour").
 - Floor and ceiling colors must be visually distinct from each other and from wall colors so the horizon line and the wall silhouettes both read at a glance. Spec/25 pins specific values; the rationale ("contrasting hues for floor vs ceiling so the horizon line is unambiguous" — knowledge § Floor and Ceiling Treatment "Feel") is captured there.
+
+### Sprite Vertical Anchor
+
+**Trigger:** Every sprite candidate accepted by the raycaster's per-frame visibility cull (enemies, dying-enemy effects, corpses, blood splats, wall puffs, pickups, and any other slice 2+ sprite type that lives at a world `pos` and has a `world_half_height`).
+
+**Effect:** The sprite's screen-space vertical extent is anchored so its **bottom edge meets the floor at that distance**, mirroring the reference engine's "entity world Y equals the floor of the room it occupies" convention for the vast majority of in-world entities. Earlier slices centered the sprite on `HORIZON_Y`, which floated everything at eye height regardless of how tall the entity actually was — a visual bug the floor anchor fixes.
+
+**Rules:**
+- For a sprite with world center `pos`, half-width `world_half_width`, and half-height `world_half_height`, projected through `xscale = focal_px / max(proj_dist, RAYCASTER_SPRITE_MIN_PROJ_DIST)`:
+  - `screen_y_center = HORIZON_Y + (EYE_HEIGHT_FRACTION − world_half_height) × xscale`
+  - `y_top = screen_y_center − world_half_height × xscale` (clamped to `[0, WINDOW_HEIGHT]`)
+  - `y_bottom = screen_y_center + world_half_height × xscale` (clamped to `[0, WINDOW_HEIGHT]`)
+  - This places the sprite's bottom (`y_bottom`) at the same screen row as the floor at `proj_dist` would project to (`HORIZON_Y + EYE_HEIGHT_FRACTION × xscale`), independently of the sprite's height.
+- Horizontal placement is unchanged: `screen_x_center = WINDOW_WIDTH / 2 + right_offset × xscale`, with `x_left/x_right = screen_x_center ∓ world_half_width × xscale`.
+- Sprites whose conceptual anchor is not the floor — currently muzzle flashes and tracers — are 2D HUD-style overlays in pixel space, drawn after the 3D pass; they do not flow through this rule.
+- Knowledge backing: the per-entity floor anchor is implied by knowledge/enemy_types.md's entity-relative geometry (e.g., "Basic trooper eye height: 42 units (3/4 of 56)" — sprite total height anchored from a floor-relative base) and by knowledge/player_movement.md's "View height | 41 units | Player eye height" placing the camera above the floor. The explicit "entity world Y equals floor Y" formal cite is not yet in knowledge (Generation default — backing pending an Extractor pass that formalizes entity vertical placement).
 
 ### Far Clipping
 
@@ -217,7 +233,7 @@ These are Coder-internal regression tests; they are not asserted by `autopilot::
 - Wall column projection with perpendicular distance and fisheye correction.
 - NS / EW wall shading.
 - Distance-attenuated wall color (continuous lerp between near and far).
-- Flat-color floor and ceiling split at `HORIZON_Y = WINDOW_HEIGHT / 2`.
+- Flat-color floor and ceiling split at `HORIZON_Y` (specs/25 § Projection — viewport center, accounting for any HUD strip carve-out).
 - Far-clip at `RAYCASTER_MAX_DEPTH`.
 - HUD and game-over border draw on top of the raycaster framebuffer (delegating to the existing renderer's HUD path).
 - `RenderMode` selection consumed only by `main.rs`; gameplay simulation unchanged.
