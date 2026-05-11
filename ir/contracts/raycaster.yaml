@@ -29,8 +29,8 @@ public_constants:
       source: "specs/25 § Renderer (Raycaster) / Projection (knowledge-backed: § Column Projection Model)" }
   - { name: HORIZON_Y,
       type: usize,
-      value: "WINDOW_HEIGHT / 2",
-      source: "specs/25 § Renderer (Raycaster) / Projection (knowledge-backed: § FOV, Aspect, and the Implicit Pinhole Camera)" }
+      value: "(WINDOW_HEIGHT - crate::renderer::RAYCASTER_HUD_STRIP_HEIGHT_PX as usize) / 2",
+      source: "specs/25 § Renderer (Raycaster) / Projection (knowledge-backed: knowledge/raycaster_renderer.md § Floor and Ceiling Treatment — 'Status-bar carve-out … centerY is half the viewport height'). The formula collapses to `WINDOW_HEIGHT / 2` when RAYCASTER_HUD_STRIP_HEIGHT_PX is 0, so pre-slice-4 callers are unaffected." }
   - { name: WALL_HEIGHT_TILES,
       type: f32,
       value: "1.0",

@@ -141,7 +141,9 @@ main_cli:
             RenderMode::Raycaster => {
                 raycaster::draw(&mut framebuffer, &game.level,
                                 &game.player, &game.enemies, &game.fx);
-                // Slice 4: FPS HUD (bottom chrome strip + crosshair)
+                // Slice 4: FPS HUD (bottom chrome strip only — no
+                // on-view crosshair; the reference draws none, see
+                // specs/45 § Reference-Faithful No-Crosshair Choice)
                 // replaces the topdown text HUD in raycaster mode.
                 // The topdown path's draw_hud is NOT called here; it
                 // is reachable only via the Topdown arm's monolithic
@@ -156,9 +158,10 @@ main_cli:
       (one combined helper vs. three explicit calls) so long as the
       visual layer order matches: raycaster fills the framebuffer
       with walls + floor + ceiling + sprites + effects first, then
-      FPS HUD (crosshair + bottom strip) on top, then game-over
-      border on top of that. See ir/contracts/raycaster.yaml and
-      ir/contracts/renderer.yaml for the function signatures involved.
+      FPS HUD (bottom chrome strip only — no on-view crosshair, see
+      specs/45 § Reference-Faithful No-Crosshair Choice) on top, then
+      game-over border on top of that. See ir/contracts/raycaster.yaml
+      and ir/contracts/renderer.yaml for the function signatures involved.
 
       Slice 2 widens the raycaster::draw signature to accept
       &game.enemies and &game.fx (read-only) so the raycaster can
@@ -168,10 +171,12 @@ main_cli:
       tint) inside raycaster::draw -- no signature change. Slice 4
       swaps the raycaster-arm HUD call from renderer::draw_hud to
       renderer::draw_hud_fps -- a NEW renderer-side public entry
-      point that draws the FPS HUD strip + centered crosshair
-      (specs/45 § FPS HUD Layout); the raycaster::draw signature is
-      unchanged. The topdown arm's renderer::draw signature is also
-      unchanged; the slice-4 diff is HUD-call-site only.
+      point that draws the FPS HUD bottom chrome strip only — no
+      on-view crosshair is drawn, the reference renders none in its
+      first-person view (specs/45 § Reference-Faithful No-Crosshair
+      Choice). The raycaster::draw signature is unchanged. The
+      topdown arm's renderer::draw signature is also unchanged; the
+      slice-4 diff is HUD-call-site only.
 
   modes:
     interactive:
