@@ -137,6 +137,16 @@ fn update_enemy(enemy: &mut Enemy) {
 - Do NOT use Entity-Component-System (ECS) architecture
 - Keep data structures straightforward and explicit
 
+### Cargo Manifest
+
+The generated `Cargo.toml` MUST pin these values verbatim so the release pipeline (`release.yml` matrix `bin:` entry) can locate the built binary at a stable path. Coder-side discretion in package naming has historically broken `release.yml`'s `Package binary archive` step (2026.04 release run #25670337576: Coder produced `[package].name = "worldsmith-game"`; release.yml matrix expected `bin: game`, the previous 2026.03 release shipped with).
+
+- `[package].name = "worldsmith-game"`
+- `[[bin]].name = "worldsmith-game"`
+- `[[bin]].path = "src/main.rs"`
+
+cargo will then build the binary as `target/release/worldsmith-game` on Unix and `target/release/worldsmith-game.exe` on Windows, matching `.github/workflows/release.yml`'s matrix.
+
 ### Dependencies
 
 - Minimize external dependencies
