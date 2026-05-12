@@ -156,6 +156,7 @@ cargo will then build the binary as `target/release/worldsmith-game` on Unix and
 - For scenario-driven autopilot and demo recording (specs/30, specs/35):
   - `serde`, `serde_yaml` as runtime dependencies (NOT just `[dev-dependencies]`).
     Released because `main.rs` in `--autopilot` mode parses scenario YAML at runtime.
+  - **`serde_yaml` 0.9.x quirk** (the deprecated-but-pinned line): externally-tagged enums emitted in the `- variant: value` single-key-map form (the shape used by every `tests/*.yaml` Objective entry) cannot be deserialized via `#[derive(serde::Deserialize)] #[serde(rename_all = "snake_case")]`. v0.9 expects YAML `!tag` notation for externally-tagged enums and fails on the prose-style map. The `Objective` enum in `autopilot.rs` therefore ships a hand-rolled `impl<'de> Deserialize<'de> for Objective` via a MapAccess Visitor; see `ir/contracts/autopilot.yaml § public_types § Objective` for the contract spelling. If serde_yaml is ever bumped to ≥1.0, revisit and consider restoring the derive.
 - Avoid adding dependencies for one-time operations
 - Frame recording (specs/35) MUST use raw `std::fs::File` writes — do NOT add `png`, `image`, or any encoder crate. The recording is raw BGRA, decoded by ffmpeg downstream.
 - CLI argument parsing (specs/35) MUST use `std::env::args` — do NOT add `clap`, `argh`, or similar.
