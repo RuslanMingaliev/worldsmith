@@ -1,10 +1,10 @@
 # Worldsmith
 
-Spec-driven game generation experiment. Generate a retro shooter from structured specifications.
+Source-of-truth-driven game generation experiment. Generate a retro shooter from structured, versioned artifacts.
 
 ## Current Status
 
-**Status:** Working, playable (top-down 2D)
+**Status:** Working, playable. First-person raycaster is the default renderer (`spec/45`); topdown 2D remains in the codebase as a debug-only alternate view (`--render-mode=topdown`) because it stays the fastest way to inspect bot pathing and enemy positioning at a glance. Autopilot bot does LoS-gated firing, kiting at melee range, BFS pathfinding, and pickup-seeking detours (`spec/30 § Bot Behavior`). Default level is a reference-derived multi-enemy layout (`spec/25 § Level Layout`).
 
 ## Quick Commands
 
@@ -26,7 +26,7 @@ cargo test --manifest-path generated/game/Cargo.toml
 
 ```
 specs/           # Source of truth (human-readable)
-ir/              # Intermediate representation (YAML)
+ir/              # Intermediate representation and per-module contracts (YAML)
 generated/game/  # Generated Rust code (disposable)
 knowledge/       # Extracted knowledge (public, versioned)
 tests/           # Test scenarios
@@ -44,8 +44,7 @@ reference/       # Research material (private)
 
 ## Current Priority
 
-Focus on specs, knowledge extraction, and gameplay depth — not generation automation.
-Generation is manual (human + Claude session).
+Focus on specs depth, knowledge extraction, and pipeline reliability. Gameplay deltas land via the agent-task → PR flow (`.github/workflows/agent-intake.yml`); full release regens run via `.github/workflows/release.yml`. Manual generation (human + Claude session) is still possible and useful for ad-hoc spec exploration, but the typical loop is now file-an-issue, agents draft a PR, you review and merge — not chat-and-paste.
 
 ## Post-Generation Reconcile
 
@@ -60,9 +59,10 @@ This prevents specs and code from drifting apart across regenerations.
 
 ## Conventions
 
-- Specs are the source of truth, generated code is disposable
-- Interactive generation (human + Claude conversation)
-- Run `python tooling/run_evals.py` after changes
+- For generated game code, `knowledge/`, `specs/`, and `ir/contracts/` are the source-of-truth pack; generated code is disposable
+- Do not force every future domain into specs if another explicit source-of-truth form plus drift checks fits it better
+- Generation runs in two modes — release (full regen from empty `generated/`) and partial (PR-driven, baselined from `generated-snapshot`); see `specs/80_generation_rules.md` § Release vs Partial Generation
+- Run `python tooling/run_evals.py` after manual changes
 - Document decisions in ADR format
 - Rust: safe code only, no unsafe, minimal dependencies
 - Versions are git tags, not hardcoded in docs
@@ -86,7 +86,7 @@ Trust the gate; do not work around it. If the gate fires unexpectedly, the right
 
 When a decision is made during conversation, **automatically**:
 
-1. **Record decision** — Use ADR format (Decision N: Title, Date, Context, Decision, Consequences)
+1. **Record decision** — Use ADR format (Decision N: Title, Date, Context, Decision, Consequences); accepted public workflow/source-of-truth decisions should graduate into tracked docs
 2. **Update agent prompts** — If workflow or process changes, update `tooling/agents/*.md`
 3. **Update README files** — If directory structure or conventions change
 
@@ -95,12 +95,15 @@ Don't wait for user to ask — document immediately when decisions are made.
 ## Multi-Agent System
 
 Agents in `tooling/agents/`:
-- **Orchestrator** — Coordinates work, delegates tasks
+- **Orchestrator** — Coordinates work, delegates tasks (manual-session only; CI flows invoke phases directly)
 - **Extractor** — Extracts knowledge from reference → `knowledge/`
-- **Architect** — Formalizes knowledge into specs
-- **Coder** — Generates code from specs
+- **Architect** — Formalizes knowledge → per-module contracts in `ir/contracts/`
+- **Coder** — Generates Rust from specs + contracts → `generated/game/src/`
+- **Reconciler** — Captures invented constants, contract drift, and unused exports back into `specs/`, `ir/`, and `tooling/agents/` (the agents Reconciler edits include `coder.md` and `reconciler.md` itself when its own checks need tightening)
+- **PostMortem** — Audits the run as a process (token waste, agent-prompt non-compliance, recurring patterns), proposes surgical prompt edits or ADR drafts
+- **Release Editor** — Authors `artifacts/release_hero.md` and `artifacts/release_buildhealth.md` from the diff + PR bodies; everything else in the release notes is templated by `tooling/compose_release_notes.py`
 
-Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ → Coder → generated/`
+Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ + ir/ → Coder → generated/ → Reconciler → specs/' + ir/' → PostMortem → tooling/agents/'`. Release adds a final `Release Editor → artifacts/release_*.md → compose_release_notes.py → published draft` step.
 
 ## Controls
 
@@ -194,5 +197,6 @@ Architect's `PHASE_TOOLS` entry still includes `Bash`; auditing/shrinking it and
 
 ## Known Issues
 
-- Top-down view, not raycasting
 - The `generated-snapshot` branch is force-pushed and orphan-committed each time, so historical snapshots are not retained — only the latest regen-merge baseline lives there. If you need a previous baseline, fall back to the corresponding GitHub Release's `worldsmith-game-X-src.zip`. If a PR sits open for more than 90 days, its `generated-src` artifact expires and the post-merge snapshot can no longer pick it up — `post-merge-snapshot.yml` warns and skips, leaving the previous snapshot in place; refresh manually via `release.yml` if needed.
+- Verify-only merges (touching no source-of-truth paths) do not produce a `generated-src` artifact, so `post-merge-snapshot.yml` warns and leaves the snapshot at the prior regen-merge baseline. Several recent merges (#56/#57/#58/#61/#63) hit this path; the 2026.04 release flow temporarily refreshed `generated-snapshot` manually from the release artifact (see release run 25712621449) before the next pr.yml could baseline correctly. Long-term fix is to add a small post-merge-snapshot fallback that uses the latest GitHub Release tag's `generated/` when no per-PR artifact exists.
+- Test count is not pinned in IR contracts; each release regen has variance in which tests Coder happens to emit (2026.04 shipped 58 tests, the prior PR-mode baseline had 77). Reconciler's release-blocker D-tier catches drops vs `origin/generated-snapshot` and now also vs the prior release tag, but the structural fix (`required_tests:` blocks in `ir/contracts/<module>.yaml`) is unimplemented.
