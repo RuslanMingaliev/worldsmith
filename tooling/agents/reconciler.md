@@ -66,6 +66,19 @@ Any module where `POST < PRE` is a **coverage regression** — log under `### Dr
 
 Bare `Tests passing: N / N` in the report is **insufficient** when N decreased between regens. The 2026-05-08 release regen on commit `9ec001f` shipped 35 tests vs. 64 in the prior commit `b3a5237` — net loss of ~27 unit tests across `autopilot.rs` (-9), `game_loop.rs` (-5), `renderer.rs` (-4), and others. Reconciler's report read "Tests passing: 35 / 35" without flagging the drop; PostMortem propagated the same framing. The coverage hole would have baselined into `generated-snapshot` on merge, making restoration progressively harder for future PRs.
 
+**Release-mode addendum.** In release mode (orchestrator invoked with `--mode release` and no `--target-modules`), run the same grep against the **prior release tag** in addition to `generated-snapshot`:
+
+```
+# previous_tag is provided by the orchestrator's `## Scope override` block.
+PRE_REL=$(git show <previous_tag>:generated/game/src/<module>.rs 2>/dev/null \
+          | grep -c '#\[test\]' || echo 0)
+PRE_SNAP=$(git show origin/generated-snapshot:src/<module>.rs 2>/dev/null \
+           | grep -c '#\[test\]' || echo 0)
+POST=$(grep -c '#\[test\]' generated/game/src/<module>.rs)
+```
+
+Both diffs matter and the severity is the same release-blocker tier: `POST < PRE_REL` is the user-facing claim ("did this release regress coverage vs the last published release?") and goes verbatim into the Reconciler report so release_editor can reflect it in release notes; `POST < PRE_SNAP` catches drift accumulated between releases that should not propagate to the next snapshot. Log both as separate entries under `### Drift found` so PostMortem can distinguish "release-window drift" from "this-regen drift". The 2026-05-11 release regen shipped 61 tests vs. 77 in `generated-snapshot` (release-blocker D3) but the prior-release diff was never computed, so the user-facing line in release notes silently claimed "gameplay unchanged" — see release_editor.md § Inputs you should read.
+
 In manual (non-CI) mode, where `origin/generated-snapshot` may not be fetched, fall back to `git fetch origin generated-snapshot --depth=1` before the grep. If the ref still does not exist (first-run / fork), skip the check with a note in the report rather than failing — the floor is the workflow-fetched baseline; without it there is no prior state to compare against.
 
 Only proceed to Step 1 once warnings have been triaged into "spec drift" / "cfg-test-only / needs gate" / "expected wave-cascade noise" / "orphan-file" / "coverage-regression" buckets and recorded in the report.

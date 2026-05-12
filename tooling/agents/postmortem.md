@@ -60,6 +60,13 @@ Append a **`## PostMortem Section`** at the end of the run journal, *after* the 
 
 Categorise every recommendation:
 
+**Mode-aware recommendation framing.** Before drafting, identify the run mode from the orchestrator invocation: release mode = `--mode release` and no `--target-modules`; PR / partial mode = `--target-modules <list>` present in the invocation (visible in `artifacts/usage.jsonl` or the orchestrator's run-command echo). The mode shapes which follow-ups are mechanically possible:
+
+- **Release mode.** "Follow-up Coder pass with `--target-modules X,Y` to restore the dropped tests" is **not a valid recommendation** — `release.yml` does not pass `--target-modules`, there is no partial-regen mechanism in the release pipeline, and prescribing one creates a false sense of cheap recoverability. The three follow-up shapes that ARE valid in release mode: (1) re-run `release.yml` for the same `version` input — concurrency group rewrites the existing draft, but it is a fresh full regen with a different random seed and no guarantee of restoring what dropped; (2) land a structural-fix PR first (e.g. pin the missing tests as `required_tests:` in `ir/contracts/<module>.yaml`, or split a contract enum that was simplified) and then re-run `release.yml` — slower but deterministic; (3) publish the draft as-is with an explicit caveat in release notes that names what regressed. Pick one and name which.
+- **PR / partial mode.** A `--target-modules` Coder pass IS valid — that is the mechanism the workflow already uses. Recommendations may prescribe it freely.
+
+The 2026-05-11 release postmortem (Worldsmith 2026.04) recommended "the next action is a follow-up Coder pass" without qualifying the mode. The release operator read this as "a cheap fix exists" and the recommendation propagated unfounded confidence. Mode-tagging every actionable recommendation closes that ambiguity.
+
 #### Agent-prompt changes
 
 For each agent-prompt change, **apply the edit directly** to
