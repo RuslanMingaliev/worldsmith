@@ -53,7 +53,7 @@ public_types:
       was a spec/80 violation flagged in 2026-05-09 reconcile.
   - name: Objective
     definition: |
-      #[derive(Debug, serde::Deserialize)]
+      #[derive(Debug)]
       pub enum Objective {
           Kill(String),
           Reach(String),
@@ -62,11 +62,19 @@ public_types:
       }
     cfg_test_only: false
     notes: |
-      Implementation choice deferred to Coder: the YAML files in
-      tests/ use a single-key-mapping form
-      ("- kill: enemy"); the Coder may use serde_yaml::Value
-      inspection or a custom Deserialize impl. The public *shape*
-      (kill/reach/approach/wait) is what must be stable.
+      The YAML files in tests/ use the externally-tagged single-key-map
+      form ("- kill: enemy"). serde_yaml 0.9 (the pinned version --
+      see specs/80 § Dependencies) does NOT accept the `#[derive(
+      serde::Deserialize)] #[serde(rename_all="snake_case")]` shape
+      for this enum syntax -- v0.9 expects YAML `!tag` notation for
+      externally-tagged enums, not the prose-style map. The Coder MUST
+      hand-roll an `impl<'de> Deserialize<'de> for Objective` via a
+      MapAccess Visitor that pops the single key and dispatches on it.
+      Captured 2026-05-12 release reconcile after the Coder report's
+      Reconciler Parking-Lot Item #2 surfaced this. Future serde_yaml
+      bumps (≥1.0 if/when released) may restore the derive path; revisit
+      then. The public *shape* (kill/reach/approach/wait) is what must
+      be stable regardless of which path is taken.
   - name: BotState
     definition: |
       // Opaque per-bot working state (objective index, stuck counter,

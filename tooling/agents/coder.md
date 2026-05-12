@@ -145,13 +145,23 @@ runs has been the failure mode of every release regen since 2026.02.
   brings nothing under it. You generate every module from scratch using
   specs + IR only.
 - **There is no baseline to "carry from".** Do NOT use the phrase "carried
-  from prior session", "carry-forward", or similar in `coder_report.md`.
-  Every module in `### Modules generated` is a fresh emission — if it ends
-  up byte-identical to the previous release's tree, that is a property of
-  determinism, not of carrying. The 2026-05-11 release regen used
-  "carried from prior session" framing for 10 of 14 modules; PostMortem
-  built a false drift narrative on top of that framing. The bytes were
-  fresh; only the report wording was wrong.
+  from prior session", "carry-forward", "pre-existing modules untouched",
+  "already correct", "no changes needed", or any other framing that implies
+  some modules existed before this Coder phase ran. In release mode
+  `generated/game/src/` is empty at phase start; every `.rs` file on disk
+  at phase end was emitted by *this* run. Every module — without exception
+  — must appear in `### Modules generated` with a one-line summary; the
+  `coder_report.md` template has no "untouched" / "pre-existing" bucket
+  in release mode. If a module ends up byte-identical to the previous
+  release's tree, that is a property of determinism, not of carrying.
+  The 2026-05-11 release regen used "carried from prior session" framing
+  for 10 of 14 modules; the 2026-05-12 release regen used "Pre-existing
+  modules untouched (already correct)" framing for 7 modules while all 7
+  differed materially from `origin/generated-snapshot` (line counts −192
+  to +63). Both framings hid the same coverage-regression class —
+  Reconciler couldn't trust the "untouched" claim and had to file-by-file
+  diff to find the −19-test drop. The bytes were fresh; only the report
+  wording was wrong.
 - **This regen becomes the next baseline for every subsequent PR-mode
   run.** `post-merge-snapshot.yml` force-pushes this release's
   `generated/` to the `generated-snapshot` branch on merge. Whatever
@@ -162,22 +172,39 @@ runs has been the failure mode of every release regen since 2026.02.
   regen builds on a 16-tests-poorer baseline". Treat the release-mode
   quality bar as strictly higher than partial-mode for this reason,
   not lower.
-- **Test-count parity check in release mode compares against the prior
-  release tag, not the snapshot.** The snapshot reflects the most
-  recent PR-mode emission, which may itself carry accumulated drift
-  inherited across the release window. The release-to-release diff is
-  the authoritative one for the user-facing question "did test coverage
-  regress in this release?". Mechanical check, per module:
+- **Test-count parity check in release mode compares against BOTH the
+  prior release tag AND `origin/generated-snapshot`.** The prior-tag
+  diff is the user-facing claim "did this release regress coverage vs
+  the last published release?" — but published release tags in this
+  repo do not carry the `generated/` tree (it's gitignored by design),
+  so `git show <previous_tag>:generated/game/src/<module>.rs` returns
+  empty for every module and the diff is effectively a no-op. The
+  `origin/generated-snapshot` diff is the one that surfaces real
+  regressions — it carries the cumulative state of PR-mode emissions
+  and is what Reconciler compares against. The 2026-05-12 release
+  regen lost −19 tests vs `origin/generated-snapshot` (largest drops:
+  `level_generator` −8, `raycaster` −6, `autopilot` −4); Coder didn't
+  disclose because it only checked the prior-tag (empty) and Reconciler
+  caught it as release-blocker D1. Run BOTH greps, per module:
   ```
   # Prior release tag comes via the `## Scope override` block as `previous_tag`.
-  PRE=$(git show <previous_tag>:generated/game/src/<module>.rs 2>/dev/null \
-        | grep -c '#\[test\]' || echo 0)
+  PRE_REL=$(git show <previous_tag>:generated/game/src/<module>.rs 2>/dev/null \
+            | grep -c '#\[test\]' || echo 0)
+  PRE_SNAP=$(git show origin/generated-snapshot:src/<module>.rs 2>/dev/null \
+             | grep -c '#\[test\]' || echo 0)
   POST=$(grep -c '#\[test\]' generated/game/src/<module>.rs)
   ```
-  Report any `POST < PRE` module in `### Build validation run` under a
-  `Coverage delta vs <previous_tag>:` line so Reconciler sees it without
-  re-running the grep. Disclosure is mandatory even if you judge the
-  drop justified — Reconciler decides whether to escalate.
+  Report any `POST < PRE_REL` OR `POST < PRE_SNAP` module in
+  `### Build validation run` under separate `Coverage delta vs
+  <previous_tag>:` and `Coverage delta vs generated-snapshot:` lines so
+  Reconciler sees both without re-running the grep. Disclosure is
+  mandatory even if you judge the drop justified — Reconciler decides
+  whether to escalate. If you find `POST < PRE_SNAP` for any module,
+  restore the missing tests in-pass from `git show
+  origin/generated-snapshot:src/<module>.rs` rather than shipping the
+  drop — this is the same in-pass restore the Reconciler would
+  otherwise be forced into, and doing it Coder-side avoids the
+  release-blocker escalation.
 - **Contract simplifications are forbidden in release mode without an
   explicit disclosure.** In partial-mode you may simplify an enum
   variant's payload (e.g. `Kill(String) → Kill`) when no live consumer
