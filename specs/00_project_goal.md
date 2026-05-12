@@ -2,18 +2,21 @@
 
 ## Vision
 
-Build a spec-driven pipeline that generates a classic retro shooter from structured specifications.
+Build a source-of-truth-driven pipeline that generates a classic retro shooter from structured, versioned artifacts.
 
-The specifications are derived from reference material through research and extraction. The generated game should feel authentic to the genre — the community should recognize the inspiration.
+For generated game code, the operational source of truth is mechanics knowledge, human-readable specs, and per-module IR contracts derived from reference material through research and extraction. The generated game should feel authentic to the genre — the community should recognize the inspiration without the public artifacts leaking source-game identifiers or private reference content.
 
 ## Why
 
-The project explores whether a game can be reconstructed as a family of design constraints and implementation rules rather than as a single codebase.
+The project explores whether a game can be reconstructed as a family of source-of-truth artifacts and generation rules rather than as a single hand-maintained codebase.
 
 The deeper objective is to separate:
-- design knowledge (specs)
+- extracted mechanics knowledge (`knowledge/`)
+- design and generation constraints (`specs/`)
+- machine-oriented module contracts (`ir/`)
 - implementation strategy (generation rules)
 - generated artifacts (disposable code)
+- run feedback (Reconciler and PostMortem updates that close the loop)
 
 ## Project Phases
 
@@ -35,31 +38,36 @@ Add plugin/skill architecture for spec modifications:
 
 ## Generation Model
 
-Generation is human-driven: a maintainer triggers code generation in a Claude Code session using specs and IR as context, verifies results, and commits.
+Generation is pipeline-driven with a human maintainer in the loop. Gameplay and spec deltas normally enter through an issue/PR flow (`agent-intake.yml` → `pr.yml`) that runs the relevant agents, performs partial regeneration against the latest `generated-snapshot` baseline, builds/tests the generated game, records a demo GIF, and surfaces Reconciler/PostMortem edits for maintainer review.
+
+Manual generation in a Claude Code session remains supported for ad-hoc exploration, but it is no longer the primary operating model.
 
 ### Iterative Development
 
-During development, prefer efficiency:
-- Repair over regeneration
-- Incremental module updates
-- Preserve working code
+During development, prefer efficiency while keeping the source-of-truth chain explicit:
+- repair hand-written tooling directly when generation is not involved
+- use partial regeneration for source-of-truth PRs
+- preserve unaffected generated modules by baselining from `generated-snapshot`
+- capture any generated drift back into specs and IR contracts
 
 ### Release Generation
 
 Each tagged release must:
 - Regenerate all code from scratch
 - Produce a "generated sample" — a playable artifact
-- Prove that specs alone are sufficient
+- Publish the generated source alongside the binary
+- Record release notes and run feedback as first-class outputs
+- Prove that the source-of-truth pack is sufficient
 
 The `generated/` folder is always disposable. A release proves reproducibility.
 
 ### Reconcile
 
-After generation, reconcile code with specs: capture invented constants into `specs/25_game_tuning.md`, mark unimplemented features as deferred, and document design decisions.
+After generation, reconcile code with the source-of-truth pack: capture invented constants into `specs/25_game_tuning.md`, update per-module `ir/contracts/` when contract shape drifted, mark unimplemented features as deferred, and document design decisions or agent-prompt fixes when a run exposes a repeated process failure.
 
 ### Automation
 
-Generation automation (LLM executor, CI-based regeneration) is not a current priority. The focus is on spec quality and knowledge depth. Automation becomes worthwhile when the project outgrows manual generation.
+Automation is now part of what the project is testing. The priority is not to maximize automation for its own sake; it is to make the automated path auditable enough that a maintainer can trust the artifacts it produces. CI generation, partial-regeneration planning, post-merge snapshots, release composition, and agent prompt updates are therefore source-of-truth-adjacent work, not chores outside the experiment.
 
 ## Current Scope
 
@@ -70,7 +78,8 @@ The generated game should have:
 - At least one weapon
 - At least one enemy type
 - Win/exit condition
-- Graphical rendering (2D top-down or raycasting)
+- First-person column-based raycaster as the default renderer
+- Top-down renderer retained as a debug-only alternate mode
 
 Scope evolves with the specs. See git history for changes.
 
@@ -78,21 +87,24 @@ Scope evolves with the specs. See git history for changes.
 
 The project is explicitly not trying to do:
 
-- Advanced AI behaviors
+- Advanced enemy AI behaviors
 - Multiple weapon types
 - Procedural level generation
-- Graphical fidelity beyond functional
+- Graphical fidelity beyond the current flat-color raycaster
 - One-shot perfect generation
 
 These may become goals later. Non-goals evolve with the project.
 
 ## Source of Truth
 
-The source of truth for the system is:
+The source of truth for generated game code is:
 1. spec files in `specs/`
-2. IR files in `ir/`
+2. IR files and per-module contracts in `ir/`
+3. sanitized mechanics knowledge in `knowledge/`
 
-Reference material informs spec creation but is not the operational source of truth. Specs should be self-sufficient for generation.
+Reference material informs spec creation but is not the operational source of truth. The public source-of-truth pack should be self-sufficient for generation.
+
+This does not imply that every future domain must be forced into specs. If a domain cannot be faithfully reproduced from prose constraints and numeric contracts, it needs its own explicit source-of-truth form and drift checks rather than pretending it fits the game-code generation model.
 
 ## Versioning
 

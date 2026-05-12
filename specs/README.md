@@ -1,6 +1,8 @@
 # Specs
 
-Specifications are the source of truth for what the game does.
+Specifications are the human-readable source of truth for generated game behavior and generation constraints. They work together with sanitized mechanics knowledge in `knowledge/` and machine-oriented contracts in `ir/`.
+
+Specs are not a universal container for every possible project domain. If a future domain cannot be made reproducible through prose constraints and numeric contracts, define a separate explicit source of truth and drift checks for that domain instead of burying it here.
 
 ## Numbering Convention
 
@@ -60,6 +62,7 @@ Structure:
 - Success criteria → `evals/`
 - Implementation details → `generated/`
 - Research/findings → `work/`
+- Non-deterministic asset identity that needs a corpus/eval source of truth rather than prose specs
 
 ## Related
 

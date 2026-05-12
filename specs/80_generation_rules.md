@@ -49,7 +49,7 @@ For each tagged release:
 - Regenerate everything from specs + IR
 - Produce a "generated sample" artifact
 
-This proves that specs are self-sufficient. The generated sample can be published as a playable release.
+This proves that the public source-of-truth pack is self-sufficient. The generated sample can be published as a playable release.
 
 ## Token Efficiency Rules
 

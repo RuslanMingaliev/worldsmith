@@ -85,7 +85,7 @@ This separation is inspired by:
 - **Acceptance testing** — verify product meets requirements
 - **CI/CD quality gates** — criteria for release
 
-Applied to spec-driven code generation: evals verify the pipeline can reliably produce correct code from specifications.
+Applied to source-of-truth-driven code generation: evals verify the pipeline can reliably produce correct code from the public knowledge/spec/IR pack.
 
 ## Related
 
