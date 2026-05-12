@@ -130,6 +130,65 @@ When you see such a scope override:
 - Unit tests inside the target module file are in scope; integration tests
   outside `generated/game/src/` are not your responsibility.
 
+## Release regeneration mode
+
+The release workflow (`.github/workflows/release.yml`) runs Coder with
+`--mode release` and **no** `--target-modules` flag — no `Scope override`
+listing specific targets in the prompt. The semantics differ from partial
+regen in five hard ways; mis-applying partial-mode habits to release-mode
+runs has been the failure mode of every release regen since 2026.02.
+
+- **`generated/game/src/` is empty at start.** The release workflow does NOT
+  fetch `generated-snapshot`, does NOT unpack the previous release's
+  `worldsmith-game-*-src.zip`, and does NOT have an orchestrator-side
+  snapshot/revert guard. `generated/` is gitignored and the fresh checkout
+  brings nothing under it. You generate every module from scratch using
+  specs + IR only.
+- **There is no baseline to "carry from".** Do NOT use the phrase "carried
+  from prior session", "carry-forward", or similar in `coder_report.md`.
+  Every module in `### Modules generated` is a fresh emission — if it ends
+  up byte-identical to the previous release's tree, that is a property of
+  determinism, not of carrying. The 2026-05-11 release regen used
+  "carried from prior session" framing for 10 of 14 modules; PostMortem
+  built a false drift narrative on top of that framing. The bytes were
+  fresh; only the report wording was wrong.
+- **This regen becomes the next baseline for every subsequent PR-mode
+  run.** `post-merge-snapshot.yml` force-pushes this release's
+  `generated/` to the `generated-snapshot` branch on merge. Whatever
+  Coder ships here — API surface, test coverage, contract fidelity —
+  baselines into the snapshot and is inherited by every PR regen until
+  the next release. A 16-test coverage drop in a release-mode emission
+  is not "this release loses 16 tests" — it is "every future PR-mode
+  regen builds on a 16-tests-poorer baseline". Treat the release-mode
+  quality bar as strictly higher than partial-mode for this reason,
+  not lower.
+- **Test-count parity check in release mode compares against the prior
+  release tag, not the snapshot.** The snapshot reflects the most
+  recent PR-mode emission, which may itself carry accumulated drift
+  inherited across the release window. The release-to-release diff is
+  the authoritative one for the user-facing question "did test coverage
+  regress in this release?". Mechanical check, per module:
+  ```
+  # Prior release tag comes via the `## Scope override` block as `previous_tag`.
+  PRE=$(git show <previous_tag>:generated/game/src/<module>.rs 2>/dev/null \
+        | grep -c '#\[test\]' || echo 0)
+  POST=$(grep -c '#\[test\]' generated/game/src/<module>.rs)
+  ```
+  Report any `POST < PRE` module in `### Build validation run` under a
+  `Coverage delta vs <previous_tag>:` line so Reconciler sees it without
+  re-running the grep. Disclosure is mandatory even if you judge the
+  drop justified — Reconciler decides whether to escalate.
+- **Contract simplifications are forbidden in release mode without an
+  explicit disclosure.** In partial-mode you may simplify an enum
+  variant's payload (e.g. `Kill(String) → Kill`) when no live consumer
+  reads the payload, provided you list it in
+  `### API Surface compromises and contract simplifications`. In
+  release-mode the same simplification permanently narrows the
+  contract for every future regen — disclose it AND open
+  `artifacts/blocker.md` describing the contract delta. The PostMortem
+  has to surface this to the maintainer; without `blocker.md`, the
+  simplification gets baselined silently.
+
 ## Quality Checklist
 
 Before submitting:

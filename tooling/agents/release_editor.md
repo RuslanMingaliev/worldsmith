@@ -10,9 +10,13 @@ You are given:
 
 - `artifacts/postmortem.md` — the agent pipeline's post-mortem of THIS release's regen pass. Internal-leaning, but a useful source for "what was hard / what to flag".
 - `artifacts/manifest.json` — module count, LoC, test summary, rustc version, generation date.
-- `git log --merges --pretty='format:%H %s' <prev_tag>..HEAD` — merge commits between the previous tag and HEAD. Each merge usually corresponds to a PR.
-- For each merge line `Merge pull request #N from ...`, run `gh pr view N --json title,body,number,labels,closingIssuesReferences` to get the PR title, body, and any linked issues. The body usually contains the intent (Goal / Scope / etc.).
-- Optionally `git diff <prev_tag>..HEAD -- specs/` to verify a PR's claim against spec changes.
+
+**Walk the content diff BEFORE the PR list. Treat the diff as ground truth and the PR list as supporting evidence; not the other way around.** Run all three:
+
+- `git diff --stat <prev_tag>..HEAD -- specs/ knowledge/ ir/` — content footprint of the release. **Any new file under `specs/` or `knowledge/`, and any single-file change above ~50 lines, is presumed user-facing and MUST be reflected in the release notes regardless of which PR introduced it.** If a 600-line `specs/45_<area>.md` lands and you cannot find a matching bullet in your draft, the draft is wrong — go back to the diff.
+- `git log --merges --pretty='format:%H %s' <prev_tag>..HEAD` — merge commits between the previous tag and HEAD. Each merge usually corresponds to a PR. Use the list to attribute the diff above to specific PRs, NOT to decide what to include — inclusion is driven by the diff.
+- For each merge line, run `gh pr view N --json title,body,number,labels,closingIssuesReferences`. **You may not classify a PR as housekeeping based on its title alone — every PR in the range gets its body read.** The 2026-05-11 release regen (Worldsmith 2026.04) shipped notes that omitted a 627-line new `specs/45_raycaster_renderer.md` plus four new `knowledge/raycaster_*.md` files because the eight PRs that introduced them had opaque agent-intake titles and were classified as housekeeping without their bodies being opened.
+- For PR titles matching the pattern `agent: refresh from issue #<N>`: these are automatically generated for slices of agent-task–driven work (see `.github/workflows/agent-intake.yml`). The title carries no signal about content — the scope lives in the linked issue body. ALWAYS resolve `closingIssuesReferences` and run `gh issue view <N> --json title,body,labels` for each. The issue body has Goal / Scope / Acceptance criteria that describe the actual user-facing change.
 
 The previous tag comes via the `## Scope override` block at the top of this prompt (key `previous_tag`). If missing, use `git describe --tags --abbrev=0 HEAD^` as a fallback.
 
@@ -31,13 +35,27 @@ Answer: "what happened in this release, and why does the reader care". Plainspok
 
 ### `artifacts/release_whatsnew.md`
 
-A bulleted "What's new" list. One bullet per merged PR that ships user-facing or process-facing change. **Drop housekeeping/nit PRs that don't move gameplay, generation pipeline, or release process.** Format each bullet with a clickable PR link:
+A bulleted "What's new" list. One bullet per merged PR (or per grouped theme — see below) that ships user-facing or process-facing change. Format each bullet with a clickable PR link:
 
 ```
 - **[#NN](https://github.com/RuslanMingaliev/worldsmith/pull/NN) — Bold headline (4–8 words)** — One or two sentences expanding into concrete impact. Cite spec/section if applicable.
 ```
 
-Substitute the actual PR number into both the link text and the URL. Order bullets by impact, not chronology. If 6+ bullets remain after dropping nits, group into thematic sub-sections (`### Gameplay`, `### Pipeline`, `### Release process`).
+Substitute the actual PR number into both the link text and the URL. Order bullets by impact, not chronology. If 6+ bullets remain after grouping, organise into thematic sub-sections (`### Gameplay`, `### Renderer`, `### Pipeline`, `### Specs`, `### Release process`).
+
+**Dropping a PR ("housekeeping/nit") is a deliberate decision, not a default.** A PR is a drop candidate ONLY if all three hold:
+- Its body reads as pure infrastructure (CI tweak, dependency bump, formatting) AND
+- Its diff against `<prev_tag>..HEAD` touches NO `specs/`, `knowledge/`, or `ir/` files AND
+- Its body and linked-issue body contain no Goal / Scope / Acceptance-criteria sections.
+If any of the three fails, the PR is in. When in doubt, include it — the false-positive cost of one extra line in release notes is far smaller than the false-negative cost of hiding the release's headline (see the 2026.04 incident in "Inputs you should read").
+
+**Grouping rule for multi-slice agent-task series.** When ≥2 PRs in the range have titles of the form `agent: refresh from issue #N` AND their linked issues cross-reference each other (shared ADR, shared epic, sequential slice numbers, or the issue body explicitly says "slice K of M"), emit ONE thematic section bullet for the series rather than N separate bullets — but the bullet must list every contributing PR number and cite the umbrella issue / ADR. Example for a renderer migration shipped as six slices:
+
+```
+### Renderer
+
+- **First-person renderer (slices 1–6: [#39](https://github.com/RuslanMingaliev/worldsmith/pull/39), [#40](https://github.com/RuslanMingaliev/worldsmith/pull/40), [#47](https://github.com/RuslanMingaliev/worldsmith/pull/47), [#49](https://github.com/RuslanMingaliev/worldsmith/pull/49), [#50](https://github.com/RuslanMingaliev/worldsmith/pull/50), [#52](https://github.com/RuslanMingaliev/worldsmith/pull/52), [#53](https://github.com/RuslanMingaliev/worldsmith/pull/53), [#54](https://github.com/RuslanMingaliev/worldsmith/pull/54))** — Migration from top-down to first-person 3D rendering, specced in the new `specs/45_<area>.md` (627 lines) and grounded in four new `knowledge/<area>_*.md` files. Each slice landed an independent piece (geometry, vertical projection, sprites, HUD, effects, integration); see the umbrella issue for the full ADR.
+```
 
 ## Constraints
 
@@ -63,3 +81,4 @@ Substitute the actual PR number into both the link text and the URL. Order bulle
 - If git log between tags is empty: write a short hero saying "Patch release: <list of fixes>" and an empty whatsnew. Don't fabricate.
 - If `gh pr view` fails on a PR: include the PR number with `[title unavailable — see commit log]` rather than skipping silently.
 - If `artifacts/postmortem.md` is absent: skip its inputs; rely on PR bodies + spec diff alone. Don't fail the run.
+- **If after drafting whatsnew you cannot point every new file under `specs/` and `knowledge/` (from the mandatory `git diff --stat` walk) to at least one bullet that mentions it, the draft is incomplete. Loop: re-read the unattributed file, find the PRs that introduced it via `git log <prev_tag>..HEAD -- <path>`, open those PR bodies, write the missing bullet.** Do not ship a draft that elides new spec/knowledge content — that is the 2026.04 incident verbatim.
