@@ -3,22 +3,30 @@
 Compose release notes for the GitHub draft release.
 
 Reads `.github/release-notes.template.md`, fills placeholders from the
-generation manifest (token usage, post-mortem summary, asset list, build
-stats), then runs `check_sanitization.py` on the rendered output to ensure
-no source-game identifiers or secret-derived strings leak into a public
-release.
+generation manifest (token usage, cache totals, build stats, optional
+build-health caveat), then runs `check_sanitization.py` on the rendered
+output to ensure no source-game identifiers or secret-derived strings
+leak into a public release.
 
 Inputs:
-- --version          release version, e.g. `2026.02`
-- --template         path to the markdown template
-- --usage-jsonl      JSONL file written by orchestrator_run.py (one record per phase
-                       with at minimum: phase, input_tokens, output_tokens, cache_read,
-                       cache_creation, model)
-- --postmortem       path to artifacts/postmortem.md (sanitized post-mortem report)
-- --manifest         path to artifacts/manifest.json — written by the release workflow,
-                       contains module_count, loc, test_summary, rustc_version, generated_at
-- --assets-dir       directory containing the assets to enumerate in the asset table
-- --out              output path for the rendered release notes
+- --version             release version, e.g. `2026.04`
+- --template            path to the markdown template
+- --prev-version        previous release tag (substituted into the compare-view link)
+- --usage-jsonl         JSONL file written by orchestrator_run.py (one record per phase
+                          with at minimum: phase, input_tokens, output_tokens, cache_read,
+                          cache_creation, model)
+- --manifest            path to artifacts/manifest.json — module_count, loc, test_summary,
+                          rustc_version, generated_at
+- --release-hero        path to artifacts/release_hero.md (LLM-authored hero pitch)
+- --release-buildhealth path to artifacts/release_buildhealth.md (LLM-authored caveat
+                          paragraph; empty if no regression to flag)
+- --out                 output path for the rendered release notes
+
+The post-mortem is no longer embedded in the release notes — it ships as a
+separate release asset (`worldsmith-<version>-postmortem.md`) and the
+template's Read-it section links to it. The asset enumeration is also
+gone from the template — GitHub renders the asset list at the bottom of
+every release page natively.
 
 Exit codes:
     0 — success.
@@ -125,35 +133,23 @@ def render_tokens_table(rows: List[PhaseUsage]) -> str:
     return "\n".join([header, *body_lines])
 
 
-def render_asset_table(assets_dir: Path, version: str) -> str:
-    if not assets_dir.exists():
-        return "_(no assets enumerated)_"
-    files = sorted(p for p in assets_dir.iterdir() if p.is_file())
-    if not files:
-        return "_(no assets present)_"
-    rows = ["| File | Size |", "|---|---:|"]
-    for path in files:
-        size_kb = max(1, path.stat().st_size // 1024)
-        rows.append(f"| `{path.name}` | {size_kb:,} KB |")
-    return "\n".join(rows)
+def _format_token_count(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return f"{n:,}"
 
 
-def load_postmortem(path: Optional[Path]) -> str:
-    if path is None:
-        return "_Post-mortem report was not produced for this run._"
-    if not path.exists():
-        # Caller explicitly asked for this file. Refuse to silently substitute
-        # a placeholder — the post-mortem is required CI output per
-        # tooling/agents/postmortem.md § CI output target.
-        raise SystemExit(
-            f"compose_release_notes: --postmortem path does not exist: {path}"
-        )
-    text = path.read_text(encoding="utf-8").strip()
-    if not text:
-        raise SystemExit(
-            f"compose_release_notes: --postmortem file is empty: {path}"
-        )
-    return text
+def render_cache_totals(rows: List[PhaseUsage]) -> Dict[str, str]:
+    if not rows:
+        return {"CACHE_READ_TOTAL": "0", "CACHE_CREATION_TOTAL": "0"}
+    total_read = sum(r.cache_read for r in rows)
+    total_creation = sum(r.cache_creation for r in rows)
+    return {
+        "CACHE_READ_TOTAL": _format_token_count(total_read),
+        "CACHE_CREATION_TOTAL": _format_token_count(total_creation),
+    }
 
 
 def load_manifest(path: Optional[Path]) -> Dict[str, str]:
@@ -217,7 +213,6 @@ def parse_args() -> argparse.Namespace:
         help="Markdown template (default: .github/release-notes.template.md).",
     )
     parser.add_argument("--usage-jsonl", type=Path, default=None)
-    parser.add_argument("--postmortem", type=Path, default=None)
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument(
         "--prev-version",
@@ -233,18 +228,13 @@ def parse_args() -> argparse.Namespace:
              "{{HERO_PITCH}} falls back to a short generic line.",
     )
     parser.add_argument(
-        "--release-whatsnew",
+        "--release-buildhealth",
         type=Path,
         default=None,
-        help="Path to artifacts/release_whatsnew.md (LLM-authored what's-new bullets). "
-             "If absent, {{WHATSNEW_PROSE}} falls back to a generic note pointing at "
-             "the git log.",
-    )
-    parser.add_argument(
-        "--assets-dir",
-        type=Path,
-        required=True,
-        help="Directory containing the assets to be uploaded with the release.",
+        help="Path to artifacts/release_buildhealth.md (LLM-authored 1-paragraph caveat "
+             "naming any Reconciler-flagged coverage regression or other release-blocker "
+             "the operator should know about before publishing). If absent or empty, "
+             "{{BUILD_HEALTH_NOTE}} renders as empty (no caveat is the success case).",
     )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
@@ -273,14 +263,11 @@ def main() -> int:
             "in this draft before publishing.)_"
         ),
     )
-    whatsnew_prose = load_optional_markdown(
-        args.release_whatsnew,
-        fallback=(
-            "_(Release Editor agent did not produce a what's-new list — see the "
-            "merge commits in `git log` for the raw set of PRs since the previous "
-            "tag and write them up in this draft before publishing.)_"
-        ),
-    )
+    # Build-health note is empty by default — "clean run" is the success case
+    # and adds no caveat paragraph. The fallback is the empty string, NOT a
+    # placeholder marker, so the template's surrounding whitespace renders
+    # cleanly without a maintainer-edit prompt.
+    build_health_note = load_optional_markdown(args.release_buildhealth, fallback="")
     prev_version = args.prev_version or "_(previous tag)_"
 
     replacements = {
@@ -289,12 +276,11 @@ def main() -> int:
         "LOC": manifest["loc"],
         "TEST_SUMMARY": manifest["test_summary"],
         "RUSTC_VERSION": manifest["rustc_version"],
-        "ASSET_TABLE": render_asset_table(args.assets_dir, args.version),
         "TOKENS_TABLE": render_tokens_table(usage),
-        "POSTMORTEM_SUMMARY": load_postmortem(args.postmortem),
         "HERO_PITCH": hero_pitch,
-        "WHATSNEW_PROSE": whatsnew_prose,
+        "BUILD_HEALTH_NOTE": build_health_note,
         "PREV_VERSION": prev_version,
+        **render_cache_totals(usage),
     }
 
     rendered = render(template, args.version, replacements)

@@ -2,9 +2,17 @@
 
 ![Worldsmith {{VERSION}} gameplay](https://github.com/RuslanMingaliev/worldsmith/releases/download/{{VERSION}}/worldsmith-{{VERSION}}-gameplay.gif)
 
-## What's new since {{PREV_VERSION}}
+## How it was generated
 
-{{WHATSNEW_PROSE}}
+End-to-end on {{GENERATED_AT}} through the multi-agent pipeline: Architect drafts the per-module contracts, Coder writes the Rust, Reconciler reconciles code against specs, PostMortem audits the run, Release Editor authors these notes.
+
+{{TOKENS_TABLE}}
+
+Plus {{CACHE_READ_TOTAL}} cache reads / {{CACHE_CREATION_TOTAL}} cache creation — the inlined frozen-context prefix (specs + IR + shared contract) is shared across phases, so the second Architect / Coder / Reconciler call onward serves the prefix from cache instead of re-billing it.
+
+**Output: {{MODULE_COUNT}} modules, ~{{LOC}} lines of Rust.** Built with `{{RUSTC_VERSION}}`, edition 2024, single runtime dependency: `minifb` (window + framebuffer). {{TEST_SUMMARY}}.
+
+{{BUILD_HEALTH_NOTE}}
 
 ## Try it
 
@@ -27,22 +35,4 @@ This is a spec-driven game. The Rust code is regenerable; the **specs** are what
 - [`knowledge/`](https://github.com/RuslanMingaliev/worldsmith/tree/{{VERSION}}/knowledge) — sanitized findings extracted from reference material.
 - [`tooling/agents/`](https://github.com/RuslanMingaliev/worldsmith/tree/{{VERSION}}/tooling/agents) — the prompts that generated this code.
 - [`worldsmith-{{VERSION}}-postmortem.md`](https://github.com/RuslanMingaliev/worldsmith/releases/download/{{VERSION}}/worldsmith-{{VERSION}}-postmortem.md) — full agent-pipeline post-mortem: what worked, what hurt, what to fix next time.
-
-## Stats
-
-**{{MODULE_COUNT}} modules** · ~{{LOC}} lines of Rust · {{TEST_SUMMARY}} · `{{RUSTC_VERSION}}`, edition 2024 · single dependency: `minifb` (window + framebuffer).
-
-<details>
-<summary>Generation report (token usage, post-mortem highlights)</summary>
-
-Generated end-to-end from `specs/` on {{GENERATED_AT}} via the multi-agent pipeline (Architect contracts pass → Coder → Reconciler → PostMortem → Release Editor).
-
-### Token usage
-
-{{TOKENS_TABLE}}
-
-### Post-mortem summary
-
-{{POSTMORTEM_SUMMARY}}
-
-</details>
+- [Full PR-by-PR diff vs `{{PREV_VERSION}}`](https://github.com/RuslanMingaliev/worldsmith/compare/{{PREV_VERSION}}...{{VERSION}}).

@@ -302,7 +302,7 @@ jobs:
           mkdir -p release
           xvfb-run -a tooling/record_autopilot.sh tests/level/scavenge_run.yaml release/demo.gif
 
-      - name: Package src zip + demo GIF
+      - name: Package src zip + demo GIF + postmortem
         env:
           VERSION: ${{ inputs.version }}
         run: |
@@ -311,6 +311,16 @@ jobs:
           mv "artifacts/worldsmith-game-${VERSION}-src.zip" \
              "assets/worldsmith-game-${VERSION}-src.zip"
           cp release/demo.gif "assets/worldsmith-${VERSION}-gameplay.gif"
+          # The release-notes template's Read-it section links to
+          # worldsmith-<VERSION>-postmortem.md as a release asset.
+          # PostMortem agent always writes artifacts/postmortem.md per
+          # tooling/agents/postmortem.md § CI output target; copy it
+          # into assets/ so the link resolves at /releases/download/<tag>/...
+          if [ -f artifacts/postmortem.md ]; then
+            cp artifacts/postmortem.md "assets/worldsmith-${VERSION}-postmortem.md"
+          else
+            echo "::warning::artifacts/postmortem.md missing; postmortem asset will not ship."
+          fi
 
       - name: Build manifest
         run: |
@@ -384,11 +394,9 @@ jobs:
             --version "$VERSION" \
             --prev-version "${PREV_TAG:-unknown}" \
             --usage-jsonl artifacts/usage.jsonl \
-            --postmortem artifacts/postmortem.md \
             --manifest artifacts/manifest.json \
             --release-hero artifacts/release_hero.md \
-            --release-whatsnew artifacts/release_whatsnew.md \
-            --assets-dir assets \
+            --release-buildhealth artifacts/release_buildhealth.md \
             --out artifacts/release-notes.md
 
       - name: Upload release assets bundle
