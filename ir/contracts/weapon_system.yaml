@@ -57,14 +57,23 @@ public_methods:
       gate `if player.ammo == 0 { return; }` -- no side effects, no
       time_since_fire reset, (3) reset time_since_fire and aim, (4)
       all spawn/march/damage steps, (5) ammo -= 1.
-  - signature: "pub fn pistol_damage_roll() -> i32"
+  - signature: "pub fn pistol_damage_roll(rng: &mut u64) -> i32"
     notes: |
       Returns one of {5, 10, 15} uniformly at random per the
       formula 5 * (rand(0..3) + 1) (specs/25 § Damage Randomization).
-      Public so unit tests in the same module can verify the
-      distribution; if no caller outside the module exists at
-      end-of-run, Reconciler should flag and Coder may downgrade
-      to private.
+      Takes the RNG state by `&mut` so the function is pure w.r.t.
+      shared mutable state (no `static mut`, no `unsafe` — spec/80
+      § Safety). The fire site reads/writes through
+      `&mut player.weapon_rng`. Public so unit tests in the same
+      module can verify the distribution; the test calls it with
+      a locally-owned `u64` seed.
+
+      Signature updated 2026-05-12 Reconciler pass — the prior
+      contract pinned `pub fn pistol_damage_roll() -> i32` (no args)
+      which conflicted with this shard's own notes ("RNG state lives
+      on Player... fire() advances it through the existing &mut Player
+      borrow"). The Coder shipped the &mut u64 form to honor the notes,
+      flagged it as a deviation. The contract is now corrected to match.
 cross_module_borrows:
   - "&mut Player (write health via take_damage path; reset time_since_fire)"
   - "&mut [Enemy] (apply damage)"

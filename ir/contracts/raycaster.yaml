@@ -69,10 +69,13 @@ public_constants:
       type: f32,
       value: "0.1",
       source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (knowledge-backed mechanism: knowledge/raycaster_sprites.md § World → Camera-Space Transform — MINZ; value is generation default in that spirit, scaled to tile units)" }
-  - { name: RAYCASTER_SPRITE_SIDE_CONE_FACTOR,
-      type: f32,
-      value: "4.0",
-      source: "specs/25 § Renderer (Raycaster) / Sprites and Billboards (knowledge-backed: knowledge/raycaster_sprites.md § World → Camera-Space Transform — Side-cone reject)" }
+  # RAYCASTER_SPRITE_SIDE_CONE_FACTOR removed from raycaster.rs 2026-05-12
+  # Coder pass — the Coder picked the always-clip form (no early-out),
+  # and an unused `pub const` fails `-D warnings`. Behavior is
+  # correctness-equivalent to the side-cone fast path. Reintroduce as
+  # a public constant when an early-out optimization materializes. See
+  # specs/25 § Renderer (Raycaster) / Sprites and Billboards.
+  # - { name: RAYCASTER_SPRITE_SIDE_CONE_FACTOR, ... }
   - { name: RAYCASTER_SPRITE_DEPTH_FADE_FACTOR,
       type: f32,
       value: "0.7",
@@ -99,10 +102,13 @@ public_constants:
       type: i32,
       value: "24",
       source: "specs/25 § Renderer (Raycaster) / First-Person Effects (Generation default — sized larger than topdown MUZZLE_FLASH_RADIUS = 6 because the raycaster overlay is screen-space at the gun anchor, not world-space at the player position)" }
-  - { name: RAYCASTER_TRACER_THICKNESS_PX,
-      type: i32,
-      value: "1",
-      source: "specs/25 § Renderer (Raycaster) / First-Person Effects (Generation default — knowledge has no tracer in the reference; we keep one for visual parity with the topdown TRACER_THICKNESS = 1, deliberate generation-default deviation per specs/45 § Generation Default Deviation: Tracer Line)" }
+  # RAYCASTER_TRACER_THICKNESS_PX removed from raycaster.rs 2026-05-12
+  # Coder pass — the tracer is drawn as a single-pixel line in
+  # raycaster::draw (no thickness parameter), and an unused `pub const`
+  # fails `-D warnings`. Behavior matches the prior constant value (1 px).
+  # Reintroduce as a public constant when a thicker tracer style is
+  # implemented. See specs/25 § Renderer (Raycaster) / First-Person Effects.
+  # - { name: RAYCASTER_TRACER_THICKNESS_PX, ... }
   - { name: RAYCASTER_PUFF_FULL_BRIGHT_FRACTION,
       type: f32,
       value: "0.5",
@@ -340,12 +346,11 @@ public_methods:
            to the right half of the screen" still holds; only the
            formula deriving the signed value changes.
            Reject if forward_dist < RAYCASTER_SPRITE_NEAR_PLANE.
-           Coder MAY also reject if
-             |right_offset| > RAYCASTER_SPRITE_SIDE_CONE_FACTOR
-                               * forward_dist
-           as an early-out (correctness-equivalent to always-clip --
-           specs/45 § Camera-Space Transform side-cone-reject is
-           "optional fast path").
+           The side-cone early-out fast-path was previously gated by
+           RAYCASTER_SPRITE_SIDE_CONE_FACTOR; that constant was removed
+           2026-05-12 (see public_constants block above) and the always-
+           clip form is correctness-equivalent. Reintroduce the constant
+           if the early-out becomes worth the API surface.
         c. Sort the surviving candidates by forward_dist DESCENDING
            (= xscale ascending; farthest first). Specs/45 § Sort Order;
            knowledge § Sort Order: Back-to-Front. Sort algorithm is a
@@ -468,9 +473,11 @@ public_methods:
           #       framebuffer[y as usize * WINDOW_WIDTH + x as usize]
           #         = COLOR_TRACER;
           # Strict-less-than at depth==wall_depth, matching Pass 2's
-          # convention. RAYCASTER_TRACER_THICKNESS_PX = 1 in slice 3
-          # so the inner loop draws a single-pixel line; wider would
-          # require an N-pixel thickening pass per column.
+          # convention. The slice-3 tracer is a single-pixel line (the
+          # prior RAYCASTER_TRACER_THICKNESS_PX = 1 constant was removed
+          # 2026-05-12 because no in-crate caller referenced it); a
+          # thicker style would require an N-pixel thickening pass per
+          # column.
           # No distance attenuation, no extra-light bias modulation.
 
       Layer 4 -- muzzle flash overlay (specs/45 § Muzzle Flash
@@ -681,9 +688,11 @@ notes: |
       per-frame Vec). The per-frame allocation invariant (specs/45
       § Invariants) eliminates per-call Vec::new(); the other two
       shapes both meet the contract.
-    - Whether the side-cone early-out (RAYCASTER_SPRITE_SIDE_CONE_FACTOR)
-      is applied or skipped in favor of always running the screen-x
-      clip. Both are correctness-equivalent.
+    - Whether a side-cone early-out is applied or skipped in favor of
+      always running the screen-x clip. Both are correctness-equivalent.
+      The prior contract pinned a RAYCASTER_SPRITE_SIDE_CONE_FACTOR
+      public constant; it was removed 2026-05-12 because the always-clip
+      shape needs no constant. Reintroduce when the fast path materializes.
     - (Slice 3) Single iteration over fx.effects to partition
       candidates by kind (sprite-pass items + tracer list +
       firing_active flag), vs. three separate iterations. The
