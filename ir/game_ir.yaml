@@ -58,16 +58,10 @@ level:
 rendering:
   complexity: minimal
 
-simplifications:
-  # Removed: enemy_attack_is_contact_not_hitscan — replaced by ranged hitscan in the 2026-05-13 combat slice (specs/25 § Enemy Implemented; specs/20 § Enemy state machine)
-  # Removed: enemy_ai_simplified_no_attack_state — Attack state added in the 2026-05-13 combat slice (ir/contracts/enemy_logic.yaml § EnemyState)
-  # Removed: enemy_detection_is_immediate_no_los — LoS-gated detection added in the 2026-05-13 combat slice (specs/25 § Enemy Implemented; specs/20 § Enemy)
-  # Removed: weapon_spread_approximated_not_triangular — triangular spread (rand-rand) is now implemented
-  # Removed: player_movement_direct_not_momentum — thrust+friction momentum model is now implemented
-  - enemy_ranged_fire_no_distance_probability_check  # specs/25 § Enemy § Deferred from knowledge — knowledge has a `random(0..255) < distance_with_modifiers` gate that suppresses some firings at long range; the prototype always fires when LoS, range, and cooldown all hold
-  - enemy_no_double_attack_direction_switch_omitted   # specs/25 § Enemy § Deferred from knowledge — direction-switch on post-attack is not implemented (the cooldown gate `time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC` provides the no-double-attack timing, but the direction switch is cosmetic)
-  - enemy_movement_smooth_slide_not_8_directional_grid # specs/25 § Enemy § Deferred from knowledge — smooth axis-aligned slide instead of the reference's 8-direction grid
-  - enemy_drop_full_amount_no_dropped_flag            # specs/60 § Enemy Ammo Drops + specs/25 § Enemy § Deferred from knowledge — single-amount ammo pickup, half-clip "dropped" flag deferred
+# simplifications: moved to `ir/simplifications.yaml` so per-slice
+# Architect bookkeeping does not invalidate the FROZEN_CONTEXT_FILES
+# prompt cache (this file IS frozen-context; the simplifications list
+# is not consumed by any code generator and does not need to be).
 
 generation:
   mode: incremental_preferred
