@@ -423,7 +423,7 @@ spec_conflicts_resolved:
       No conflict.
     resolution: "Use formula 5 * (random(0..3) + 1) -> {5, 10, 15}."
   - issue: |
-      ir/game_ir.yaml describes simplifications ("enemy_detection_is_immediate
+      ir/simplifications.yaml describes simplifications ("enemy_detection_is_immediate
       _no_los", "weapon_spread_approximated_not_triangular"). Spec/25
       describes the implemented (simplified) constants AND the target
       (deferred) constants. Spec/25 takes precedence per CLAUDE.md

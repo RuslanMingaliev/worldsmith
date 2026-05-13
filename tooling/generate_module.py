@@ -33,6 +33,7 @@ GLOBAL_CONTEXT_FILES = [
     REPO_ROOT / "specs" / "10_system_model.md",
     REPO_ROOT / "specs" / "80_generation_rules.md",
     REPO_ROOT / "ir" / "game_ir.yaml",
+    REPO_ROOT / "ir" / "simplifications.yaml",
 ]
 
 # File heuristics for each module. Extend as specs/knowledge grow.

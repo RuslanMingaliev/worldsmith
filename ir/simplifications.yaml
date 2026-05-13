@@ -1,0 +1,45 @@
+# Target-vs-as-is deltas: prototype shortcuts taken relative to the
+# target shape described in `ir/game_ir.yaml` and `knowledge/`.
+#
+# Each entry is a stable identifier-style token naming one simplification
+# the current generated game makes against the reference / target. The
+# list is narrative — agents and humans read it; no code generator
+# consumes it programmatically (greps in `tooling/` confirm: only prose
+# references in `tooling/agents/coder.md` and `ir/contracts/_shared.yaml`).
+#
+# Lifecycle:
+#   - Architect adds an entry when documenting a NEW deferral against
+#     the target.
+#   - Architect removes an entry (replacing it with a `# Removed: ...`
+#     comment line that names the slice/PR that closed the gap) when
+#     the as-is state catches up to the target.
+#   - Reconciler may flip an entry to a `# Removed:` comment as part
+#     of its drift-capture pass.
+#
+# This file lives outside `ir/game_ir.yaml` deliberately. `game_ir.yaml`
+# is in `tooling/orchestrator_run.py § FROZEN_CONTEXT_FILES` — every
+# Coder/Reconciler invocation inlines it verbatim into the prompt
+# cache key, so a one-line edit invalidates the cache for ALL 14
+# modules. The simplifications list is bookkeeping prose that the
+# Coder does not consume; pinning it to the cache key forces partial-
+# scope PRs (where a slice touches only 1-2 modules) into full 14-
+# module regens. Splitting it out keeps Architect's bookkeeping cheap
+# without losing the historical record.
+#
+# `partial_regen.py § global` triggers and `FROZEN_CONTEXT_FILES`
+# must NOT list this file — that's the whole point. The
+# pre-Architect read path is unchanged: `tooling/generate_module.py`
+# still inlines `ir/game_ir.yaml` for full-module generation context,
+# and Architect/Coder Read this file via tool call when they need
+# the current deferral list.
+
+simplifications:
+  # Removed: enemy_attack_is_contact_not_hitscan — replaced by ranged hitscan in the 2026-05-13 combat slice (specs/25 § Enemy Implemented; specs/20 § Enemy state machine)
+  # Removed: enemy_ai_simplified_no_attack_state — Attack state added in the 2026-05-13 combat slice (ir/contracts/enemy_logic.yaml § EnemyState)
+  # Removed: enemy_detection_is_immediate_no_los — LoS-gated detection added in the 2026-05-13 combat slice (specs/25 § Enemy Implemented; specs/20 § Enemy)
+  # Removed: weapon_spread_approximated_not_triangular — triangular spread (rand-rand) is now implemented
+  # Removed: player_movement_direct_not_momentum — thrust+friction momentum model is now implemented
+  - enemy_ranged_fire_no_distance_probability_check  # specs/25 § Enemy § Deferred from knowledge — knowledge has a `random(0..255) < distance_with_modifiers` gate that suppresses some firings at long range; the prototype always fires when LoS, range, and cooldown all hold
+  - enemy_no_double_attack_direction_switch_omitted   # specs/25 § Enemy § Deferred from knowledge — direction-switch on post-attack is not implemented (the cooldown gate `time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC` provides the no-double-attack timing, but the direction switch is cosmetic)
+  - enemy_movement_smooth_slide_not_8_directional_grid # specs/25 § Enemy § Deferred from knowledge — smooth axis-aligned slide instead of the reference's 8-direction grid
+  - enemy_drop_full_amount_no_dropped_flag            # specs/60 § Enemy Ammo Drops + specs/25 § Enemy § Deferred from knowledge — single-amount ammo pickup, half-clip "dropped" flag deferred
