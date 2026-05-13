@@ -5,13 +5,46 @@ name: enemy_logic
 file: src/enemy_logic.rs
 depends_on: [level_data, player_state, visual_effects]
 public_types:
+  - name: Archetype
+    note: "Defined in level_data; see shared_types.Archetype (home_module: level_data). Imported by enemy_logic as `use crate::level_data::Archetype;` and stored as `Enemy.archetype`."
+  - name: ArchetypeStats
+    definition: |
+      #[derive(Clone, Copy, Debug)]
+      pub struct ArchetypeStats {
+          pub max_health: i32,
+          pub pain_chance: f32,        // 0.0..=1.0
+          pub pellet_count: u32,       // pellets per Attack salvo (1 for basic; 3 for shotgun)
+          pub attack_sequence_sec: f32,
+      }
+    notes: |
+      Per-archetype constants looked up via `archetype_stats(a)` below.
+      Only the fields that genuinely vary across the slice-2 archetypes
+      live here. Shared values (speed, radius, reaction delay, attack
+      range, attack spread, attack windup, attack damage values, pain
+      duration) remain module-level constants because every current
+      and near-future hitscan-class archetype shares them; promoting
+      them to `ArchetypeStats` would just add fields no archetype
+      varies. When a future archetype DOES vary one (e.g. the
+      rapid-hitscan trooper's tighter cadence), promote that field
+      from module-level to ArchetypeStats and update every existing
+      `ArchetypeStats` row. See `coder_degrees_of_freedom` below for
+      latitude on the struct's field order and any helper accessors.
+
+      `ArchetypeStats` is **module-private** to enemy_logic (no `pub`
+      on the struct or the per-archetype const tables). External
+      modules carry the `Archetype` enum (defined in level_data) and
+      construct enemies via `Enemy::new(spawn, archetype)`; they do
+      not read per-archetype constants directly. The `archetype_stats`
+      lookup function is also module-private. This keeps spec/80 §
+      API Surface "no dead pub exports" satisfied — no released
+      symbol exists without an in-crate consumer outside enemy_logic.
   - name: EnemyState
     definition: |
       #[derive(Clone, Copy, Debug, PartialEq)]
       pub enum EnemyState {
           Idle,    // pre-reaction-delay
           Chase,   // moving toward player
-          Attack,  // stationary windup → fire (hitscan) → cooldown
+          Attack,  // stationary windup → fire (hitscan salvo) → cooldown
           Pain,    // briefly stunned
           Dead,    // health <= 0; corpse fade in progress or done
       }
@@ -23,53 +56,101 @@ public_types:
       Pain expiry the trooper returns to Chase, not Attack — knowledge
       `enemy_types.md § Chase Behavior` says the reaction routine
       re-evaluates whether to fire on the next Chase frame.
+
+      Attack's "fire" sub-step in the 2026-05-13 combat-slice-2 commit
+      is a 1-to-N pellet loop (N = archetype's pellet_count). The
+      state machine itself is identical between archetypes; only the
+      pellet-loop iteration count, the sequence duration, the max
+      health, and the pain chance differ.
   - name: Enemy
     definition: |
       pub struct Enemy {
           pub pos: Vec2,
+          pub archetype: Archetype,
           pub health: i32,
           pub alive: bool,
           pub state: EnemyState,
           pub time_in_state: f32,    // seconds since entering current state
           pub pain_flash_remaining: f32,  // 0.0 = no flash; counts down each tick
           pub time_since_attack: f32,     // seconds since last Attack-state entry (cooldown gate)
-          pub attack_fired_this_sequence: bool,  // set true inside Attack once the hitscan fires; reset to false on Attack→Chase transition (or Attack-state re-entry)
+          pub attack_fired_this_sequence: bool,  // set true inside Attack once the salvo fires (one latch per salvo, not per pellet); reset to false on Attack→Chase transition (or Attack-state re-entry)
           pub death_fade_remaining: f32,  // > 0 while in death fade; 0 when corpse should spawn
           pub corpse_spawned: bool,       // true once spawn_enemy_corpse has fired
           pub ammo_drop_spawned: bool,    // true once game_loop has pushed the death-time ammo Pickup; gates one-per-trooper drop (specs/60 § Enemy Ammo Drops)
       }
     notes: |
+      `archetype` is the immutable per-entity tag carried over from the
+      level's `EnemySpawn` record at construction. Read by `update`
+      (Attack arm — pellet count and sequence duration), `take_damage`
+      (pain chance), and Enemy::new (max health initial value). NOT
+      mutated after construction.
+
       `attack_fired_this_sequence` is the in-state latch that
-      guarantees exactly one hitscan per Attack sequence even though
-      `update()` may tick many times during the sequence. `ammo_drop_spawned`
-      is the equivalent latch for the death-time drop spawn — game_loop
-      reads it in the frame_update_order drop scan and flips it true
-      after pushing the Pickup.
+      guarantees exactly one salvo (not one pellet, not multiple
+      salvos) per Attack-state entry even though `update()` may tick
+      many times during the sequence. For the basic trooper (`pellet_count = 1`)
+      this is "one hitscan per Attack"; for the shotgun trooper
+      (`pellet_count = 3`) it is "one salvo of 3 hitscans per Attack".
+      The pellet loop runs synchronously inside the same tick that
+      crosses the wind-up boundary, so the latch flips exactly once
+      per salvo regardless of pellet count.
+
+      `ammo_drop_spawned` is the equivalent latch for the death-time
+      drop spawn — game_loop reads it in the frame_update_order drop
+      scan and flips it true after pushing the Pickup. Both archetypes
+      drop the same ammo clip in this slice (specs/25 § Enemy §
+      Drop-on-death (both archetypes)); the shotgun-weapon drop the
+      reference uses for the shotgun trooper is deferred until a
+      second weapon ships.
 public_constants:
-  - { name: ENEMY_MAX_HEALTH,         type: i32, value: "20",     source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Enemy Health Tiers)" }
-  - { name: ENEMY_SPEED_TILES_PER_SEC,type: f32, value: "2.0",    source: "specs/25 § Enemy (Generation default — knowledge-derived but rescaled to tile units)" }
-  - { name: ENEMY_RADIUS_TILES,       type: f32, value: "0.375",  source: "specs/25 § Visual (12 px / 32 px) -- used for hit detection by weapon_system and by the trooper's chase-movement collision" }
-  - { name: ENEMY_REACTION_DELAY,     type: f32, value: "0.23",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § Detection and Alerting, 8 ticks @ 35Hz)" }
-  - { name: ENEMY_PAIN_DURATION,      type: f32, value: "0.17",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § State Machine, 6 ticks @ 35Hz)" }
-  - { name: ENEMY_PAIN_CHANCE,        type: f32, value: "0.78",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § Pain System, 200/256)" }
-  - { name: ENEMY_CONTACT_RANGE_TILES,type: f32, value: "0.8125", source: "specs/25 § Enemy (player 14 + enemy 12 px = 26 px / 32 px). Retained as a derived constant — referenced by autopilot kite buffer (BOT_KITE_RANGE) and by the RangedStandoff demo-level rationale (specs/15). The Attack state replaces contact damage as the trooper's primary harm vector; specs/25 § Enemy § Deferred from knowledge tracks the melee-contact deferral." }
-  - { name: ENEMY_ATTACK_RANGE_TILES, type: f32, value: "64.0",   source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Range and Hit Detection, 2048 world units / 32 px per tile)" }
-  - { name: ENEMY_ATTACK_SPREAD_RAD,  type: f32, value: "0.3839", source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Accuracy and Spread, 22° each side; 22 * π / 180 ≈ 0.3839)" }
-  - { name: ENEMY_ATTACK_SEQUENCE_SEC,type: f32, value: "0.74",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § State Machine, 26 ticks @ 35Hz). Replaces the prior ENEMY_ATTACK_COOLDOWN constant — the contact-damage cooldown is retired; this is the full Attack-state duration (wind-up + fire + cooldown sub-phases)." }
-  - { name: ENEMY_ATTACK_WINDUP_SEC,  type: f32, value: "0.286",  source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § State Machine, 10-tick wind-up @ 35Hz). Time-in-Attack-state at which the hitscan trace fires; before this elapses the trooper is facing the target but has not yet released the shot." }
-  - { name: ENEMY_ATTACK_DAMAGE_VALUES, type: "[i32; 5]", value: "[3, 6, 9, 12, 15]", source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Hitscan Damage Formula, `((rnd%5) + 1) * 3`)" }
+  # Shared constants (both archetypes). Per-archetype values
+  # (max_health, pain_chance, pellet_count, attack_sequence_sec)
+  # are module-private and live in `ArchetypeStats` (see below).
+  - { name: ENEMY_SPEED_TILES_PER_SEC,type: f32, value: "2.0",    source: "specs/25 § Enemy (Generation default — knowledge-derived but rescaled to tile units). Identical between archetypes per the slice-2 scope ('speed identical to basic trooper'); knowledge's chase-cycle cadence variance is deferred." }
+  - { name: ENEMY_RADIUS_TILES,       type: f32, value: "0.375",  source: "specs/25 § Visual (12 px / 32 px). Identical between archetypes per knowledge/enemy_types.md § Enemy Constants Summary (both rows have radius=20 map units). Used for hit detection by weapon_system and by the trooper's chase-movement collision." }
+  - { name: ENEMY_REACTION_DELAY,     type: f32, value: "0.23",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § Detection and Alerting, 8 ticks @ 35Hz). Both archetypes share the 8-tick reference value." }
+  - { name: ENEMY_PAIN_DURATION,      type: f32, value: "0.17",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § State Machine, 6 ticks @ 35Hz). Both archetypes share the 6-tick pain." }
+  - { name: ENEMY_CONTACT_RANGE_TILES,type: f32, value: "0.8125", source: "specs/25 § Enemy (player 14 + enemy 12 px = 26 px / 32 px). Retained as a derived constant — referenced by autopilot kite buffer (BOT_KITE_RANGE) and by the RangedStandoff / ShotgunStandoff demo-level rationales (specs/15). The Attack state replaces contact damage as the trooper's primary harm vector; specs/25 § Enemy § Deferred from knowledge tracks the melee-contact deferral. Archetype-agnostic because both archetypes share radius." }
+  - { name: ENEMY_ATTACK_RANGE_TILES, type: f32, value: "64.0",   source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Range and Hit Detection, 2048 world units / 32 px per tile). Both archetypes share MISSILERANGE." }
+  - { name: ENEMY_ATTACK_SPREAD_RAD,  type: f32, value: "0.3839", source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Accuracy and Spread, 22° each side; 22 * π / 180 ≈ 0.3839). Both archetypes share the same per-pellet horizontal spread shift (20 in the reference's fixed-point angle units); the shotgun's salvo applies this spread independently per pellet (knowledge § Shotgun Variant)." }
+  - { name: ENEMY_ATTACK_WINDUP_SEC,  type: f32, value: "0.286",  source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § State Machine, 10-tick wind-up @ 35Hz). Time-in-Attack-state at which the hitscan salvo fires; before this elapses the trooper is facing the target but has not yet released the shot. Identical between archetypes per knowledge § Shotgun Variant ('10 + 10 + 10 = 30 ticks: face-wind-up / fire-frame / cooldown') — both archetypes' attack cycles begin with a 10-tick wind-up; only the total sequence length differs." }
+  - { name: ENEMY_ATTACK_DAMAGE_VALUES, type: "[i32; 5]", value: "[3, 6, 9, 12, 15]", source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Hitscan Damage Formula, `((rnd%5) + 1) * 3`). Identical between archetypes — the shotgun trooper's per-pellet damage roll uses the same formula (knowledge § Shotgun Variant: 'damage `(rnd % 5 + 1) * 3` = one of {3, 6, 9, 12, 15}')." }
+# Module-private per-archetype constants (NOT pub, NOT exported):
+# pub(crate) const BASIC_TROOPER_STATS: ArchetypeStats = ArchetypeStats {
+#     max_health: 20,
+#     pain_chance: 0.78,                    // 200/256 rounded to 0.78 for byte-identical replay with slice 1
+#     pellet_count: 1,
+#     attack_sequence_sec: 0.74,            // 26 ticks @ 35Hz
+# };
+# pub(crate) const SHOTGUN_TROOPER_STATS: ArchetypeStats = ArchetypeStats {
+#     max_health: 30,
+#     pain_chance: 170.0 / 256.0,           // ≈ 0.664; expressed as the exact ratio per knowledge § Pain System
+#     pellet_count: 3,
+#     attack_sequence_sec: 30.0 / 35.0,     // 30 ticks @ 35Hz (knowledge § Shotgun Variant)
+# };
+# Listed here as a comment because the Coder owns the field order and
+# any helper accessors per coder_degrees_of_freedom; the values above
+# are knowledge-backed and pinned.
 public_methods:
-  - signature: "pub fn new(spawn: Vec2) -> Enemy"
+  - signature: "pub fn new(spawn: Vec2, archetype: Archetype) -> Enemy"
     notes: |
-      health = ENEMY_MAX_HEALTH, alive = true, state = Idle,
-      time_in_state = 0.0, pain_flash_remaining = 0.0,
-      time_since_attack = ENEMY_ATTACK_SEQUENCE_SEC (so the *first*
+      let stats = archetype_stats(archetype);
+      health = stats.max_health, archetype = archetype, alive = true,
+      state = Idle, time_in_state = 0.0, pain_flash_remaining = 0.0,
+      time_since_attack = stats.attack_sequence_sec (so the *first*
       attack can fire immediately after the reaction delay — the
-      cooldown gate `time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC`
-      is satisfied at spawn),
+      cooldown gate `time_since_attack >= stats.attack_sequence_sec`
+      is satisfied at spawn). This per-archetype initialization
+      means each archetype's first-Attack timing is determined by
+      its own sequence length, not a hardcoded constant.
       attack_fired_this_sequence = false,
       death_fade_remaining = 0.0, corpse_spawned = false,
       ammo_drop_spawned = false.
+
+      Called from game_loop::new via
+        `level.enemy_spawns.iter().map(|s| Enemy::new(s.pos, s.archetype)).collect()`
+      where `EnemySpawn` is the level_data record carrying both
+      position and archetype (see ir/contracts/level_data.yaml).
   - signature: |
       pub fn update(
           enemy: &mut Enemy,
@@ -80,7 +161,8 @@ public_methods:
       )
     notes: |
       Per-frame AI tick. Order:
-        1. enemy.time_in_state += dt; enemy.time_since_attack += dt;
+        1. let stats = archetype_stats(enemy.archetype);  // per-archetype lookup once per tick
+           enemy.time_in_state += dt; enemy.time_since_attack += dt;
            enemy.pain_flash_remaining = (pain_flash_remaining - dt)
                                         .max(0.0).
         2. Match on enemy.state:
@@ -96,7 +178,7 @@ public_methods:
                  probability):
                    if dist <= ENEMY_ATTACK_RANGE_TILES
                       AND enemy_has_los(enemy.pos, player.pos, level)
-                      AND time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC:
+                      AND time_since_attack >= stats.attack_sequence_sec:
                      enemy.state = Attack;
                      enemy.time_in_state = 0.0;
                      enemy.time_since_attack = 0.0;
@@ -114,29 +196,57 @@ public_methods:
                - // Stationary; no movement this tick.
                - if !enemy.attack_fired_this_sequence
                     AND enemy.time_in_state >= ENEMY_ATTACK_WINDUP_SEC:
-                   // Fire the hitscan trace.
+                   // Fire the hitscan salvo (specs/25 § Pellet-loop
+                   // salvo behavior + knowledge/enemy_types.md § Shotgun
+                   // Variant). Compute the base aim ONCE before the
+                   // pellet loop — all pellets in the salvo share this
+                   // base angle; per-pellet variance comes from
+                   // independent spread + damage rolls only.
                    let aim = angle_to(player.pos, enemy.pos);
-                   let spread = (rand_f32() - rand_f32())
-                                 * ENEMY_ATTACK_SPREAD_RAD;
-                   let aim_angle = aim + spread;
-                   let damage_idx = (rand_u32() % 5) as usize;
-                   let dmg = ENEMY_ATTACK_DAMAGE_VALUES[damage_idx];
-                   // Ray-march from enemy.pos along aim_angle up to
-                   // ENEMY_ATTACK_RANGE_TILES in TRACE_STEP-sized
-                   // steps (TRACE_STEP from weapon_system; Coder may
-                   // import or duplicate the 0.1-tile literal —
-                   // either is acceptable, see coder_degrees_of_freedom).
-                   //   If a step lands within PLAYER_RADIUS_TILES of
-                   //   player.pos (and the player is alive): call
-                   //   player_state::take_damage(player, dmg),
-                   //   visual_effects::spawn_blood_splat(fx, player.pos),
-                   //   stop the ray.
-                   //   Else if level::is_wall at the step: call
-                   //   visual_effects::spawn_wall_puff(fx, step_pos),
-                   //   stop the ray.
-                   //   Else if range exceeded: stop the ray. No impact
-                   //   effect (specs/40 § Impact Effect Rules: "a trace
-                   //   that hits nothing produces no impact effect").
+                   for _ in 0..stats.pellet_count {
+                       let spread = (rand_f32() - rand_f32())
+                                     * ENEMY_ATTACK_SPREAD_RAD;
+                       let aim_angle = aim + spread;
+                       let damage_idx = (rand_u32() % 5) as usize;
+                       let dmg = ENEMY_ATTACK_DAMAGE_VALUES[damage_idx];
+                       // Ray-march from enemy.pos along aim_angle up to
+                       // ENEMY_ATTACK_RANGE_TILES in TRACE_STEP-sized
+                       // steps (TRACE_STEP from weapon_system; Coder may
+                       // import or duplicate the 0.1-tile literal —
+                       // either is acceptable, see coder_degrees_of_freedom).
+                       //   If a step lands within PLAYER_RADIUS_TILES of
+                       //   player.pos (and the player is alive): call
+                       //   player_state::take_damage(player, dmg),
+                       //   visual_effects::spawn_blood_splat(fx, player.pos),
+                       //   stop THIS pellet's ray (the next pellet
+                       //   starts fresh from enemy.pos).
+                       //   Else if level::is_wall at the step: call
+                       //   visual_effects::spawn_wall_puff(fx, step_pos),
+                       //   stop this pellet's ray.
+                       //   Else if range exceeded: stop this pellet's
+                       //   ray. No impact effect (specs/40 § Impact
+                       //   Effect Rules: "a trace that hits nothing
+                       //   produces no impact effect").
+                   }
+                   // Pellet independence (knowledge § Shotgun Variant):
+                   //   a pellet that hits the player does NOT stop
+                   //   subsequent pellets in the same salvo — each
+                   //   pellet starts fresh from enemy.pos along its
+                   //   own (aim + spread) ray. A pellet blocked by
+                   //   a wall stops only itself. The basic trooper
+                   //   (pellet_count = 1) is the degenerate single-
+                   //   iteration case; the shotgun trooper
+                   //   (pellet_count = 3) emits 3 traces sharing
+                   //   `aim`. All pellets land within the same
+                   //   simulation tick — no per-pellet delay.
+                   //
+                   // RNG advancement: per pellet, the order is
+                   //   (rand_a_spread, rand_b_spread, rand_damage_idx).
+                   // For the basic trooper (1 pellet) this matches
+                   // slice-1 byte-identically. For the shotgun
+                   // trooper (3 pellets) the stream advances 9 rolls
+                   // per salvo (3 × spread_a + spread_b + damage_idx).
+                   //
                    // Note: the trooper's hitscan does NOT spawn a
                    //   muzzle_flash or tracer in this slice — the
                    //   visual-feedback constraints in the task scope
@@ -153,17 +263,21 @@ public_methods:
                    //   blood splats are kind-agnostic in specs/40 so
                    //   they reuse cleanly.
                    enemy.attack_fired_this_sequence = true;
-               - if enemy.time_in_state >= ENEMY_ATTACK_SEQUENCE_SEC:
+               - if enemy.time_in_state >= stats.attack_sequence_sec:
                    enemy.state = Chase;
                    enemy.time_in_state = 0.0;
                    enemy.attack_fired_this_sequence = false;
                    // time_since_attack continues to count from the
                    // Attack-state entry — Chase's gate above checks
-                   // time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC,
+                   // time_since_attack >= stats.attack_sequence_sec,
                    // so the trooper can re-enter Attack the next
                    // tick if LoS and range still hold (the cooldown
                    // is the sequence duration itself, exactly as the
                    // reference's no-double-attack flag enforces).
+                   // The cooldown is per-archetype: basic trooper
+                   // = 0.74s, shotgun trooper ≈ 0.857s, so the
+                   // shotgun trooper's salvo cadence is naturally
+                   // slower per knowledge § Shotgun Variant.
              Pain:
                - if time_in_state >= ENEMY_PAIN_DURATION:
                    transition to Chase (reset time_in_state = 0).
@@ -224,16 +338,26 @@ public_methods:
              // level.pickups because it does not hold the &mut Level
              // borrow. The Enemy.ammo_drop_spawned flag stays false
              // here and is flipped by the drop-scan after this tick.
-        4. else if rand_f32() < ENEMY_PAIN_CHANCE:
+             // Both archetypes drop the same ammo clip in this slice
+             // — the shotgun-weapon drop the reference uses for the
+             // shotgun trooper is deferred until a second weapon
+             // ships (specs/25 § Enemy § Drop-on-death (both
+             // archetypes)).
+        4. else if rand_f32() < archetype_stats(enemy.archetype).pain_chance:
              enemy.state = EnemyState::Pain;
              enemy.time_in_state = 0.0;
              enemy.pain_flash_remaining = ENEMY_PAIN_FLASH_DURATION;
              // Pain interrupts Attack at any point, including mid-
-             // sequence after the hitscan has already fired. The
+             // sequence after the salvo has already fired. The
              // attack_fired_this_sequence flag stays as-is — it is
              // overwritten on the next Attack-state entry.
              // spec/40 § Enemy Pain Flash: re-arm flash on every
              // *successful* pain check, not on every hit.
+             // Pain chance is per-archetype: 0.78 for BasicTrooper
+             // (knowledge: 200/256), 170/256 ≈ 0.664 for
+             // ShotgunTrooper. The basic value remains 0.78 (the
+             // slice-1 rounding) so existing scenarios using basic
+             // troopers consume RNG byte-identically.
       take_damage is invoked from inside weapon_system::fire which
       is itself the combat per-frame hook; the &mut VisualEffects
       is therefore part of the combat tick borrow graph.
@@ -259,7 +383,12 @@ notes: |
   lands on the player (kind-agnostic in specs/40 § Impact Effects
   — same effect as a player-fired weapon impact on an enemy);
   visual_effects::spawn_wall_puff is reused for the trooper's
-  miss-into-wall case.
+  miss-into-wall case. For the shotgun trooper's 3-pellet salvo,
+  each pellet that hits the player spawns its own blood-splat, so a
+  full salvo can produce up to 3 splats at the player's position
+  in one tick; each pellet that hits a wall spawns its own wall
+  puff. This matches knowledge § Shotgun Variant ("each trace is
+  independent") — pellets do not share effect spawns.
 
   Per the combat-slice task scope: "Do NOT change pistol or player
   tuning; weapon_system edits are limited to the trooper hitscan
@@ -268,3 +397,22 @@ notes: |
   Attack arm — weapon_system::fire is unchanged. A shared
   hitscan-helper extraction would be a follow-up slice (see
   weapon_system contract notes).
+
+  Archetype lookup helper (module-private):
+
+    fn archetype_stats(a: Archetype) -> &'static ArchetypeStats {
+        match a {
+            Archetype::BasicTrooper   => &BASIC_TROOPER_STATS,
+            Archetype::ShotgunTrooper => &SHOTGUN_TROOPER_STATS,
+        }
+    }
+
+  The function is module-private (no `pub`). Public consumers
+  (game_loop, level_data) only need the Archetype enum (defined
+  in level_data per the shared_types convention) plus Enemy::new
+  which takes Archetype by value and looks up its own stats. A
+  match arm per variant matches the obvious shape; the Coder MAY
+  alternatively use a const array indexed by `archetype as usize`
+  (`#[repr(u8)] enum Archetype { ... }` + `[ArchetypeStats; 2]`)
+  or inline the lookup at each call site. All three shapes meet
+  the contract; the match-on-Archetype form is the most readable.

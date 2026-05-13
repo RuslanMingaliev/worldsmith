@@ -16,7 +16,7 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
   - Super shotgun: 20 pellets, each `5 * (rnd%3 + 1)`, total 100-300 (mean ~200)
   - Fist: `(rnd%10 + 1) * 2` = 2-20 (mean ~11); melee strength powerup multiplies by 10 = 20-200
   - Enemy hitscan (basic grunt): `((rnd%5) + 1) * 3` = 3-15 per shot (mean ~9)
-  - Shotgun grunt: 3 pellets at `((rnd%5) + 1) * 3` each = 9-45 total
+  - Enemy shotgun grunt: salvo of 3 hitscan pellets, each rolling `((rnd%5) + 1) * 3` independently for both spread and damage; per-pellet range 3-15 (mean ~9), salvo total range 9-45 (mean ~27). The face-target and auto-aim slope are computed once *before* the pellet loop, so all pellets share the same base angle and vertical slope; only the horizontal spread offset and damage roll vary per pellet.
 - **Feel**: The discrete damage tiers (5/10/15 for pistol) create a subtle "lucky hit" / "weak hit" dynamic. Most shots cluster around the mean but occasionally spike or dip
 
 ### Accuracy and Spread
@@ -26,7 +26,8 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
 - **Constants**:
   - Player pistol/chaingun refire: shift = 18, max spread ~5.6 degrees each side
   - Enemy basic grunt: shift = 20, max spread ~22 degrees each side (much less accurate)
-  - Shotgun pellets: always use full spread (never "accurate"), shift = 18
+  - Enemy shotgun grunt: each pellet in the 3-pellet salvo rolls `(rnd_a - rnd_b) << 20` independently — same shift (20) and same per-pellet max spread (~22 degrees each side) as the basic grunt. The base angle and vertical slope are shared by all pellets in the salvo (computed once before the pellet loop); only the horizontal spread roll is per-pellet. No first-shot accuracy bonus — every pellet of every salvo rolls full spread.
+  - Player shotgun pellets: always use full spread (never "accurate"), shift = 18
   - Super shotgun: shift = 19 (~11 degrees), plus vertical spread via `(rnd-rnd)<<5` on the slope
   - Full angle circle = 2^32 units. 45 degrees = 0x20000000
 - **Feel**: The triangular distribution is key. Most refire shots still land close to center, so sustained fire feels "sloppy but usable" rather than completely random. The first-shot accuracy bonus rewards tap-firing

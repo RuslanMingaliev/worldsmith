@@ -37,6 +37,7 @@ The generator owns a small `DemoLevelKind` enum. Each variant maps to one builde
 | `LocalChaseObstacle` | `local_chase_obstacle` | Demonstrates obstacle-aware enemy chase: one wall between player and enemy, valid path around. | yes |
 | `KiteMelee` | `kite_melee` | Demonstrates the bot's kite policy: enemy spawns within `BOT_KITE_RANGE`, bot must back-pedal while firing (specs/30 § Bot Behavior). | yes |
 | `RangedStandoff` | `ranged_standoff` | Demonstrates the basic trooper's ranged hitscan attack: open arena, enemy spawned ~8 tiles east of the player so the trooper can fire from outside `ENEMY_CONTACT_RANGE_TILES` while the bot waits stationary (specs/20 § Enemy, specs/25 § Enemy ranged hitscan rows). | yes |
+| `ShotgunStandoff` | `shotgun_standoff` | Demonstrates the shotgun trooper's 3-pellet hitscan salvo: open arena, one shotgun trooper spawned 4 tiles east of the player so multiple pellets per salvo land on the player while the bot waits stationary (specs/20 § Enemy multi-archetype, specs/25 § Enemy § Per-archetype constants, specs/25 § Enemy § Pellet-loop salvo behavior). | yes |
 
 ### LocalChaseObstacle
 
@@ -106,6 +107,28 @@ Either gap is wide enough for both the player (radius `0.4375` tile per `PLAYER_
 
 **Behavior to observe.** During the `wait:` objective the bot stands still and the trooper starts its state machine: Idle (reaction delay) → Chase (immediate, since LoS holds) → Attack (windup, fire, cooldown). Each Attack cycle resolves a hitscan trace at the player with `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD` triangular spread. With the trooper at 4–8 tiles distance throughout the wait window (the enemy moves ~2.0 tiles/sec while in Chase between attacks), the player remains far outside contact range so any HP loss is provably from ranged hitscan. After the wait completes, `kill: enemy` engages: the bot turns toward the trooper, fires the pistol from path-follow distance, and the trooper dies in 2–4 shots (specs/25 § Damage Randomization). The dropped ammo clip lands at the trooper's death position (specs/60 § Enemy Ammo Drops); it is irrelevant to the assertions but exercises the death-time spawn hook.
 
+### ShotgunStandoff
+
+**Purpose.** A short scenario that exercises the shotgun trooper's 3-pellet hitscan salvo (specs/20 § Enemy multi-archetype, specs/25 § Enemy § Per-archetype constants, specs/25 § Enemy § Pellet-loop salvo behavior). The shotgun trooper spawns 4 tiles east of the player in an open arena — close enough that a meaningful number of pellets from each salvo land on the player at the trooper's ±22° per-pellet spread, far enough that the trooper cannot contact-damage the player from spawn. The bot's first objective is `wait: <frames>` so the player stands still through multiple salvos; subsequent objectives close the engagement so the scenario completes deterministically. The level is otherwise empty so the only damage source the assertion can attribute is the shotgun trooper's salvo.
+
+**Layout** (20 × 15 grid — same dimensions and `TILE_SIZE` as the default level):
+
+- All edges are walls (border): `x = 0`, `x = 19`, `y = 0`, `y = 14`.
+- No interior walls. The room is one open rectangle.
+
+**Spawns:**
+
+| Entity | Position | Archetype | Rationale |
+|--------|----------|-----------|-----------|
+| Player spawn | `(4.5, 7.5)` | — | West side, vertically centered. Player faces `+X` (default heading) so the enemy lies directly along the firing line — trooper LoS to player and bot facing toward target both hold from frame 0. |
+| Enemy spawn | `(8.5, 7.5)` | `Archetype::ShotgunTrooper` | 4.0 tiles east of the player along the same horizontal line. Outside `BOT_KITE_RANGE` (2.0) so kite mode does not activate immediately. Outside `ENEMY_CONTACT_RANGE_TILES` (0.8125) by ~5× so contact damage is impossible during the scripted wait window. Inside `ENEMY_ATTACK_RANGE_TILES` (64.0) so the trooper can fire from spawn. At 4 tiles the ±22° per-pellet horizontal spread cone has half-width ~1.6 tiles around the aim direction; the triangular distribution concentrates pellets near the aim center, so the typical 3-pellet salvo lands 1–2 pellets on a player-sized target. Closer placements (≤ 2 tiles) would trip kite mode; farther placements (≥ 8 tiles) make pellet hits too rare to assert against in a tight wait window. |
+| Exit | `(1.5, 1.5)` | — | Far top-left corner; `kill: enemy` and `wait:` objectives never direct the bot toward the exit, so the win-condition check is not triggered. |
+| Pickups | (none) | — | Empty `Vec<Pickup>`. The dropped ammo clip from the trooper's death (specs/60 § Enemy Ammo Drops) is the only pickup that exists during the run; the level seeds none so the assertion can attribute any pre-kill damage exclusively to the shotgun trooper's salvo. The shotgun trooper drops the same ammo clip as the basic trooper in this slice (specs/25 § Enemy § Drop-on-death (both archetypes)). |
+
+**Behavior to observe.** During the `wait:` objective the bot stands still and the shotgun trooper starts its state machine: Idle (reaction delay, 0.23 s) → Chase (one tick — Attack gate satisfied immediately) → Attack (≈0.857 s sequence; 0.286 s wind-up then 3-pellet salvo fires). Per-archetype Attack-sequence duration: the shotgun trooper's 30-tick sequence is slightly slower than the basic trooper's 26-tick (knowledge/enemy_types.md § Shotgun Variant) — so over a 2-second wait the shotgun trooper fires roughly 2 salvos = 6 pellets total, of which ~3 land on the player at the 4-tile range. Each pellet rolls damage from `[3, 6, 9, 12, 15]` (mean 9), so the player typically loses 15–35 HP during the wait. After the wait completes, `kill: enemy` engages: the bot turns toward the shotgun trooper, fires the pistol from path-follow distance, and the trooper dies in 2–6 shots (specs/25 § Damage Randomization — pistol mean 10 damage × 30 HP shotgun ≈ 3 pistol shots). The dropped ammo clip lands at the trooper's death position (specs/60 § Enemy Ammo Drops); it is irrelevant to the assertions but exercises the death-time spawn hook.
+
+The 4-tile distance is also outside `BOT_FIRE_MAX_RANGE` (10.0) − by definition the bot CAN fire from this distance if facing the enemy. With the bot's `wait:` objective active the bot does not fire (a `wait` produces `InputState::default()` per frame, no fire bit), so the trooper is uncontested during the wait window — exactly what the assertion needs to attribute damage to the salvo.
+
 ## Scenario YAML Extension
 
 Scenarios opt into a non-default level by adding one optional key:
@@ -135,6 +158,7 @@ assertions:
 - `tests/level/complete_level.yaml` — no `level:` field, uses default level.
 - `tests/level/reach_exit.yaml` — no `level:` field, uses default level.
 - `tests/level/scavenge_run.yaml` — no `level:` field, uses default level.
+- `tests/combat/shotgun_trooper_salvo.yaml` — uses `level: shotgun_standoff` (new in the 2026-05-13 combat slice 2).
 
 The parser change is purely additive: the field is `#[serde(default)]` on `Scenario` and the matching enum derives `serde::Deserialize` with `#[serde(rename_all = "snake_case")]`.
 
@@ -263,6 +287,7 @@ described in § PR Preview Integration.
 - `KiteMelee` is exercised by `level_generator` unit tests (`test_kite_melee_*` in `src/level_generator.rs`) which cover dimensions, spawn placement, the open-arena layout, the no-pickup invariant, and the within-`BOT_KITE_RANGE` distance assertion.
 - Test fixture `tests/combat/kite_enemy.yaml` exists on disk and uses the `level: kite_melee` field, the `kill: enemy` objective, and the `player.health > 80` assertion. `autopilot::run_all_scenarios` exercises the kite policy end-to-end alongside the unit tests above.
 - Test fixture `tests/combat/trooper_ranged_hits.yaml` exists on disk and uses the `level: ranged_standoff` field, a `wait:` objective followed by `kill: enemy`, and the `player.health < 100` assertion to verify the trooper's ranged hitscan damages the player from outside `ENEMY_CONTACT_RANGE_TILES`. `autopilot::run_all_scenarios` exercises the ranged-attack pipeline end-to-end.
+- `ShotgunStandoff` variant added with `build_shotgun_standoff` builder in `level_generator`. Test fixture `tests/combat/shotgun_trooper_salvo.yaml` exists on disk and uses the `level: shotgun_standoff` field, a `wait:` objective followed by `kill: enemy`, and the `player.health < 100` assertion to verify the shotgun trooper's 3-pellet hitscan salvo damages the player from outside `ENEMY_CONTACT_RANGE_TILES`. `autopilot::run_all_scenarios` exercises the shotgun-archetype pipeline end-to-end.
 - IR module `level_generator` is added to `ir/module_plan.yaml` (universal-sink rule applied: `main.depends_on` lists `level_generator`).
 - IR contract for `level_generator` and the autopilot / `game_loop` extensions live in `ir/contracts/level_generator.yaml`, `ir/contracts/autopilot.yaml`, and `ir/contracts/game_loop.yaml`.
 - `.github/workflows/pr.yml` and `.github/workflows/release.yml` record the demo GIF using `tests/level/local_chase_obstacle.yaml` as the canonical PR-preview scenario.

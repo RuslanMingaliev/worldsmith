@@ -35,7 +35,12 @@ public_methods:
         player = Player::new(level.player_spawn,
                              player_state::WEAPON_RNG_SEED)
         enemies = level.enemy_spawns.iter()
-                      .map(|&s| Enemy::new(s)).collect()
+                      .map(|s| Enemy::new(s.pos, s.archetype))
+                      .collect()
+        // EnemySpawn carries the archetype tag (specs/25 § Enemy);
+        // Enemy::new looks up per-archetype constants (max_health,
+        // attack_sequence_sec) via the module-private archetype_stats
+        // helper in enemy_logic.
       WEAPON_RNG_SEED is passed unconditionally — both interactive and
       --autopilot modes get deterministic weapon RNG. Specs/35 §
       Determinism permits a wall-clock seed in interactive mode but does
