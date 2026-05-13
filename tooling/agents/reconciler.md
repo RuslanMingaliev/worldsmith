@@ -93,11 +93,11 @@ Read each generated module. For every numeric constant, struct field default, or
 If invented → split the entry into TWO writes:
 
 1. **Canonical row in `specs/25_game_tuning.md`**: `Constant | Value | Brief rationale (≤1 sentence). (see reconcile_log#<anchor>)`. Keep this terse — it is the row downstream Coder/PostMortem phases will re-read every regen, and it must stay stable across the pass. **Cross-reference pointers in the rationale must use stable symbol/section pointers (e.g. `inlined in renderer::draw game-over arm`, `set in game_loop::update step 2.5`), NOT generated-file line numbers (`renderer.rs:264`).** Line numbers force a spec edit on every regen that shifts code by a few lines, even when no value drifted; symbol pointers survive code reflow. If you are touching an existing row that still cites a line number for a non-drift reason, opportunistically rewrite the pointer to symbol form in the same edit.
-2. **Audit-trail entry in `work/reconcile_history.md`** (gitignored): the full provenance — where the constant was inlined in code, what alternatives were considered, the run that captured it, any "captured during reconcile pass" / "was inlined as X in <file>.rs" notes, and the cross-references to other constants. Anchor each entry with `## <CONSTANT_NAME>` so the spec row's `(see reconcile_log#<anchor>)` resolves.
+2. **Audit-trail entry in `specs/25_reconcile_log.md`**: the full provenance — where the constant was inlined in code, what alternatives were considered, the run that captured it, any "captured during reconcile pass" / "was inlined as X in <file>.rs" notes, and the cross-references to other constants. Anchor each entry with `## <CONSTANT_NAME>` so the spec row's `(see reconcile_log#<anchor>)` resolves.
 
 Why split? The canonical row is read N times per regen (once per Coder invocation). The audit trail is read 0 times by agents — it exists for human review across runs. Inlining the audit trail invalidates the prompt cache for every downstream phase whenever a new constant is captured. See `tooling/orchestrator_run.py` § FROZEN_CONTEXT_FILES for why cache stability matters.
 
-`work/` is gitignored, so the audit log accumulates locally and is included in the run journal artifact via PostMortem; do not try to commit it.
+`specs/25_reconcile_log.md` is tracked and gets committed alongside the canonical row in `specs/25_game_tuning.md` as part of the Reconciler's normal write set. The log file is intentionally NOT in `FROZEN_CONTEXT_FILES` — appending a provenance entry must not invalidate the cached prompt prefix used by downstream Coder/PostMortem phases.
 
 ### Step 2: Check spec coverage
 
@@ -156,7 +156,7 @@ Produce a summary:
 - [warning]: [drift / pre-existing noise / fixed]
 
 ### Values captured
-- [constant]: [value] → canonical row added to specs/25_game_tuning.md; provenance appended to work/reconcile_history.md#<anchor>
+- [constant]: [value] → canonical row added to specs/25_game_tuning.md; provenance appended to specs/25_reconcile_log.md#<anchor>
 
 ### Specs updated
 - [spec file]: marked [feature] as deferred
@@ -173,7 +173,7 @@ The report must also be appended to `work/pipeline_run_<tag>.md` (the run journa
 ## Output
 
 - Updated `specs/25_game_tuning.md` (new constants — canonical row only: value + ≤1-sentence rationale + `(see reconcile_log#<anchor>)`)
-- Appended `work/reconcile_history.md` (gitignored audit trail — full provenance for each new constant)
+- Appended `specs/25_reconcile_log.md` (tracked audit trail — full provenance for each new constant; intentionally outside `FROZEN_CONTEXT_FILES` so appends don't invalidate the cached prefix)
 - Updated spec files (implementation status sections)
 - Reconcile report (printed to conversation)
 

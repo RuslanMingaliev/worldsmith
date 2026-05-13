@@ -6,9 +6,9 @@ This spec captures all gameplay balance constants, visual parameters, and level 
 
 ## Reconcile-pass row format (for new entries)
 
-When the Reconciler captures a new constant during a regen pass, the canonical row in this file holds **only** the value plus a ≤1-sentence rationale, and ends with `(see reconcile_log#<anchor>)`. The full audit trail — where the constant was inlined in code, what alternatives were considered, prior incarnations, the run that captured it — lives in `work/reconcile_history.md` (gitignored, accumulated locally and surfaced through PostMortem's run journal).
+When the Reconciler captures a new constant during a regen pass, the canonical row in this file holds **only** the value plus a ≤1-sentence rationale, and ends with `(see reconcile_log#<anchor>)`. The full audit trail — where the constant was inlined in code, what alternatives were considered, prior incarnations, the run that captured it — lives in `specs/25_reconcile_log.md` (tracked, public; appended by Reconciler and surfaced through PostMortem's run journal).
 
-This split exists so this file stays *stable across a regen pass*: downstream phases (Coder, PostMortem, release_editor) re-read it on every Coder invocation, and provenance prose written by an earlier phase invalidates the prompt cache for everyone after it. See `tooling/agents/reconciler.md § Step 1` for the writer-side rule and `tooling/orchestrator_run.py § FROZEN_CONTEXT_FILES` for the cache-stability rationale.
+This split exists so this file stays *stable across a regen pass*: downstream phases (Coder, PostMortem, release_editor) re-read it on every Coder invocation, and provenance prose written by an earlier phase invalidates the prompt cache for everyone after it. The log file is intentionally NOT part of `FROZEN_CONTEXT_FILES`, so the canonical rows above remain cache-stable across regen phases even as the log grows. See `tooling/agents/reconciler.md § Step 1` for the writer-side rule and `tooling/orchestrator_run.py § FROZEN_CONTEXT_FILES` for the cache-stability rationale.
 
 Existing rows below this point predate the convention and are kept verbatim — they are stable and cached. The split applies to new captures from this point forward.
 

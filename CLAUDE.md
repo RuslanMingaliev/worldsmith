@@ -50,7 +50,7 @@ Focus on specs depth, knowledge extraction, and pipeline reliability. Gameplay d
 
 After any generation (full or partial), reconcile code with specs:
 
-1. **Constants invented by LLM?** → Add to `specs/25_game_tuning.md`
+1. **Constants invented by LLM?** → Add a canonical row (value + ≤1-sentence rationale + `(see reconcile_log#<anchor>)`) to `specs/25_game_tuning.md` and append the full provenance under `## <anchor>` in `specs/25_reconcile_log.md`. The two-file split keeps `25_game_tuning.md` cache-stable across regen phases — see `tooling/agents/reconciler.md` § Step 1.
 2. **Spec feature not implemented?** → Mark as "deferred" in the spec
 3. **Code behavior differs from spec?** → Update spec or fix code
 4. **New design decision?** → Document in ADR format

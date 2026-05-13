@@ -64,8 +64,9 @@ FROZEN_CONTEXT_FILES: List[str] = [
 ]
 
 _FROZEN_FORBIDDEN_PREFIXES = (
-    "specs/25_game_tuning.md",  # Reconciler writes
-    "ir/contracts/",            # per-module shards (only _shared.yaml allowed)
+    "specs/25_game_tuning.md",   # Reconciler writes
+    "specs/25_reconcile_log.md", # tracked but writable by Reconciler — must not enter cached prefix
+    "ir/contracts/",             # per-module shards (only _shared.yaml allowed)
 )
 for _path in FROZEN_CONTEXT_FILES:
     for _bad in _FROZEN_FORBIDDEN_PREFIXES:
