@@ -45,6 +45,22 @@ Source: [`knowledge/pickups.md`](../knowledge/pickups.md). Spec values that are 
 - Same "leave in list, just deactivate" rule.
 - Auto-weapon-switch on zero→nonzero ammo (knowledge § Ammo Pickup Tiers, "auto-switch to best owned weapon") is **deferred** — the prototype has only one weapon, no switch is meaningful.
 
+### Enemy Ammo Drops
+
+**Trigger:** During the per-frame `game_loop::update` sequence, an enemy's `alive` flag transitions from `true` to `false` (via `enemy_logic::take_damage` from a player hitscan that drops the trooper to ≤ 0 HP).
+
+**Effect:** Exactly one `Pickup { kind: PickupKind::Ammo, pos: enemy.pos, active: true }` is appended to `Level::pickups` at the trooper's death position. The pickup is collectible by the existing per-frame pickup check on the next frame.
+
+**Rules:**
+- The drop is gated by an `Enemy.ammo_drop_spawned: bool` latch: initialized `false`, flipped to `true` after the push so the scan never double-spawns. *(Knowledge: § Drop on Kill — "deterministic per enemy kind, no random roll".)*
+- The push happens in the dedicated drop-spawn step of `game_loop::update`'s frame-update order (`ir/contracts/_shared.yaml § frame_update_order`), AFTER the enemy update loop AND AFTER `weapon_system::fire`. This ensures a same-frame kill (player hitscan kills the trooper this tick) drops the pickup this tick rather than next tick. The drop is NOT pushed inside `enemy_logic::take_damage` because that call site only holds `&Level`, not `&mut Level::pickups` — pushing into the level requires the orchestration borrow that only `game_loop::update` owns. *(Service-emit decision recorded in `ir/contracts/_shared.yaml § service_emit_decisions § game_loop drop-spawn scan`.)*
+- The pickup uses the existing `PickupKind::Ammo` and `PICKUP_AMMO_AMOUNT = 10` rounds — the half-clip "dropped" flag from knowledge (5 rounds for the basic trooper) is **deferred** to the richer-pickup-model slice. The prototype's single-amount ammo pickup means the drop grants the same rounds as a placed ammo box, which makes enemy-farming slightly more rewarding than the reference; tracked in `25_game_tuning.md § Enemy § Deferred from knowledge`.
+- Because the drop appears in `Level::pickups` only AFTER the per-frame pickup check has already run this frame, the player cannot collect the drop on the same frame it is created — earliest collection is the NEXT frame. This is a one-frame delay (16 ms at 60 FPS), imperceptible.
+- The drop respects the existing "refused at cap" rule: if the player is at `PLAYER_AMMO_MAX` when they walk over the dropped pickup, the pickup stays active and is collected later when there is room.
+- The drop position is the trooper's `pos` at the moment of death — not the enemy's spawn position, not snapped to a tile. The renderer draws the dropped pickup at this floating-point position via the same code path that draws placed pickups.
+
+*(Knowledge: § Drop on Kill — "spawns one pickup at the enemy's feet"; § Cap Behavior — "refused, pickup remains in world".)*
+
 ### Per-Frame Pickup Check
 
 **Trigger:** Once per frame, in `game_loop::update`, after player movement (`apply_input`) and before enemy updates.
@@ -129,7 +145,8 @@ Source: [`knowledge/pickups.md`](../knowledge/pickups.md). Spec values that are 
 
 ### With Game Loop
 - `game_loop::update` adds Step 2.5 between `apply_input` (Step 2) and the enemy update (Step 3): scan `state.level.pickups` for the first active pickup within `PICKUP_RADIUS_TILES` of `state.player.pos` whose acceptance condition holds, and consume it.
-- The frame-update-order list in `ir/contracts/_shared.yaml § frame_update_order` gains the new step.
+- `game_loop::update` adds the drop-spawn step AFTER the enemy update loop AND AFTER `weapon_system::fire`: scan `state.enemies` for trooper deaths and push `Pickup { kind: PickupKind::Ammo, pos: enemy.pos, active: true }` into `state.level.pickups` (gated by `Enemy.ammo_drop_spawned`). See § Enemy Ammo Drops above.
+- The frame-update-order list in `ir/contracts/_shared.yaml § frame_update_order` gains both steps.
 
 ### With Renderer
 - `renderer::draw` adds Step 2.5 (between exit/corpses and blood/puffs) drawing active pickups.
@@ -164,7 +181,7 @@ The following are intentionally out of scope for the prototype:
 - **Pickup respawn** — single-use within a run.
 - **Pickup pickup sound / dry-fire "click"** — no audio system in the prototype.
 - **Backpack / capacity expansion** — fixed `PLAYER_AMMO_MAX`.
-- **Enemy ammo drops** — knowledge § Drop on Kill documents this; deferred until enemy_logic gets a death-time spawn hook.
+- **Half-clip "dropped" flag** — knowledge § Drop on Kill + § Ammo Pickup Tiers say a basic-trooper drop yields 5 rounds (half a clip) vs the placed-pickup 10 rounds. The prototype's single-amount `PICKUP_AMMO_AMOUNT = 10` ignores the dropped/placed distinction. The trooper death-time drop itself is **implemented** in the 2026-05-13 combat slice (see § Enemy Ammo Drops above) — only the half-amount flag is deferred.
 - **Skill multiplier (2× ammo on easiest/hardest)** — knowledge § Difficulty / Skill Multipliers. No skill system in the prototype.
 - **Pickup categories beyond health/ammo** — armor, keycards, all powerups. Knowledge mentions them; deferred.
 - **HUD low-ammo warning color** — ammo digits are single-color (yellow).
@@ -205,11 +222,12 @@ The following are intentionally out of scope for the prototype:
 
 **Implemented:**
 - `Pickup` and `PickupKind` types homed in `level_data`.
-- `Level::pickups` field populated by `build_default` with one health and one ammo pickup at fixed positions (spec/25 § Pickups § Default Level Placement).
+- `Level::pickups` field populated by `build_default` with one health and one ammo pickup at fixed positions (spec/25 § Pickups § Default Level Placement). Demo levels (`level_generator`) seed their own `Vec<Pickup>` per the layout pinned in `specs/15_level_generator.md`.
 - `Player.ammo` field, initialized to `PLAYER_AMMO_INITIAL` by `player_state::new`.
 - `player_state::take_health_pickup` and `player_state::take_ammo_pickup` (clamped to caps).
 - `weapon_system::fire` ammo gate (top of function, after cooldown gate) and per-shot decrement.
 - `game_loop::update` Step 2.5 per-frame pickup check (refused-at-cap rule applied).
+- `game_loop::update` drop-spawn scan after the enemy update + weapon-fire steps (specs/60 § Enemy Ammo Drops): pushes one `Pickup { kind: Ammo, pos: enemy.pos, active: true }` per dead trooper, gated by `Enemy.ammo_drop_spawned`.
 - Renderer pickup layer (between exit/corpses and blood/puffs).
 - HUD ammo pane (icon + digits, below the health pane).
 - Pickup tint flash: `visual_effects::increment_pickup_tint` called on consumption; golden-yellow overlay spec in `specs/40 § Pickup Tint Screen Flash`.
@@ -222,7 +240,7 @@ The following are intentionally out of scope for the prototype:
 - Pickup respawn.
 - Pickup audio.
 - Backpack / capacity expansion.
-- Enemy ammo drops.
+- Half-clip "dropped" flag (knowledge says basic-trooper drops yield 5 rounds vs the placed-pickup 10 rounds; the prototype's single-amount `PICKUP_AMMO_AMOUNT = 10` ignores the dropped/placed distinction). Promotes when a richer pickup model lands.
 - Skill multiplier.
 - Pickup categories beyond health/ammo.
 - HUD low-ammo warning color.

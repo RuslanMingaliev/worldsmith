@@ -67,45 +67,27 @@ One enemy archetype exists: a basic hitscan trooper (low HP, single hitscan atta
 
 #### Current Implementation
 
-The enemy currently uses a simplified AI:
-- Detects player immediately (no line-of-sight check)
-- Waits a reaction delay (0.23s) before first attack
-- Moves toward player using smooth vector movement
-- Deals contact damage (3-15 random) when within melee range
-- Enters pain state on hit (78% chance, 0.17s duration)
-- Dies at 0 HP
+The enemy uses an LoS-gated ranged AI:
+- Detects the player on the first Idle tick the LoS check passes (knowledge/enemy_types.md § Detection and Alerting). The 180° forward arc is omnidirectional in the prototype; sound propagation is not modeled.
+- Waits a reaction delay (`ENEMY_REACTION_DELAY = 0.23s`) before transitioning Idle → Chase. The first Attack-state entry can fire on the very next Chase tick because `time_since_attack` is initialized to `ENEMY_ATTACK_SEQUENCE_SEC` at spawn (the cooldown gate is satisfied from the start).
+- Moves toward the player while in Chase using smooth axis-aligned slide (the same code path as `player_state::apply_input`, not the reference's 8-direction grid — see `25_game_tuning.md § Enemy § Deferred from knowledge`).
+- In Chase, transitions to Attack iff (a) line of sight to the player is clear, (b) distance ≤ `ENEMY_ATTACK_RANGE_TILES = 64.0`, and (c) `time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC = 0.74`.
+- In Attack, stays stationary for `ENEMY_ATTACK_SEQUENCE_SEC` total. At `ENEMY_ATTACK_WINDUP_SEC = 0.286s` into the state, fires a single hitscan trace toward the player with `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD` triangular spread (±22° max). Damage on hit is one of `ENEMY_ATTACK_DAMAGE_VALUES = [3, 6, 9, 12, 15]` (formula `(rand(0..5) + 1) * 3`). On player hit, spawns a blood splat at the player's position; on wall hit, spawns a wall puff at the trace endpoint; on out-of-range, no impact effect. After the sequence elapses, returns to Chase and may re-enter Attack on the next tick if conditions still hold.
+- Enters pain state on hit (78% chance per damage event, 0.17s duration). Pain interrupts Idle, Chase, or Attack and returns to Chase on expiry.
+- Dies at 0 HP; transitions to Dead state, plays the death-fade visual (`specs/40 § Enemy Death Visual`), and spawns one ammo-clip pickup at the death position via the `game_loop` drop-spawn step (`specs/60 § Enemy Ammo Drops`). The pickup is collectible by the player via the existing `game_loop` per-frame pickup check.
 
-AI states: Idle → Chase → Pain → Death (no separate Attack state).
-
-#### Target Behavior (from knowledge)
-
-The full AI from knowledge/enemy_types.md is significantly more complex. The following are extracted behaviors that are **not yet implemented** but documented for future generation:
-
-**Hitscan ranged attack**: Enemy should fire hitscan shots at range (up to 2048 map units) with +/- 22 degree spread, not contact damage. Attack sequence takes 0.74 seconds (wind-up, fire, cooldown).
-
-**Distance-based fire probability**: At close range, almost always fires. At long range, probability drops (~22% at max distance). If just hit, always retaliates immediately. No double attack (must take at least one chase step between shots).
-
-**Line-of-sight detection**: Enemy should only react when it can see the player. No distance limit — if LOS exists, enemy reacts.
-
-**8-directional grid movement**: Prefers diagonal paths, tries cardinal directions if blocked. Random 0-15 steps before re-evaluating direction. Never voluntarily reverses.
-
-**Idle scanning**: 0.57s scan cycle before detection. 180-degree forward arc.
-
-**Chase timing**: 0.91s per animation cycle (8 frames). Active sound chance 1.2% per frame.
-
-**Target persistence**: 2.86s threshold of stubborn pursuit after acquiring target.
-
-**Death drops**: Ammo clip on death. Gib death below -20 HP.
-
-**Full state machine**:
+**State machine** (ranged-attack form):
 ```
-Idle --[player detected]--> Chase
-Chase --[attack check passed]--> Attack
+Idle  --[reaction delay elapsed]--> Chase
+Chase --[LoS && range && cooldown]--> Attack
 Chase --[damaged, pain check passed]--> Pain
-Attack --[attack sequence complete]--> Chase
+Attack --[sequence complete]--> Chase
+Attack --[damaged, pain check passed]--> Pain
 Pain --[pain duration elapsed]--> Chase
-Any --[health <= 0]--> Death
+Any --[health <= 0]--> Dead
 ```
+
+Knowledge-documented behaviors that the prototype intentionally does NOT implement (distance-based ranged-fire probability gate, no-double-attack direction switch, 8-directional grid pathing, idle-scan animation, target threshold, sound propagation, gib threshold, half-clip "dropped" flag) are listed in `25_game_tuning.md § Enemy § Deferred from knowledge` so the Reconciler does not flag them as drift.
 
 ### Level
 The level must:
@@ -143,7 +125,7 @@ Concretely, this requires the loop-exit *decision* and the loop-exit *action* to
 - Player movement (forward/backward/strafe) with thrust+friction momentum model (see [`21_player_movement.md`](21_player_movement.md)).
 - World collision — player cannot walk through walls; axis-aligned wall sliding.
 - Combat — hitscan pistol: fire cycle, discrete damage (5/10/15), triangular spread, first-shot accuracy, pain/stagger system.
-- Enemy basic trooper — AI states Idle/Chase/Pain/Dead; contact damage; reaction delay before first attack; pain flash visual.
+- Enemy basic trooper — AI states Idle/Chase/Attack/Pain/Dead; LoS-gated ranged hitscan attack with windup/fire/cooldown sequence and ±22° triangular spread; reaction delay before first Attack-state entry; pain flash visual; one ammo-clip pickup dropped at the death position.
 - Level — walls, walkable space, player spawn, enemy spawn, exit objective.
 - HUD — health bar + digits + ammo pane (see [`50_hud.md`](50_hud.md)).
 - Pickups — health and ammo pickups; refused-at-cap rule; ammo gates firing (see [`60_pickups.md`](60_pickups.md)).
@@ -158,6 +140,7 @@ Concretely, this requires the loop-exit *decision* and the loop-exit *action* to
 
 - Multiple weapons (shotgun, chaingun, fist, super shotgun)
 - Projectile-based enemy attacks (fireball with travel time, dodging)
+- Distance-based ranged-fire probability gate, no-double-attack direction switch, 8-directional grid pathing, idle-scan animation, target threshold, sound propagation, gib threshold, half-clip "dropped" ammo flag — see [`25_game_tuning.md § Enemy § Deferred from knowledge`](25_game_tuning.md#deferred-from-knowledge) for the full list and per-row rationale.
 - Multiple enemy types (shotgun trooper, rapid-hitscan trooper, ranged-melee hybrid, melee-only beast, invisible melee-only beast, floating projectile mid-tier, kamikaze flyer, mid-tier melee+projectile boss, heavy melee+projectile boss, homing-missile boss, triple-projectile boss, rapid-plasma boss, area-attack boss with corpse-resurrect, rocket-launcher mega-boss, super-chaingun mega-boss)
 - Armor and damage reduction system
 - Full ammo economy (multiple categories, scarcity pressure, dropped-from-enemy pickups, backpack/cap expander)

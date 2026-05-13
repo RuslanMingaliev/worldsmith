@@ -95,7 +95,9 @@ public_methods:
       game_loop and matches the orchestration style used elsewhere.
   - signature: "pub fn take_damage(player: &mut Player, amount: i32)"
     notes: |
-      Used by enemy_logic::update on contact damage. Mutates only the
+      Used by enemy_logic::update's Attack-state hitscan when the
+      trooper's trace lands on the player (specs/20 § Enemy ranged
+      attack form, specs/25 § Enemy Implemented). Mutates only the
       player struct (no &mut VisualEffects param -- spec/80 § API
       Surface forbids it on non-orchestration methods). Behavior:
         health -= amount;
