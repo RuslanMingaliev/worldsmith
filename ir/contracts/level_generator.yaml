@@ -12,15 +12,17 @@ public_types:
       pub enum DemoLevelKind {
           LocalChaseObstacle,
           KiteMelee,
+          RangedStandoff,
       }
     notes: |
       Public because autopilot::Scenario.level holds
       Option<DemoLevelKind> (specs/15 § Scenario YAML Extension), so
       serde_yaml can deserialize the YAML name directly into the
       enum. `rename_all = "snake_case"` maps `LocalChaseObstacle`
-      -> `local_chase_obstacle` and `KiteMelee` -> `kite_melee`
-      for YAML readability. Adding a new demo level: add one variant
-      here and one match arm in build() below; nothing else changes.
+      -> `local_chase_obstacle`, `KiteMelee` -> `kite_melee`, and
+      `RangedStandoff` -> `ranged_standoff` for YAML readability.
+      Adding a new demo level: add one variant here and one match arm
+      in build() below; nothing else changes.
 public_constants: []
 public_methods:
   - signature: "pub fn build(kind: DemoLevelKind) -> Level"
@@ -34,6 +36,7 @@ public_methods:
         match kind {
             DemoLevelKind::LocalChaseObstacle => build_local_chase_obstacle(),
             DemoLevelKind::KiteMelee          => build_kite_melee(),
+            DemoLevelKind::RangedStandoff     => build_ranged_standoff(),
         }
       where each helper is a private function returning the Level
       layout pinned in specs/15 § <variant>.
@@ -70,6 +73,27 @@ public_methods:
       and outside ENEMY_CONTACT_RANGE_TILES (0.8125, specs/25 §
       Enemy) so the bot has buffer to back-pedal before contact
       damage starts.
+  - signature: "fn build_ranged_standoff() -> Level"
+    notes: |
+      Module-private. Builds the RangedStandoff layout from specs/15
+      § RangedStandoff. Concretely:
+        width = GRID_WIDTH (20); height = GRID_HEIGHT (15);
+        tiles[y][x] = Wall iff (x == 0 || x == 19 || y == 0 || y == 14)
+                      else Floor;
+        player_spawn = Vec2::new(4.5, 7.5);
+        enemy_spawns = vec![Vec2::new(12.5, 7.5)];
+        exit         = Vec2::new(1.5, 1.5);
+        pickups      = vec![];   // no pickups
+      No interior walls. Distance from player_spawn to the lone
+      enemy_spawn is 8.0 tiles -- well outside BOT_KITE_RANGE (2.0)
+      so the bot does not enter kite mode at frame 0, and ~10x
+      ENEMY_CONTACT_RANGE_TILES (0.8125) so the trooper cannot
+      contact-damage the player from spawn. The trooper has direct
+      LoS along y = 7.5 (open arena), so its Attack-state hitscan
+      is the only source of player damage during the bot's `wait:`
+      objective in tests/combat/trooper_ranged_hits.yaml. Within
+      ENEMY_ATTACK_RANGE_TILES (64.0) so the trooper can fire from
+      spawn without range-gating.
 cross_module_borrows: []
 notes: |
   Consumed by main.rs at startup (one call per --autopilot launch

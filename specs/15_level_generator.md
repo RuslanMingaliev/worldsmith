@@ -36,6 +36,7 @@ The generator owns a small `DemoLevelKind` enum. Each variant maps to one builde
 |---------|-----------|---------|-------------|
 | `LocalChaseObstacle` | `local_chase_obstacle` | Demonstrates obstacle-aware enemy chase: one wall between player and enemy, valid path around. | yes |
 | `KiteMelee` | `kite_melee` | Demonstrates the bot's kite policy: enemy spawns within `BOT_KITE_RANGE`, bot must back-pedal while firing (specs/30 § Bot Behavior). | yes |
+| `RangedStandoff` | `ranged_standoff` | Demonstrates the basic trooper's ranged hitscan attack: open arena, enemy spawned ~8 tiles east of the player so the trooper can fire from outside `ENEMY_CONTACT_RANGE_TILES` while the bot waits stationary (specs/20 § Enemy, specs/25 § Enemy ranged hitscan rows). | yes |
 
 ### LocalChaseObstacle
 
@@ -79,11 +80,31 @@ Either gap is wide enough for both the player (radius `0.4375` tile per `PLAYER_
 | Entity | Position | Rationale |
 |--------|----------|-----------|
 | Player spawn | `(4.5, 7.5)` | West side, vertically centered. Player faces `+X` (default heading) so the enemy lies directly along the firing line. |
-| Enemy spawn | `(6.0, 7.5)` | 1.5 tiles east of the player. Inside `BOT_KITE_RANGE` (2.0) so the bot enters kite mode on frame 1, but outside `ENEMY_CONTACT_RANGE_TILES` (0.8125) so the bot can back-pedal one or two frames before contact damage starts. |
+| Enemy spawn | `(6.0, 7.5)` | 1.5 tiles east of the player. Inside `BOT_KITE_RANGE` (2.0) so the bot enters kite mode on frame 1, but outside `ENEMY_CONTACT_RANGE_TILES` (0.8125) so kite-mode visual layout is preserved (the discs do not visibly overlap at spawn). With the 2026-05-13 combat slice replacing contact damage with the trooper's ranged hitscan attack, the kite buffer no longer protects against contact damage (which is retired) — it now protects against the trooper's near-melee hitscan, where the spread cone (±22°) at 1.5 tiles distance covers nearly the full forward arc, so a trooper that completes its 0.74s Attack sequence almost always hits. The bot must back-pedal AND fire fast enough to kill the trooper before the first Attack-state hitscan releases (the trooper's high pain-chance helps — sustained pistol fire tends to pain-lock the trooper before its windup-elapsed fire latch trips). |
 | Exit | `(1.5, 1.5)` | Far top-left corner; the `kill: enemy` objective never directs the bot toward the exit, so the win-condition check is not triggered. |
 | Pickups | (none) | Empty `Vec<Pickup>`. Pickups would distract from the kite visualization and would also let the bot recover health during the test, which would dilute the `player.health > 80` assertion. |
 
-**Behavior to observe.** The bot starts inside kite range with the enemy directly east. On frame 1 the bot fires (LoS clear, `dist = 1.5 < BOT_FIRE_MAX_RANGE`, roughly facing) and emits `forward = -1.0` (kite mode). The bot retreats westward; the enemy chases at 2.0 tiles/sec. The pistol kills the enemy in 2–4 shots (mean 10 dmg vs 20 HP); during those ~1.0–2.0 seconds the bot may take one or two contact hits if the enemy briefly closes inside contact range, but `player.health > 80` should hold across the run because (a) first-shot accuracy lands the first hit, (b) 78% pain chance interrupts the enemy's chase frequently, and (c) the bot's max speed exceeds the enemy's 2.0 tiles/sec.
+**Behavior to observe.** The bot starts inside kite range with the enemy directly east. On frame 1 the bot fires (LoS clear, `dist = 1.5 < BOT_FIRE_MAX_RANGE`, roughly facing) and emits `forward = -1.0` (kite mode). The bot retreats westward; the enemy chases at 2.0 tiles/sec. The pistol kills the enemy in 2–4 shots (mean 10 dmg vs 20 HP); during those ~1.0–2.0 seconds the bot may take 0–1 ranged hitscan hits from the trooper if a Pain-state interruption fails to stun-lock the trooper before its Attack windup elapses — `player.health > 80` should hold across the run because (a) first-shot accuracy lands the first hit, (b) 78% pain chance interrupts the trooper's Attack sequence frequently before the windup elapses, (c) the bot's max speed exceeds the enemy's 2.0 tiles/sec, and (d) even a successful trooper hitscan deals 3–15 (mean 9) damage — well below the 20-HP buffer. With the 2026-05-13 combat slice's contact-damage retirement, the trooper's ONLY harm vector here is the ranged hitscan; the assertion's robustness depends on pain-locking the trooper rather than out-running contact range.
+
+### RangedStandoff
+
+**Purpose.** A short scenario that exercises the basic trooper's ranged hitscan attack (specs/20 § Enemy, specs/25 § Enemy). The trooper spawns 8 tiles east of the player in an open arena. The bot's first objective is `wait: <frames>` so the player stands still while the trooper enters its Attack state and fires hitscan rounds from well outside `ENEMY_CONTACT_RANGE_TILES`. Subsequent objectives close the engagement so the scenario completes deterministically. The level is otherwise empty so the only damage source the assertion can attribute is the trooper's hitscan.
+
+**Layout** (20 × 15 grid — same dimensions and `TILE_SIZE` as the default level):
+
+- All edges are walls (border): `x = 0`, `x = 19`, `y = 0`, `y = 14`.
+- No interior walls. The room is one open rectangle.
+
+**Spawns:**
+
+| Entity | Position | Rationale |
+|--------|----------|-----------|
+| Player spawn | `(4.5, 7.5)` | West side, vertically centered. Player faces `+X` (default heading) so the enemy lies directly along the firing line — trooper LoS to player and bot facing toward target both hold from frame 0. |
+| Enemy spawn | `(12.5, 7.5)` | 8.0 tiles east of the player along the same horizontal line. Outside `BOT_KITE_RANGE` (2.0) so kite mode does not activate immediately. Outside `BOT_FIRE_MAX_RANGE`-minus-margin so the bot also takes a moment to engage. Inside `ENEMY_ATTACK_RANGE_TILES` (64.0) so the trooper can fire from spawn. Outside `ENEMY_CONTACT_RANGE_TILES` (0.8125) by ~10× so contact damage is impossible during the scripted wait window. |
+| Exit | `(1.5, 1.5)` | Far top-left corner; `kill: enemy` and `wait:` objectives never direct the bot toward the exit, so the win-condition check is not triggered. |
+| Pickups | (none) | Empty `Vec<Pickup>`. The dropped ammo clip from the trooper's death (specs/60 § Enemy Ammo Drops) is the only pickup that exists during the run; the level seeds none so the assertion can attribute any pre-kill damage exclusively to the trooper's hitscan. |
+
+**Behavior to observe.** During the `wait:` objective the bot stands still and the trooper starts its state machine: Idle (reaction delay) → Chase (immediate, since LoS holds) → Attack (windup, fire, cooldown). Each Attack cycle resolves a hitscan trace at the player with `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD` triangular spread. With the trooper at 4–8 tiles distance throughout the wait window (the enemy moves ~2.0 tiles/sec while in Chase between attacks), the player remains far outside contact range so any HP loss is provably from ranged hitscan. After the wait completes, `kill: enemy` engages: the bot turns toward the trooper, fires the pistol from path-follow distance, and the trooper dies in 2–4 shots (specs/25 § Damage Randomization). The dropped ammo clip lands at the trooper's death position (specs/60 § Enemy Ammo Drops); it is irrelevant to the assertions but exercises the death-time spawn hook.
 
 ## Scenario YAML Extension
 
@@ -241,6 +262,7 @@ described in § PR Preview Integration.
 - Test fixture `tests/level/local_chase_obstacle.yaml` exists on disk and uses the `level: local_chase_obstacle` field plus the `approach: enemy` / `kill: enemy` objectives.
 - `KiteMelee` is exercised by `level_generator` unit tests (`test_kite_melee_*` in `src/level_generator.rs`) which cover dimensions, spawn placement, the open-arena layout, the no-pickup invariant, and the within-`BOT_KITE_RANGE` distance assertion.
 - Test fixture `tests/combat/kite_enemy.yaml` exists on disk and uses the `level: kite_melee` field, the `kill: enemy` objective, and the `player.health > 80` assertion. `autopilot::run_all_scenarios` exercises the kite policy end-to-end alongside the unit tests above.
+- Test fixture `tests/combat/trooper_ranged_hits.yaml` exists on disk and uses the `level: ranged_standoff` field, a `wait:` objective followed by `kill: enemy`, and the `player.health < 100` assertion to verify the trooper's ranged hitscan damages the player from outside `ENEMY_CONTACT_RANGE_TILES`. `autopilot::run_all_scenarios` exercises the ranged-attack pipeline end-to-end.
 - IR module `level_generator` is added to `ir/module_plan.yaml` (universal-sink rule applied: `main.depends_on` lists `level_generator`).
 - IR contract for `level_generator` and the autopilot / `game_loop` extensions live in `ir/contracts/level_generator.yaml`, `ir/contracts/autopilot.yaml`, and `ir/contracts/game_loop.yaml`.
 - `.github/workflows/pr.yml` and `.github/workflows/release.yml` record the demo GIF using `tests/level/local_chase_obstacle.yaml` as the canonical PR-preview scenario.

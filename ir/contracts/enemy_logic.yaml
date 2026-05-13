@@ -11,9 +11,18 @@ public_types:
       pub enum EnemyState {
           Idle,    // pre-reaction-delay
           Chase,   // moving toward player
+          Attack,  // stationary windup → fire (hitscan) → cooldown
           Pain,    // briefly stunned
           Dead,    // health <= 0; corpse fade in progress or done
       }
+    notes: |
+      `Attack` was added in the 2026-05-13 combat slice (specs/25 §
+      Enemy ranged hitscan promotion). The trooper does not move while
+      in Attack; per-frame movement only runs in the Chase arm. Pain
+      may interrupt Attack at any time (see take_damage below); on
+      Pain expiry the trooper returns to Chase, not Attack — knowledge
+      `enemy_types.md § Chase Behavior` says the reaction routine
+      re-evaluates whether to fire on the next Chase frame.
   - name: Enemy
     definition: |
       pub struct Enemy {
@@ -23,28 +32,44 @@ public_types:
           pub state: EnemyState,
           pub time_in_state: f32,    // seconds since entering current state
           pub pain_flash_remaining: f32,  // 0.0 = no flash; counts down each tick
-          pub time_since_attack: f32,     // seconds since last contact hit (cooldown gate)
+          pub time_since_attack: f32,     // seconds since last Attack-state entry (cooldown gate)
+          pub attack_fired_this_sequence: bool,  // set true inside Attack once the hitscan fires; reset to false on Attack→Chase transition (or Attack-state re-entry)
           pub death_fade_remaining: f32,  // > 0 while in death fade; 0 when corpse should spawn
           pub corpse_spawned: bool,       // true once spawn_enemy_corpse has fired
+          pub ammo_drop_spawned: bool,    // true once game_loop has pushed the death-time ammo Pickup; gates one-per-trooper drop (specs/60 § Enemy Ammo Drops)
       }
+    notes: |
+      `attack_fired_this_sequence` is the in-state latch that
+      guarantees exactly one hitscan per Attack sequence even though
+      `update()` may tick many times during the sequence. `ammo_drop_spawned`
+      is the equivalent latch for the death-time drop spawn — game_loop
+      reads it in the frame_update_order drop scan and flips it true
+      after pushing the Pickup.
 public_constants:
-  - { name: ENEMY_MAX_HEALTH,         type: i32, value: "20",     source: "specs/25 § Enemy" }
-  - { name: ENEMY_SPEED_TILES_PER_SEC,type: f32, value: "2.0",    source: "specs/25 § Enemy" }
-  - { name: ENEMY_RADIUS_TILES,       type: f32, value: "0.375",  source: "specs/25 § Visual (12 px / 32 px) -- used for hit detection by weapon_system" }
-  - { name: ENEMY_REACTION_DELAY,     type: f32, value: "0.23",   source: "specs/25 § Enemy" }
-  - { name: ENEMY_ATTACK_COOLDOWN,    type: f32, value: "0.54",   source: "specs/25 § Enemy" }
-  - { name: ENEMY_PAIN_DURATION,      type: f32, value: "0.17",   source: "specs/25 § Enemy" }
-  - { name: ENEMY_PAIN_CHANCE,        type: f32, value: "0.78",   source: "specs/25 § Enemy (200/255)" }
-  - { name: ENEMY_CONTACT_RANGE_TILES,type: f32, value: "0.8125", source: "specs/25 § Enemy (player 14 + enemy 12 px = 26 px / 32 px)" }
-  - { name: ENEMY_ATTACK_DAMAGE_VALUES, type: "[i32; 5]", value: "[3, 6, 9, 12, 15]", source: "specs/25 § Enemy (formula (rand(0..4)+1)*3)" }
+  - { name: ENEMY_MAX_HEALTH,         type: i32, value: "20",     source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Enemy Health Tiers)" }
+  - { name: ENEMY_SPEED_TILES_PER_SEC,type: f32, value: "2.0",    source: "specs/25 § Enemy (Generation default — knowledge-derived but rescaled to tile units)" }
+  - { name: ENEMY_RADIUS_TILES,       type: f32, value: "0.375",  source: "specs/25 § Visual (12 px / 32 px) -- used for hit detection by weapon_system and by the trooper's chase-movement collision" }
+  - { name: ENEMY_REACTION_DELAY,     type: f32, value: "0.23",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § Detection and Alerting, 8 ticks @ 35Hz)" }
+  - { name: ENEMY_PAIN_DURATION,      type: f32, value: "0.17",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § State Machine, 6 ticks @ 35Hz)" }
+  - { name: ENEMY_PAIN_CHANCE,        type: f32, value: "0.78",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § Pain System, 200/256)" }
+  - { name: ENEMY_CONTACT_RANGE_TILES,type: f32, value: "0.8125", source: "specs/25 § Enemy (player 14 + enemy 12 px = 26 px / 32 px). Retained as a derived constant — referenced by autopilot kite buffer (BOT_KITE_RANGE) and by the RangedStandoff demo-level rationale (specs/15). The Attack state replaces contact damage as the trooper's primary harm vector; specs/25 § Enemy § Deferred from knowledge tracks the melee-contact deferral." }
+  - { name: ENEMY_ATTACK_RANGE_TILES, type: f32, value: "64.0",   source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Range and Hit Detection, 2048 world units / 32 px per tile)" }
+  - { name: ENEMY_ATTACK_SPREAD_RAD,  type: f32, value: "0.3839", source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Accuracy and Spread, 22° each side; 22 * π / 180 ≈ 0.3839)" }
+  - { name: ENEMY_ATTACK_SEQUENCE_SEC,type: f32, value: "0.74",   source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § State Machine, 26 ticks @ 35Hz). Replaces the prior ENEMY_ATTACK_COOLDOWN constant — the contact-damage cooldown is retired; this is the full Attack-state duration (wind-up + fire + cooldown sub-phases)." }
+  - { name: ENEMY_ATTACK_WINDUP_SEC,  type: f32, value: "0.286",  source: "specs/25 § Enemy (knowledge-backed: knowledge/enemy_types.md § State Machine, 10-tick wind-up @ 35Hz). Time-in-Attack-state at which the hitscan trace fires; before this elapses the trooper is facing the target but has not yet released the shot." }
+  - { name: ENEMY_ATTACK_DAMAGE_VALUES, type: "[i32; 5]", value: "[3, 6, 9, 12, 15]", source: "specs/25 § Enemy (knowledge-backed: knowledge/combat_balance.md § Hitscan Damage Formula, `((rnd%5) + 1) * 3`)" }
 public_methods:
   - signature: "pub fn new(spawn: Vec2) -> Enemy"
     notes: |
       health = ENEMY_MAX_HEALTH, alive = true, state = Idle,
       time_in_state = 0.0, pain_flash_remaining = 0.0,
-      time_since_attack = ENEMY_ATTACK_COOLDOWN (so the *first*
-      attack can fire immediately after the reaction delay),
-      death_fade_remaining = 0.0, corpse_spawned = false.
+      time_since_attack = ENEMY_ATTACK_SEQUENCE_SEC (so the *first*
+      attack can fire immediately after the reaction delay — the
+      cooldown gate `time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC`
+      is satisfied at spawn),
+      attack_fired_this_sequence = false,
+      death_fade_remaining = 0.0, corpse_spawned = false,
+      ammo_drop_spawned = false.
   - signature: |
       pub fn update(
           enemy: &mut Enemy,
@@ -65,21 +90,86 @@ public_methods:
              Chase:
                - if !player.alive: do nothing.
                - dx = player.pos - enemy.pos; dist = dx.length().
-               - if dist <= ENEMY_CONTACT_RANGE_TILES and
-                 time_since_attack >= ENEMY_ATTACK_COOLDOWN:
-                   dmg = ENEMY_ATTACK_DAMAGE_VALUES[rand_idx];
-                   player_state::take_damage(player, dmg);
-                   time_since_attack = 0.0;
-                   (no console message required; specs/20 mentions
-                    existing stdout messages but flagging their fate
-                    is a Coder decision per specs/40 line 156).
+               - Ranged attack gate (specs/25 § Enemy Implemented,
+                 knowledge/enemy_types.md § Chase Behavior + § Ranged
+                 Attack Probability Check minus the deferred distance
+                 probability):
+                   if dist <= ENEMY_ATTACK_RANGE_TILES
+                      AND enemy_has_los(enemy.pos, player.pos, level)
+                      AND time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC:
+                     enemy.state = Attack;
+                     enemy.time_in_state = 0.0;
+                     enemy.time_since_attack = 0.0;
+                     enemy.attack_fired_this_sequence = false;
+                     // snap facing toward player implicitly — the
+                     // hitscan in Attack uses angle_to(player.pos) at
+                     // the moment of fire, so an explicit facing
+                     // field on Enemy is not required.
+                     return;                       // do not move this tick
                - else: move toward player at
                    ENEMY_SPEED_TILES_PER_SEC * dt, blocked by
                    level::is_wall (use axis-aligned slide identical
                    to player_state::apply_input).
+             Attack:
+               - // Stationary; no movement this tick.
+               - if !enemy.attack_fired_this_sequence
+                    AND enemy.time_in_state >= ENEMY_ATTACK_WINDUP_SEC:
+                   // Fire the hitscan trace.
+                   let aim = angle_to(player.pos, enemy.pos);
+                   let spread = (rand_f32() - rand_f32())
+                                 * ENEMY_ATTACK_SPREAD_RAD;
+                   let aim_angle = aim + spread;
+                   let damage_idx = (rand_u32() % 5) as usize;
+                   let dmg = ENEMY_ATTACK_DAMAGE_VALUES[damage_idx];
+                   // Ray-march from enemy.pos along aim_angle up to
+                   // ENEMY_ATTACK_RANGE_TILES in TRACE_STEP-sized
+                   // steps (TRACE_STEP from weapon_system; Coder may
+                   // import or duplicate the 0.1-tile literal —
+                   // either is acceptable, see coder_degrees_of_freedom).
+                   //   If a step lands within PLAYER_RADIUS_TILES of
+                   //   player.pos (and the player is alive): call
+                   //   player_state::take_damage(player, dmg),
+                   //   visual_effects::spawn_blood_splat(fx, player.pos),
+                   //   stop the ray.
+                   //   Else if level::is_wall at the step: call
+                   //   visual_effects::spawn_wall_puff(fx, step_pos),
+                   //   stop the ray.
+                   //   Else if range exceeded: stop the ray. No impact
+                   //   effect (specs/40 § Impact Effect Rules: "a trace
+                   //   that hits nothing produces no impact effect").
+                   // Note: the trooper's hitscan does NOT spawn a
+                   //   muzzle_flash or tracer in this slice — the
+                   //   visual-feedback constraints in the task scope
+                   //   say "Do NOT invent new visual effects for enemy
+                   //   fire. Reuse existing entries from visual_effects
+                   //   if knowledge backs them." The existing
+                   //   muzzle_flash and tracer effects are player-only
+                   //   in specs/40; reusing them for enemy fire would
+                   //   change their semantic (currently "player shot
+                   //   fired"). Adding distinct enemy-muzzle / enemy-
+                   //   tracer effects is parked as a follow-up
+                   //   (specs/40 § Deferred — Per-weapon puff variants
+                   //   covers the structural form). Wall puffs and
+                   //   blood splats are kind-agnostic in specs/40 so
+                   //   they reuse cleanly.
+                   enemy.attack_fired_this_sequence = true;
+               - if enemy.time_in_state >= ENEMY_ATTACK_SEQUENCE_SEC:
+                   enemy.state = Chase;
+                   enemy.time_in_state = 0.0;
+                   enemy.attack_fired_this_sequence = false;
+                   // time_since_attack continues to count from the
+                   // Attack-state entry — Chase's gate above checks
+                   // time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC,
+                   // so the trooper can re-enter Attack the next
+                   // tick if LoS and range still hold (the cooldown
+                   // is the sequence duration itself, exactly as the
+                   // reference's no-double-attack flag enforces).
              Pain:
                - if time_in_state >= ENEMY_PAIN_DURATION:
                    transition to Chase (reset time_in_state = 0).
+                   attack_fired_this_sequence stays as-is — it is
+                   irrelevant outside Attack, and will be reset on
+                   the next Attack entry.
              Dead:
                - if !corpse_spawned and death_fade_remaining > 0:
                    death_fade_remaining = (death_fade_remaining
@@ -92,6 +182,24 @@ public_methods:
       call it. update() is the per-frame AI hook, so spec/80 §
       API Surface permits direct &mut Player and &mut VisualEffects
       (resolution A).
+
+      RNG: enemy_logic uses the module-private RNG state seeded from
+      ENEMY_RNG_SEED (specs/25 § RNG Seeds). Coder may keep the RNG
+      on each Enemy (consistent with the prior contract notes) or
+      module-private — both shapes meet specs/35 § Determinism since
+      the seed is fixed. The Attack hitscan introduces two new RNG
+      consumers per attack (spread + damage index); both consume
+      from the same stream as the existing pain-check RNG.
+
+      LoS helper `enemy_has_los(from: Vec2, to: Vec2, level: &Level) -> bool`
+      is module-private (Coder degree of freedom). Tile-grid ray-cast
+      at TRACE_STEP-sized samples; returns false on first sample
+      inside Tile::Wall, else true. Closed-form 2D DDA is allowed
+      in lieu of stepping. autopilot's `has_line_of_sight` helper
+      already implements the same algorithm (Coder may extract a
+      shared `level_data::has_los` if both call sites benefit; spec
+      treats this as Coder discretion — see
+      coder_degrees_of_freedom in _shared.yaml).
   - signature: |
       pub fn take_damage(
           enemy: &mut Enemy,
@@ -110,10 +218,20 @@ public_methods:
              enemy.death_fade_remaining = ENEMY_DEATH_FADE_DURATION;
              fx.spawn_enemy_death_fade(enemy.pos);
              // corpse spawns later in update() per spec/40 line 100.
+             // The death-time ammo drop is handled by game_loop's
+             // drop-scan step in frame_update_order (specs/60 §
+             // Enemy Ammo Drops); take_damage does NOT push to
+             // level.pickups because it does not hold the &mut Level
+             // borrow. The Enemy.ammo_drop_spawned flag stays false
+             // here and is flipped by the drop-scan after this tick.
         4. else if rand_f32() < ENEMY_PAIN_CHANCE:
              enemy.state = EnemyState::Pain;
              enemy.time_in_state = 0.0;
              enemy.pain_flash_remaining = ENEMY_PAIN_FLASH_DURATION;
+             // Pain interrupts Attack at any point, including mid-
+             // sequence after the hitscan has already fired. The
+             // attack_fired_this_sequence flag stays as-is — it is
+             // overwritten on the next Attack-state entry.
              // spec/40 § Enemy Pain Flash: re-arm flash on every
              // *successful* pain check, not on every hit.
       take_damage is invoked from inside weapon_system::fire which
@@ -121,12 +239,32 @@ public_methods:
       is therefore part of the combat tick borrow graph.
       Spec/80 exception A applies transitively.
 cross_module_borrows:
-  - "&mut Player (apply contact damage in update)"
-  - "&Level (immutable read in update for collision)"
-  - "&mut VisualEffects (spawn pain flash, death fade, corpse) -- spec/80 exception A"
+  - "&mut Player (apply ranged hitscan damage in update's Attack arm)"
+  - "&Level (immutable read in update for collision + LoS + Attack ray-march)"
+  - "&mut VisualEffects (spawn pain flash, death fade, corpse, blood splat on enemy ranged hit, wall puff when enemy hitscan misses player into wall) -- spec/80 exception A"
 notes: |
   ENEMY_PAIN_FLASH_DURATION is imported from visual_effects (it is
   a visual constant; the enemy struct just holds the current
   remaining timer). Random helper -- enemy may use a tiny LCG;
   Coder can share a module-private RNG with weapon_system or
   duplicate. Coder degree of freedom.
+
+  The Attack state's hitscan reuses player_state::take_damage to
+  apply damage to the player — same entry point as the prior
+  contact-damage path. The damage tint accumulator
+  (Player.damage_count) is therefore driven identically whether
+  the trooper hits via contact (legacy) or hitscan (this slice's
+  Implemented path). Visual_effects::spawn_blood_splat is reused
+  for the impact point at player.pos when the trooper's trace
+  lands on the player (kind-agnostic in specs/40 § Impact Effects
+  — same effect as a player-fired weapon impact on an enemy);
+  visual_effects::spawn_wall_puff is reused for the trooper's
+  miss-into-wall case.
+
+  Per the combat-slice task scope: "Do NOT change pistol or player
+  tuning; weapon_system edits are limited to the trooper hitscan
+  path. Pistol behavior must remain identical." The hitscan
+  implementation lives entirely inside enemy_logic::update's
+  Attack arm — weapon_system::fire is unchanged. A shared
+  hitscan-helper extraction would be a follow-up slice (see
+  weapon_system contract notes).

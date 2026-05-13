@@ -27,39 +27,44 @@ Existing rows below this point predate the convention and are kept verbatim — 
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| Health | 20 | knowledge/combat_balance.md |
-| Speed | 2.0 units/sec | Adapted from reference (slower than player) |
-| Detection | Immediate (simplified) | Target: line of sight, no distance limit |
-| Reaction delay | 0.23 seconds | Time before first attack after spotting player |
-| Attack type | Contact damage | Target: hitscan at range |
-| Attack damage | 3, 6, 9, 12, or 15 per hit | Formula: `(random(0..4) + 1) * 3`, mean ~9 |
-| Attack cooldown | 0.54 seconds | Time between contact hits |
+| Health | 20 | knowledge/combat_balance.md § Enemy Health Tiers ("Basic hitscan trooper (low HP): 20 HP") |
+| Speed | 2.0 units/sec | Adapted from reference (slower than player). Knowledge `enemy_types.md § Movement System` reports the reference's per-step speed (8 units/move-tick, ~280 units/sec at 35 ticks/sec); 2.0 tiles/sec scales that down so the trooper is slower than the player's `MAX_SPEED` while still feeling threatening at our 20×15 tile world. Generation default — knowledge-derived but rescaled to the prototype's tile-unit speed model. |
+| Detection | Line of sight (no distance limit) | knowledge/enemy_types.md § Detection and Alerting ("Visual scan ... line of sight"), § Line of Sight ("ray trace ... checks for intercepting two-sided lines"). No sound propagation, no 180° forward arc, no reject table — the prototype does a tile-grid ray-cast from enemy to player and accepts any LoS hit. The "180° forward arc" and "sound propagation" rules are deferred (this section's § Deferred-from-knowledge). |
+| Reaction delay | 0.23 seconds | knowledge/enemy_types.md § Detection and Alerting ("reaction time of 8 ticks" at 35 ticks/sec) and § Chase Behavior ("reaction time counter ... will not attack while non-zero"). Time before the first Attack-state entry after the trooper spots the player. |
+| Attack type | Hitscan at range | knowledge/enemy_types.md § Basic Hitscan Attack ("instant hitscan trace, not a projectile"). Replaces the prior "contact damage" simplification (specs/25 reconcile pass). |
+| Attack damage | 3, 6, 9, 12, or 15 per hit | Formula: `(random(0..5) + 1) * 3`, mean ~9. knowledge/combat_balance.md § Hitscan Damage Formula ("Enemy hitscan (basic grunt): `((rnd%5) + 1) * 3` = 3-15 per shot"). |
+| Attack range | 64.0 tiles (= 2048 map units) | knowledge/combat_balance.md § Range and Hit Detection ("Hitscan maximum range (MISSILERANGE): 2048 world units"). At 32 px/tile (`TILE_SIZE`), 2048 / 32 = 64 tiles — same conversion as `PISTOL_RANGE_TILES` for the player. |
+| Attack spread | +/- 22 degrees max | knowledge/combat_balance.md § Accuracy and Spread ("Enemy basic grunt: shift = 20, max spread ~22 degrees each side"). Triangular distribution applied per shot via `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD`. |
+| Attack sequence | 0.74 seconds | knowledge/enemy_types.md § State Machine ("Attack (Missile): 26 ticks (~0.74 seconds): 10-tick wind-up, 8-tick fire frame, 8-tick cooldown") at 35 ticks/sec. Total Attack-state duration; the trooper does not move while in Attack. After the sequence, transitions back to Chase. |
+| Attack windup | 0.286 seconds | knowledge/enemy_types.md § State Machine ("10-tick wind-up: face target") at 35 ticks/sec = 10 / 35 ≈ 0.286. Time from Attack-state entry until the hitscan trace fires; the trooper's facing snaps toward the player on entry. |
 | ENEMY_RADIUS_TILES | 0.375 | Derived from enemy visual radius 12 px / TILE_SIZE (32). Used for collision detection in `enemy_logic.rs` and implicitly by `ENEMY_CONTACT_RANGE_TILES`. Captured during reconcile pass — was present in code but not named in spec. |
-| ENEMY_CONTACT_RANGE_TILES | 0.8125 tile (= 26 px) | Derived from player + enemy visual radii in `## Visual` (14 px + 12 px) divided by `TILE_SIZE`. Specs/20 says "contact damage when within melee range" without naming a value; this range fires the hit exactly when the two discs visually touch. Captured during a reconcile pass (was inlined as a derived constant in `enemy_logic.rs`). |
-| Pain chance | 78% (200/255) | Chance to enter pain/stagger state when hit |
-| Pain duration | 0.17 seconds | Duration of pain stagger animation |
-| AI states | Idle, Chase, Pain, Death | Target adds: Attack |
+| ENEMY_CONTACT_RANGE_TILES | 0.8125 tile (= 26 px) | Derived from player + enemy visual radii in `## Visual` (14 px + 12 px) divided by `TILE_SIZE`. Retained as a public constant because the bot's kite-mode buffer (`BOT_KITE_RANGE` in § Autopilot) and the `RangedStandoff` demo-level rationale (specs/15) both reference it. The Attack state replaces contact damage as the trooper's primary harm vector — see `### Deferred from knowledge` below for the contact-melee rationale. |
+| Pain chance | 78% (200/255) | knowledge/enemy_types.md § Pain System ("Basic hitscan trooper (low HP) pain chance: 200/256 (~78%)"). Chance to enter pain/stagger state when hit. |
+| Pain duration | 0.17 seconds | knowledge/enemy_types.md § State Machine ("Pain: Two frames of 3 ticks each (6 ticks total, ~0.17 seconds)") at 35 ticks/sec. Pain interrupts whatever state the trooper was in (Idle, Chase, or Attack) and returns to Chase on expiry. |
+| AI states | Idle, Chase, Attack, Pain, Death | knowledge/enemy_types.md § State Machine. The Attack state was added in the 2026-05-13 combat slice (replacing the prior contact-damage path); per `### Deferred from knowledge` below, melee Idle/Chase/Pain/Death timings, the no-double-attack flag, and the distance-based attack probability check are deferred. |
+| Drop on death | Ammo clip (10 rounds) | knowledge/enemy_types.md § Death and Item Drops ("The basic hitscan trooper drops a clip (bullet ammo) on death"); knowledge/pickups.md § Drop on Kill ("basic hitscan trooper → small primary-ammo pickup (dropped, ~half clip-load)"). Knowledge says reference drops a *half*-clip via the "dropped" flag (5 rounds at our `PICKUP_AMMO_AMOUNT = 10`); the prototype simplifies by spawning the existing full-amount `Pickup { kind: Ammo, amount: PICKUP_AMMO_AMOUNT, active: true }` at the trooper's death position, reusing the `level.pickups` channel that the per-frame pickup check already drains. The half-clip "dropped" flag is deferred (single-amount ammo pickup; promotes to a richer pickup model when more enemy types ship). See specs/60 § Enemy Ammo Drops. |
 
-### Target (from knowledge, not yet implemented)
+### Deferred from knowledge
 
-| Constant | Value | Source |
-|----------|-------|--------|
-| Attack type | Hitscan at range | knowledge/enemy_types.md |
-| Attack range | 2048 map units | Same as player weapon range |
-| Attack spread | +/- 22 degrees max | Triangular distribution |
-| Attack sequence | 0.74 seconds | Wind-up, fire, cooldown |
-| Detection | Line of sight | No distance limit |
-| Idle scan period | 0.57 seconds per cycle | Two frames at 0.29s each |
-| Chase cycle time | 0.91 seconds | Eight frames at ~0.11s each |
-| Movement | 8-directional grid | Prefers diagonal toward player |
-| Target threshold | 2.86 seconds | Stubborn pursuit duration |
-| Move count | 0--15 steps | Steps before re-evaluating direction |
-| Active sound chance | 1.2% per chase frame | Ambient sound |
-| Radius | 20 map units | Collision size |
-| Height | 56 map units | Vertical extent |
-| Mass | 100 | Knockback resistance factor |
-| Gib threshold | -20 HP | Extreme death on overkill |
-| Drop on death | Ammo clip | Item dropped when killed |
+The prior `### Target` table is retired — every row that the prototype implements has moved into `### Implemented` above. The rows below are knowledge-documented behaviors that the prototype intentionally does NOT implement in this slice. Reconciler should not flag them as drift; they are tracked here so a future Architect pass can promote them when the spec scope expands.
+
+| Behavior | Knowledge source | Why deferred |
+|----------|-------------------|--------------|
+| Distance-based ranged-fire probability check | knowledge/enemy_types.md § Ranged Attack Probability Check | Knowledge describes a `random(0..255) < distance_with_modifiers` gate that suppresses some firings at long range. The prototype always fires when LoS, range, and Attack-state cooldown all hold — this overestimates the trooper's volume of fire at long range but keeps the per-frame logic simple. Promoted to a tunable when the enemy roster expands. |
+| No-double-attack flag | knowledge/enemy_types.md § Chase Behavior ("After attacking, sets a flag preventing it from attacking on the very next chase frame ... picks a new direction") | Knowledge says the trooper takes at least one chase frame between attacks AND switches direction. The prototype's Attack→Chase transition itself enforces "at least one tick of Chase between attacks" because the cooldown gate (`time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC`) is checked from Chase, but the direction-switch is not implemented. Visual symptom: the trooper may continue moving along the same axis between attacks. Cosmetic only. |
+| 8-directional grid movement (knowledge "prefers diagonal toward player") | knowledge/enemy_types.md § Chase Behavior, § Movement System | The prototype uses smooth axis-aligned slide (the same code path as `player_state::apply_input`) instead of an 8-direction grid. The on-screen result is similar (the trooper closes on the player along a roughly-direct path) but lacks the reference's "staircase" pathing aesthetic. Promoted when path visuals matter for the GIF. |
+| Idle scan period (0.57s cycle) | knowledge/enemy_types.md § State Machine ("Idle (Spawn): Two frames alternating with 10-tick durations") | Idle in the prototype is a single timer-based gate (`time_in_state >= ENEMY_REACTION_DELAY` then transitions to Chase). The two-frame scan animation is cosmetic; the LoS check itself is implicit because the prototype detects the player on the first Idle tick (no sweep arc). Promoted when sprite animation lands. |
+| Chase cycle time (0.91s, eight frames) | knowledge/enemy_types.md § State Machine, § Chase Behavior | The prototype's Chase tick runs once per frame at variable dt; the eight-frame animation cycle is cosmetic. |
+| Target threshold (2.86s stubborn pursuit) | knowledge/enemy_types.md § Chase Behavior | Single-target prototype — the trooper only "knows about" the player, so target switching is not implemented. Promoted when multi-enemy-vs-multi-target combat lands. |
+| Move count (0–15 steps before re-eval) | knowledge/enemy_types.md § Chase Behavior | Tied to the deferred 8-directional grid above. |
+| Active sound chance (1.2% per chase frame) | knowledge/enemy_types.md § Chase Behavior | Audio system not implemented. |
+| 180° forward visual arc during Idle scanning | knowledge/enemy_types.md § Detection and Alerting | The prototype's LoS check is omnidirectional (any LoS triggers detection). Visible symptom: a trooper detects a player approaching from behind, where the reference would not. Promoted when a behind-the-back grace period matters. |
+| Sound-based detection / sound propagation | knowledge/enemy_types.md § Detection and Alerting | Audio system not implemented. |
+| Reject-table optimization for LoS | knowledge/enemy_types.md § Line of Sight | Map-asset optimization; the prototype's tile-grid ray-cast is fast enough at 20×15. |
+| Eye height (3/4 of total height) | knowledge/enemy_types.md § Line of Sight | The prototype is 2D — eye height is meaningless without vertical map geometry. Tracked by specs/45 for the raycaster renderer (already deferred there). |
+| Radius / Height / Mass (collision/knockback) | knowledge/enemy_types.md § Enemy Constants Summary | Mass-based knockback and 56-unit vertical extent are map-format properties; the prototype uses `ENEMY_RADIUS_TILES` (rescaled from visual radius) for collision and has no knockback. |
+| Gib threshold (-20 HP) | knowledge/enemy_types.md § Death and Item Drops | Single death animation; gib animation deferred (specs/40 § Deferred). |
+| Half-amount "dropped" ammo clip | knowledge/pickups.md § Drop on Kill, § Ammo Pickup Tiers | Single-amount ammo pickup in the prototype; the half-clip rule promotes when a richer pickup model lands (separate small/large/dropped variants). |
 
 ## Weapon (Pistol -- starting weapon)
 

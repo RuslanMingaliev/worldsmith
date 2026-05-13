@@ -298,6 +298,7 @@ frame_update_order:
   - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds (Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX), set pickup.active=false, call player_state::take_health_pickup or take_ammo_pickup based on pickup.kind, and call visual_effects::increment_pickup_tint(&mut state.fx) (specs/40 § Pickup Tint Screen Flash)."
   - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)"
   - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire. Ammo gate is also inside fire(): if player.ammo == 0, fire() returns without side effects after the cooldown gate."
+  - "// specs/25 § Enemy drop on death + specs/60 § Enemy Ammo Drops: scan state.enemies AFTER the enemy update loop AND after weapon_system::fire (so a same-frame kill drops the pickup that frame, not next frame). For each enemy where !enemy.alive AND !enemy.ammo_drop_spawned, push Pickup { kind: PickupKind::Ammo, pos: enemy.pos, active: true } onto state.level.pickups and set enemy.ammo_drop_spawned = true. Coder may use a two-pass shape (collect dropped positions, then push) to side-step split-borrow ergonomics; both shapes meet the contract. The behavior is `exactly one Pickup pushed per dead trooper, at the trooper's death position, in the same frame death is detected`. Re-running this scan on subsequent frames is a no-op because ammo_drop_spawned remains true. The drop is collectible by the existing per-frame pickup check on the next frame (the pickup check ran earlier this frame, before enemy update + weapon_system::fire, so the new Pickup is not seen until the next frame's pickup-check step)."
   - "player_state::decay_damage_tint(&mut state.player, dt)"
   - "visual_effects::tick(&mut state.fx, dt)"
   - "// specs/20 § Game Over Flow: the game-over DECISION (player alive becomes false; or pos.distance_to(level.exit) < EXIT_RADIUS) and the loop-EXIT ACTION (running = false) MUST be in separate iterations of the main loop. Implementation pattern: the decision sets `state.game_over_at = Some(elapsed_seconds)`. The exit action runs only when `now - game_over_at >= GAME_OVER_HOLD_SEC` from specs/25 § Visual. Until then, the loop continues to call update + draw with `game_over` set so the colored border keeps rendering. Without this separation, the implementation flips running=false on the same tick the win/lose state is detected and the colored border renders for zero frames."
@@ -327,6 +328,32 @@ service_emit_decisions:
       pins the signature: "the corpse marker is spawned by
       enemy.update()" -- exactly so update() owns the &mut VisualEffects
       borrow rather than take_damage() pulling it transitively.
+      The Attack-state hitscan added in the 2026-05-13 combat slice
+      reuses the same borrow chain: enemy_logic::update already takes
+      &mut Player and uses player_state::take_damage as the call site
+      for hitscan-on-player damage application, and &mut VisualEffects
+      (for blood splat at the player on hit, wall puff on miss-into-
+      wall). No new borrow is introduced — only a new consumer of the
+      existing borrows. Resolution stays A.
+
+  - call_site: "game_loop drop-spawn scan (specs/60 § Enemy Ammo Drops)"
+    resolution: B
+    rationale: |
+      The ammo-drop spawn is NOT enemy_logic's responsibility because
+      enemy_logic::update has only &Level, not &mut Level::pickups —
+      pushing a Pickup requires the &mut Vec<Pickup> borrow. Rather
+      than widening update()'s borrow graph (which would force
+      weapon_system::fire's &Level to also become &mut Level on the
+      take_damage transitive path), game_loop hosts a small scan
+      after the enemy update + weapon fire steps in
+      frame_update_order. enemy_logic::take_damage flips
+      Enemy.ammo_drop_spawned = false (the field is initialized
+      false and stays false through state transitions); game_loop's
+      scan reads !enemy.alive AND !enemy.ammo_drop_spawned to decide
+      whether to push, then flips to true. This is the canonical
+      Resolution-B shape: the per-frame hook returns data
+      (Enemy.ammo_drop_spawned still false after death) that the
+      orchestration layer (game_loop) reads and acts on.
 
   - call_site: "enemy_logic::take_damage"
     resolution: A
@@ -369,6 +396,9 @@ coder_degrees_of_freedom:
   - "Whether the ammo-opportunism two-segment path is computed as one concatenated BFS or as two replans (player→pickup, then pickup→target after consumption). Both meet the spec; option (b) reuses single-target BFS without modification."
   - "Choice of slide algorithm in player_state and enemy_logic (axis-aligned per spec/21; the per-axis order and the integer-vs-float of the radius check are Coder-internal)."
   - "Whether VisualEffect lifetime decay uses retain() or a manual swap_remove loop -- both meet the spec."
+  - "Enemy LoS helper for the Attack-state gate (`enemy_has_los(from, to, level) -> bool`) shape. Coder may keep it module-private to enemy_logic, or extract a shared `level_data::has_los` helper that both enemy_logic and autopilot's `has_line_of_sight` import. Either shape meets the contract; the tile-grid ray-cast at TRACE_STEP samples (or the closed-form 2D DDA equivalent) is what is pinned in spec, not the function's home."
+  - "Whether the trooper's hitscan ray-march reuses TRACE_STEP imported from weapon_system or duplicates the 0.1-tile literal. Both are acceptable; weapon_system's TRACE_STEP is already public for the player-fire path, so importing it does NOT widen weapon_system's API surface."
+  - "Game_loop's drop-spawn scan implementation shape (single iter_mut + push, two-pass collect-then-push to avoid split-borrow ergonomics, drain_filter pattern, etc.). The contract pins the behavior (one Pickup pushed per dead trooper at the death position, gated by ammo_drop_spawned) and not the loop shape."
 
 # -----------------------------------------------------------------------------
 # Things intentionally NOT pinned (and flagged so Reconciler doesn't double-look)
@@ -399,10 +429,30 @@ spec_conflicts_resolved:
       (deferred) constants. Spec/25 takes precedence per CLAUDE.md
       "Specs are the source of truth".
     resolution: |
-      Coders implement the "Implemented" rows of specs/25 only. The
-      "Target (from knowledge, not yet implemented)" rows are carried
-      in spec/25 explicitly so they remain Reconciler-visible without
-      being implemented this run. Triangular spread IS implemented
-      (rand-rand) per the contract for weapon_system::fire above --
-      this is a partial uplift from the pre-existing approximation
-      and is consistent with specs/25 first-shot accuracy semantics.
+      Coders implement the "Implemented" rows of specs/25 only.
+      Triangular spread IS implemented (rand-rand) per the contract
+      for weapon_system::fire and enemy_logic::update Attack arm.
+      The 2026-05-13 combat slice promoted the trooper's ranged
+      hitscan, line-of-sight detection, Attack state, and ammo-clip
+      drop from the prior `### Target` table to `### Implemented` —
+      the table itself was retired and replaced by `### Deferred from
+      knowledge` (specs/25 § Enemy), which lists only the rows the
+      prototype intentionally does NOT ship (distance probability
+      check, no-double-attack direction switch, 8-directional grid
+      pathing, idle-scan animation, target threshold, sound
+      propagation, gib threshold, half-clip "dropped" flag, etc.).
+      ir/game_ir.yaml's `simplifications` block was refreshed in the
+      same combat-slice commit: the prior three entries
+      (`enemy_attack_is_contact_not_hitscan`,
+      `enemy_ai_simplified_no_attack_state`,
+      `enemy_detection_is_immediate_no_los`) are removed (kept as
+      `# Removed:` comments for traceability) and replaced by the
+      four narrower deferred entries that match
+      specs/25 § Enemy § Deferred from knowledge
+      (`enemy_ranged_fire_no_distance_probability_check`,
+      `enemy_no_double_attack_direction_switch_omitted`,
+      `enemy_movement_smooth_slide_not_8_directional_grid`,
+      `enemy_drop_full_amount_no_dropped_flag`). Specs precedence
+      still applies — the IR file's `simplifications` list is now a
+      consistent shorthand of spec/25's deferred-from-knowledge
+      table, not an alternative source.
