@@ -81,11 +81,63 @@ jobs:
           sudo npm install -g @anthropic-ai/claude-code
           claude --version
 
+      - name: Stage prior-release source for Reconciler diff
+        id: prev_src
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -e
+          # Reconciler's release-mode addendum diffs per-module test counts
+          # against the prior release in addition to `generated-snapshot`.
+          # Release tags do not contain `generated/` (gitignored), so the
+          # source for the prior release lives only inside its
+          # `worldsmith-game-<prev>-src.zip` asset. Download + unpack it to a
+          # known path and thread that path into Reconciler's Scope block.
+          PREV=$(gh release list --exclude-drafts --limit 5 \
+                  --json tagName --jq ".[] | select(.tagName != \"$VERSION\") | .tagName" \
+                  | head -n1)
+          if [ -z "$PREV" ]; then
+            PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          fi
+          if [ -z "$PREV" ]; then
+            echo "::warning::No prior release tag found; Reconciler prev-release diff will be skipped."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "src_dir=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Prior release tag: $PREV"
+          mkdir -p artifacts/prev-release-src
+          STAGE=$(mktemp -d)
+          ASSET="worldsmith-game-${PREV}-src.zip"
+          if ! gh release download "$PREV" --pattern "$ASSET" --dir "$STAGE"; then
+            echo "::warning::Could not download $ASSET from release $PREV; Reconciler prev-release diff will be skipped."
+            echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+            echo "src_dir=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          unzip -q "$STAGE/$ASSET" -d "$STAGE/unpack"
+          # Layout (per package_release.py): worldsmith-game-<PREV>/src/<module>.rs
+          INNER_SRC="$STAGE/unpack/worldsmith-game-${PREV}/src"
+          if [ ! -d "$INNER_SRC" ]; then
+            echo "::warning::Expected $INNER_SRC inside $ASSET but not found; layout may have changed."
+            ls -la "$STAGE/unpack" || true
+            echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+            echo "src_dir=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cp -a "$INNER_SRC/." artifacts/prev-release-src/
+          echo "Unpacked $(ls artifacts/prev-release-src/ | wc -l) module files to artifacts/prev-release-src/"
+          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+          echo "src_dir=artifacts/prev-release-src" >> "$GITHUB_OUTPUT"
+
       - name: Run pipeline
         env:
           # Bills the operator's claude.ai Pro/Max subscription. Generated locally via
           # `claude setup-token` and stored as a repository secret.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          PREV_RELEASE_SRC: ${{ steps.prev_src.outputs.src_dir }}
+          PREV_RELEASE_TAG: ${{ steps.prev_src.outputs.tag }}
         run: |
           set -e
           if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
@@ -95,7 +147,13 @@ jobs:
           mkdir -p artifacts
           python tooling/orchestrator_run.py --mode release --phase architect
           python tooling/orchestrator_run.py --mode release --phase coder
-          python tooling/orchestrator_run.py --mode release --phase reconciler
+          if [ -n "${PREV_RELEASE_SRC:-}" ]; then
+            RECONCILER_SCOPE="prev_release_src: ${PREV_RELEASE_SRC}; prev_release_tag: ${PREV_RELEASE_TAG}"
+            python tooling/orchestrator_run.py --mode release --phase reconciler \
+              --scope "$RECONCILER_SCOPE"
+          else
+            python tooling/orchestrator_run.py --mode release --phase reconciler
+          fi
           python tooling/orchestrator_run.py --mode release --phase postmortem
 
       - name: Post-flight validate (catch accidental knowledge writes)

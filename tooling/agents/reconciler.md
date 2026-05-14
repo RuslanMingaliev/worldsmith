@@ -66,16 +66,19 @@ Any module where `POST < PRE` is a **coverage regression** — log under `### Dr
 
 Bare `Tests passing: N / N` in the report is **insufficient** when N decreased between regens. The 2026-05-08 release regen on commit `9ec001f` shipped 35 tests vs. 64 in the prior commit `b3a5237` — net loss of ~27 unit tests across `autopilot.rs` (-9), `game_loop.rs` (-5), `renderer.rs` (-4), and others. Reconciler's report read "Tests passing: 35 / 35" without flagging the drop; PostMortem propagated the same framing. The coverage hole would have baselined into `generated-snapshot` on merge, making restoration progressively harder for future PRs.
 
-**Release-mode addendum.** In release mode (orchestrator invoked with `--mode release` and no `--target-modules`), run the same grep against the **prior release tag** in addition to `generated-snapshot`:
+**Release-mode addendum.** In release mode, when `release.yml` has staged the prior release's source tree, the orchestrator threads its location into the `## Scope override` block as `prev_release_src: <path>; prev_release_tag: <tag>`. When that key is present, run the same grep against the prior release in addition to `generated-snapshot`:
 
 ```
-# previous_tag is provided by the orchestrator's `## Scope override` block.
-PRE_REL=$(git show <previous_tag>:generated/game/src/<module>.rs 2>/dev/null \
-          | grep -c '#\[test\]' || echo 0)
+# prev_release_src is provided by the orchestrator's `## Scope override` block;
+# it points at a flat directory of <module>.rs files extracted from the prior
+# release's worldsmith-game-<prev>-src.zip asset.
+PRE_REL=$(grep -c '#\[test\]' <prev_release_src>/<module>.rs 2>/dev/null || echo 0)
 PRE_SNAP=$(git show origin/generated-snapshot:src/<module>.rs 2>/dev/null \
            | grep -c '#\[test\]' || echo 0)
 POST=$(grep -c '#\[test\]' generated/game/src/<module>.rs)
 ```
+
+If the Scope block has no `prev_release_src` key (PR-mode invocation, first release with no prior tag, or asset download failed), skip the prior-release grep with a one-line note under `### Drift found` ("prior-release diff unavailable: prev_release_src not provided in scope") and rely on `PRE_SNAP` as the regression floor. Do NOT attempt `git show <previous_tag>:generated/...` as a fallback — `generated/` is gitignored, so release tags do not contain the generated tree, and the `git show` returns empty silently. The earlier version of this addendum (PR #61) used that recipe and burned ~5–8 turns per release on the dead path; the staging step in `release.yml` (added 2026-05-14) is the single supported source.
 
 Both diffs matter and the severity is the same release-blocker tier: `POST < PRE_REL` is the user-facing claim ("did this release regress coverage vs the last published release?") and goes verbatim into the Reconciler report so release_editor can reflect it in release notes; `POST < PRE_SNAP` catches drift accumulated between releases that should not propagate to the next snapshot. Log both as separate entries under `### Drift found` so PostMortem can distinguish "release-window drift" from "this-regen drift". The 2026-05-11 release regen shipped 61 tests vs. 77 in `generated-snapshot` (release-blocker D3) but the prior-release diff was never computed, so the user-facing line in release notes silently claimed "gameplay unchanged" — see release_editor.md § Inputs you should read.
 
