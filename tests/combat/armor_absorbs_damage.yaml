@@ -1,0 +1,13 @@
+scenario: armor_absorbs_damage
+description: Player spawns on a green armor pickup; trooper east of player fires hitscans during a wait, and the armor pool absorbs 1/3 of every incoming hit (specs/15 § ArmorAbsorption, specs/25 § Armor Damage Routing)
+level: armor_absorption
+
+objectives:
+  - wait: 180
+  - kill: enemy
+
+assertions:
+  - player.alive: true
+  - enemy.alive: false
+  - player.armor: "< 100"
+  - player.armor: "> 0"

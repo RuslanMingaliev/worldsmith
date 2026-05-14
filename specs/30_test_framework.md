@@ -335,8 +335,8 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 - Optional `level:` field on Scenario (specs/15) — selects a generated demo level instead of `level_data::build_default()` when set; backwards compatible with all existing fixtures.
 - Objective types: `kill:`, `reach:`, `approach:`, `wait:`.
 - Target names: `enemy`, `exit`, `spawn`, `pickup_health`, `pickup_ammo` (with fallback semantics).
-- Assertion fields: `player.alive`, `player.health`, `player.ammo`, `enemy.alive`, `game.won` — these five are implemented in `autopilot::get_field_value` as of the 2026-05-14 armor regen.
-- **Not yet implemented** (return "unknown field: <name>" failure at runtime): `player.armor` (planned for the 2026-05-14 armor slice but not landed in the Coder pass — see `artifacts/reconciler_report.md` § Drift found and `ir/contracts/autopilot.yaml § run_scenario § Field-value resolver` for the pinned field set the next regen must produce), `player.position.x`, `player.position.y`, `enemy.health`, `game.running`, `game.frames`.
+- Assertion fields: `player.alive`, `player.health`, `player.ammo`, `player.armor`, `enemy.alive`, `game.won` — these six are implemented in `autopilot::get_field_value` per `ir/contracts/autopilot.yaml § run_scenario § Field-value resolver`. `player.armor` was added in the 2026-05-14 armor slice for the `tests/combat/armor_absorbs_damage.yaml` scenario.
+- **Not yet implemented** (return "unknown field: <name>" failure at runtime): `player.position.x`, `player.position.y`, `enemy.health`, `game.running`, `game.frames`.
 - Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
 - Bot behavior: turn-toward objective, BFS pathfinding with periodic replan and bee-line fallback, kite at `BOT_KITE_RANGE`, range-gated firing at `BOT_FIRE_MAX_RANGE`, LoS-gated firing via tile-grid ray-cast, stuck detection with strafe recovery as fallback.
 - `reach: pickup_<kind>` completes on actual pickup consumption (`pickup.active == false`), not on proximity, per § Objectives.
