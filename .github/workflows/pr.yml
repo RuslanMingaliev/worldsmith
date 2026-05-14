@@ -199,11 +199,11 @@ jobs:
           TARGETS: ${{ steps.scope.outputs.targets }}
         run: |
           set -e
-          python tooling/orchestrator_run.py --mode release --phase coder \
+          python tooling/orchestrator_run.py --mode release --workflow pr --phase coder \
             --scope "Regenerate ONLY modules: $TARGETS" \
             --target-modules $TARGETS
-          python tooling/orchestrator_run.py --mode release --phase reconciler
-          python tooling/orchestrator_run.py --mode release --phase postmortem
+          python tooling/orchestrator_run.py --mode release --workflow pr --phase reconciler
+          python tooling/orchestrator_run.py --mode release --workflow pr --phase postmortem
 
       - name: Post-flight validate (catch accidental knowledge writes)
         if: steps.scope.outputs.module_count != '0'

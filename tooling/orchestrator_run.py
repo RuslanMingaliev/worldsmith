@@ -16,6 +16,11 @@ intermediate state surfaces immediately.
 Inputs:
 - --phase            extractor | architect | coder | reconciler | postmortem
 - --mode             release (kept as a parameter for future use)
+- --workflow         optional pr | release — names the calling GitHub workflow
+                     so agents can disambiguate PR-mode from release-mode runs
+                     (both pass `--mode release`; the framing string previously
+                     said `Mode: release` for both, which confused
+                     Reconciler/PostMortem mode-detection heuristics)
 - --scope            optional free-text scope (forwarded into the prompt)
 - --usage-jsonl      output path for the usage record (default: artifacts/usage.jsonl)
 - --transcript       optional path to also save the raw stream-json transcript
@@ -133,7 +138,7 @@ def build_frozen_context() -> str:
     return f"{header}\n\n{body}"
 
 
-def build_prompt(phase: str, mode: str, scope: Optional[str]) -> str:
+def build_prompt(phase: str, mode: str, scope: Optional[str], workflow: Optional[str]) -> str:
     role_prompt_path = AGENTS_DIR / f"{phase}.md"
     if not role_prompt_path.exists():
         raise SystemExit(
@@ -147,10 +152,21 @@ def build_prompt(phase: str, mode: str, scope: Optional[str]) -> str:
         else "## Scope\n\nProceed with the default scope described in the role prompt above.\n"
     )
 
+    # Workflow disambiguates PR-mode from release-mode runs. Both currently
+    # pass `--mode release` (the only valid value), so a previous "Mode:
+    # release" framing string was the same for both — Reconciler/PostMortem
+    # mode-detection heuristics misread pr.yml runs as release.yml runs.
+    # See PostMortem #80 (2026-05-14) for the misdiagnosis pattern.
+    workflow_line = (
+        f"Workflow: `{workflow}.yml`. " if workflow else
+        "Workflow: unknown (manual / local invocation). "
+    )
+
     framing = (
         "You are running NON-INTERACTIVELY inside a CI workflow. "
         "Treat all instructions in the role prompt as authoritative. "
-        f"Mode: `{mode}`. Repository root is the current working directory. "
+        f"Mode: `{mode}`. {workflow_line}"
+        "Repository root is the current working directory. "
         "Use the tools available to you to make file changes; the per-phase "
         "`--allowedTools` list is authoritative — do not assume Bash is available. "
         "Do not ask questions — if information is missing, escalate by writing a "
@@ -285,13 +301,14 @@ def run_real(
     transcript: Optional[Path],
     max_turns: int,
     model: Optional[str],
+    workflow: Optional[str],
 ) -> PhaseUsage:
     if shutil.which("claude") is None:
         raise SystemExit(
             "`claude` CLI not found in PATH. Install Claude Code first."
         )
 
-    prompt = build_prompt(phase, mode, scope)
+    prompt = build_prompt(phase, mode, scope, workflow)
     # Save the rendered prompt as an artifact so the operator can inspect what
     # actually went to the model.
     prompt_artifact = REPO_ROOT / "artifacts" / f"prompt_{phase}.txt"
@@ -331,6 +348,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", required=True, choices=PHASES)
     parser.add_argument("--mode", required=True, choices=["release"])
+    parser.add_argument(
+        "--workflow",
+        default=None,
+        choices=["pr", "release"],
+        help="Name the calling GitHub workflow (pr.yml or release.yml). "
+             "Surfaces in the agent framing string as `Workflow: <name>.yml` "
+             "so Reconciler/PostMortem can disambiguate which workflow "
+             "scheduled the run. Both workflows pass `--mode release` (the "
+             "only valid mode value), so without this flag the framing was "
+             "ambiguous and PostMortem repeatedly misread PR runs as release "
+             "runs (see PR #79 / PostMortem #80).",
+    )
     parser.add_argument("--scope", default=None)
     parser.add_argument("--usage-jsonl", type=Path, default=DEFAULT_USAGE)
     parser.add_argument("--transcript", type=Path, default=None)
@@ -429,6 +458,7 @@ def main() -> int:
             transcript=args.transcript,
             max_turns=args.max_turns,
             model=args.model,
+            workflow=args.workflow,
         )
     finally:
         if baseline is not None and GENERATED_SRC_DIR.exists():

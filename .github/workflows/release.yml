@@ -145,16 +145,16 @@ jobs:
             exit 1
           fi
           mkdir -p artifacts
-          python tooling/orchestrator_run.py --mode release --phase architect
-          python tooling/orchestrator_run.py --mode release --phase coder
+          python tooling/orchestrator_run.py --mode release --workflow release --phase architect
+          python tooling/orchestrator_run.py --mode release --workflow release --phase coder
           if [ -n "${PREV_RELEASE_SRC:-}" ]; then
             RECONCILER_SCOPE="prev_release_src: ${PREV_RELEASE_SRC}; prev_release_tag: ${PREV_RELEASE_TAG}"
-            python tooling/orchestrator_run.py --mode release --phase reconciler \
+            python tooling/orchestrator_run.py --mode release --workflow release --phase reconciler \
               --scope "$RECONCILER_SCOPE"
           else
-            python tooling/orchestrator_run.py --mode release --phase reconciler
+            python tooling/orchestrator_run.py --mode release --workflow release --phase reconciler
           fi
-          python tooling/orchestrator_run.py --mode release --phase postmortem
+          python tooling/orchestrator_run.py --mode release --workflow release --phase postmortem
 
       - name: Post-flight validate (catch accidental knowledge writes)
         run: python tooling/validate_specs.py --verbose
@@ -439,6 +439,7 @@ jobs:
           # Failure here is non-fatal (fallback placeholders ship in compose).
           python tooling/orchestrator_run.py \
             --mode release \
+            --workflow release \
             --phase release_editor \
             --scope "previous_tag: ${PREV_TAG:-(unknown)}; current_tag: ${VERSION}" \
             || echo "::warning::release_editor phase failed; release notes will use fallback placeholders."
