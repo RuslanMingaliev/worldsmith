@@ -61,6 +61,50 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Lint issue scope
+        id: lint
+        env:
+          REF_REPO: ${{ env.REFERENCE_REPO }}
+        run: |
+          set -euo pipefail
+          gh issue view "$ISSUE_NUMBER" --json body -q .body > /tmp/issue_body.md
+          set +e
+          python tooling/check_issue_scope.py < /tmp/issue_body.md > /tmp/lint_verdict.json
+          LINT_CODE=$?
+          set -e
+          echo "verdict_code=${LINT_CODE}" >> "$GITHUB_OUTPUT"
+          echo "Linter verdict (exit ${LINT_CODE}):"
+          cat /tmp/lint_verdict.json
+          if [ "$LINT_CODE" = "1" ]; then
+            {
+              echo "**Issue rejected by \`tooling/check_issue_scope.py\`** before any token spend:"
+              echo
+              jq -r '.hard[] | "- " + .' /tmp/lint_verdict.json
+              if [ "$(jq '.soft | length' /tmp/lint_verdict.json)" != "0" ]; then
+                echo
+                echo "Soft warnings that would also have been raised:"
+                jq -r '.soft[] | "- " + .' /tmp/lint_verdict.json
+              fi
+              echo
+              echo "After addressing, re-apply the \`agent:run\` label."
+            } > /tmp/lint_comment.md
+            gh issue comment "$ISSUE_NUMBER" --body-file /tmp/lint_comment.md
+            gh issue edit "$ISSUE_NUMBER" --remove-label "agent:run" --add-label "agent:failed"
+          elif [ "$LINT_CODE" = "2" ]; then
+            {
+              echo "**Soft warnings from \`tooling/check_issue_scope.py\`** (proceeding):"
+              echo
+              jq -r '.soft[] | "- " + .' /tmp/lint_verdict.json
+            } > /tmp/lint_comment.md
+            gh issue comment "$ISSUE_NUMBER" --body-file /tmp/lint_comment.md
+          fi
+
+      - name: Block if lint hard-rejected
+        if: steps.lint.outputs.verdict_code == '1'
+        run: |
+          echo "::error::Linter hard-rejected this issue (see issue comment)."
+          exit 1
+
       - name: Install Claude CLI
         run: |
           set -e
@@ -263,7 +307,10 @@ jobs:
           esac
 
       - name: Comment on issue (failure)
-        if: failure()
+        # Skip when the linter already commented + relabeled — avoids a
+        # duplicate "Agent run failed" message on top of the structured
+        # rejection from `tooling/check_issue_scope.py`.
+        if: failure() && steps.lint.outputs.verdict_code != '1'
         run: |
           REASON="failed at a step. See run https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           if [ "${{ steps.extractor.outputs.blocked }}" = "true" ]; then

@@ -183,6 +183,7 @@ Local helper: the project-level skill `/create-agent-task` (`.claude/skills/crea
 ### Cost control
 
 - Permission gate, label gate, and reference clone all run before the first `claude` invocation — unauthorized triggers spend no tokens.
+- `tooling/check_issue_scope.py` runs immediately after Python setup, before the Claude CLI install and reference clone. Hard-rejects issues that bundle >2 modules in `Affected modules` or mandate knowledge backing while the reference repo is empty (the two failure modes that drove PR #28's 17-regen cycle); soft-warns on multi-track Goal phrasing or empty modules field. On hard-reject the workflow comments the structured reason on the issue, swaps `agent:run` → `agent:failed`, and exits — zero token spend on Claude. Tests: `python3 -m unittest tooling/check_issue_scope_test.py`.
 - `WORLDSMITH_MAX_TOKENS_PER_RUN` is honoured by both phases via `orchestrator_run.py`.
 - `concurrency: cancel-in-progress: true` keyed on issue number — re-labeling the same issue cancels the prior run.
 
