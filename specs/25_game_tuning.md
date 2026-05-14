@@ -21,28 +21,69 @@ Existing rows below this point predate the convention and are kept verbatim — 
 | Turn speed | 2.0 rad/sec | Tuned for 60 FPS (original was 35 ticks/sec) |
 | PLAYER_RADIUS_TILES | 0.4375 | Derived from player visual radius 14 px / `TILE_SIZE` (32). Used by `player_state::collides` to size the four-corner overlap test against `level_data::is_wall`, and referenced by name in `specs/15_level_generator.md § LocalChaseObstacle` to verify gap traversability. Captured during reconcile pass — the IR contract already cited `specs/25 § Visual` as its source but no named row existed. |
 
-## Enemy (Basic Hitscan Trooper)
+## Enemy
 
-### Implemented
+The prototype now ships TWO enemy archetypes: the **basic hitscan trooper** (slice-1, low HP, 1-pellet hitscan) and the **shotgun trooper** (slice-2, 30 HP, 3-pellet hitscan salvo). Both share the same state machine (`Idle / Chase / Attack / Pain / Dead`), the same Attack-state windup gate, the same `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD` triangular spread shape, and the same `[3, 6, 9, 12, 15]` per-pellet damage roll. The differences live in a small per-archetype constant table (`### Per-archetype constants` below): max health, pain chance, pellet count per Attack, and Attack-sequence duration.
+
+The archetype is encoded as a `level_data::Archetype` enum carried by each `level_data::EnemySpawn` record and stored as `Enemy.archetype` on the live entity. Per-archetype constants are looked up via `enemy_logic::archetype_stats(a) -> &'static ArchetypeStats` at the call sites that need them (`Enemy::new` for max health, `update`'s Attack arm for pellet count and sequence duration, `take_damage` for pain chance). See `ir/contracts/enemy_logic.yaml § public_types § Archetype` for the contract spelling.
+
+### Per-archetype constants
+
+Knowledge basis: `knowledge/enemy_types.md § Enemy Constants Summary` (the table row for each archetype). Pain-chance values are pinned exactly as the reference encodes them (`x/256`) so byte-identical pain-roll behavior is preserved across regens — `0.78` is the slice-1 value used for byte-identical basic-trooper replay; the shotgun trooper uses the exact `170.0 / 256.0` fraction.
+
+| Constant | Basic Trooper | Shotgun Trooper | Source |
+|----------|---------------|-----------------|--------|
+| Max health | 20 | 30 | knowledge/combat_balance.md § Enemy Health Tiers + knowledge/enemy_types.md § Enemy Constants Summary. |
+| Speed (tiles/sec) | 2.0 | 2.0 | knowledge/enemy_types.md § Enemy Constants Summary — "Speed of the move *step* is identical; chase-cycle cadence is per-archetype." The prototype models movement as smooth tile/sec rather than tick-based animation; per the slice scope ("speed identical to basic trooper") both archetypes share `2.0 tiles/sec`. The chase-cycle cadence variance (basic 4-tick frames vs shotgun 3-tick frames) is **deferred** because the prototype does not model the tick-based chase animation. |
+| Radius (tiles) | 0.375 | 0.375 | knowledge/enemy_types.md § Enemy Constants Summary — both archetypes share `radius = 20` map units. Reused for collision and sprite extent. |
+| Pain chance | 0.78 (≈ 200/256) | 170/256 (≈ 0.664) | knowledge/enemy_types.md § Pain System — basic 200/256, shotgun 170/256. The basic constant remains `0.78` (the slice-1 rounding) for byte-identical replay; the shotgun constant is the exact fraction `170.0 / 256.0` because no prior slice pinned a rounded value. |
+| Pellet count per Attack | 1 | 3 | knowledge/enemy_types.md § Basic Hitscan Attack (single shot) and § Shotgun Variant ("3 pellets per salvo, emitted within a single tick"). |
+| Attack sequence (sec) | 0.74 | 30/35 ≈ 0.857 | knowledge/enemy_types.md § State Machine (basic = 26 ticks at 35 ticks/sec) and § Shotgun Variant (shotgun = 30 ticks at 35 ticks/sec). Total Attack-state duration; the trooper does not move while in Attack. |
+| Attack windup (sec) | 0.286 | 0.286 | knowledge/enemy_types.md § State Machine ("10-tick wind-up") and § Shotgun Variant ("10 + 10 + 10 = 30 ticks: face-wind-up / fire-frame / cooldown"). Both archetypes share the 10-tick wind-up before the hitscan(es) fire(s). |
+| Drop on death | Ammo clip (10 rounds) | Ammo clip (10 rounds) | knowledge/enemy_types.md § Death and Item Drops — basic drops "a clip", shotgun drops "a shotgun". The prototype only has one weapon (pistol), so shotgun-weapon drops are **deferred**; the shotgun trooper drops the same `PICKUP_AMMO_AMOUNT = 10` ammo clip the basic does. Promotes to a distinct weapon-pickup when a second weapon ships (specs/25 § Deferred Combat Features). |
+| Mass | n/a | n/a | knowledge/enemy_types.md § Enemy Constants Summary lists mass 100 for both archetypes; the prototype does not model mass-based knockback (specs/25 § Enemy § Deferred from knowledge). Both archetypes share the same map-format mass in the reference, so even when knockback ships there will be no per-archetype difference here. |
+
+### Shared constants (both archetypes)
+
+These rows govern behavior shared across every Hitscan-archetype trooper. They are knowledge-backed and applied uniformly regardless of archetype.
 
 | Constant | Value | Source |
 |----------|-------|--------|
-| Health | 20 | knowledge/combat_balance.md § Enemy Health Tiers ("Basic hitscan trooper (low HP): 20 HP") |
-| Speed | 2.0 units/sec | Adapted from reference (slower than player). Knowledge `enemy_types.md § Movement System` reports the reference's per-step speed (8 units/move-tick, ~280 units/sec at 35 ticks/sec); 2.0 tiles/sec scales that down so the trooper is slower than the player's `MAX_SPEED` while still feeling threatening at our 20×15 tile world. Generation default — knowledge-derived but rescaled to the prototype's tile-unit speed model. |
 | Detection | Line of sight (no distance limit) | knowledge/enemy_types.md § Detection and Alerting ("Visual scan ... line of sight"), § Line of Sight ("ray trace ... checks for intercepting two-sided lines"). No sound propagation, no 180° forward arc, no reject table — the prototype does a tile-grid ray-cast from enemy to player and accepts any LoS hit. The "180° forward arc" and "sound propagation" rules are deferred (this section's § Deferred-from-knowledge). |
-| Reaction delay | 0.23 seconds | knowledge/enemy_types.md § Detection and Alerting ("reaction time of 8 ticks" at 35 ticks/sec) and § Chase Behavior ("reaction time counter ... will not attack while non-zero"). Time before the first Attack-state entry after the trooper spots the player. |
-| Attack type | Hitscan at range | knowledge/enemy_types.md § Basic Hitscan Attack ("instant hitscan trace, not a projectile"). Replaces the prior "contact damage" simplification (specs/25 reconcile pass). |
-| Attack damage | 3, 6, 9, 12, or 15 per hit | Formula: `(random(0..5) + 1) * 3`, mean ~9. knowledge/combat_balance.md § Hitscan Damage Formula ("Enemy hitscan (basic grunt): `((rnd%5) + 1) * 3` = 3-15 per shot"). |
-| Attack range | 64.0 tiles (= 2048 map units) | knowledge/combat_balance.md § Range and Hit Detection ("Hitscan maximum range (MISSILERANGE): 2048 world units"). At 32 px/tile (`TILE_SIZE`), 2048 / 32 = 64 tiles — same conversion as `PISTOL_RANGE_TILES` for the player. |
-| Attack spread | +/- 22 degrees max | knowledge/combat_balance.md § Accuracy and Spread ("Enemy basic grunt: shift = 20, max spread ~22 degrees each side"). Triangular distribution applied per shot via `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD`. |
-| Attack sequence | 0.74 seconds | knowledge/enemy_types.md § State Machine ("Attack (Missile): 26 ticks (~0.74 seconds): 10-tick wind-up, 8-tick fire frame, 8-tick cooldown") at 35 ticks/sec. Total Attack-state duration; the trooper does not move while in Attack. After the sequence, transitions back to Chase. |
-| Attack windup | 0.286 seconds | knowledge/enemy_types.md § State Machine ("10-tick wind-up: face target") at 35 ticks/sec = 10 / 35 ≈ 0.286. Time from Attack-state entry until the hitscan trace fires; the trooper's facing snaps toward the player on entry. |
-| ENEMY_RADIUS_TILES | 0.375 | Derived from enemy visual radius 12 px / TILE_SIZE (32). Used for collision detection in `enemy_logic.rs` and implicitly by `ENEMY_CONTACT_RANGE_TILES`. Captured during reconcile pass — was present in code but not named in spec. |
-| ENEMY_CONTACT_RANGE_TILES | 0.8125 tile (= 26 px) | Derived from player + enemy visual radii in `## Visual` (14 px + 12 px) divided by `TILE_SIZE`. Retained as a public constant because the bot's kite-mode buffer (`BOT_KITE_RANGE` in § Autopilot) and the `RangedStandoff` demo-level rationale (specs/15) both reference it. The Attack state replaces contact damage as the trooper's primary harm vector — see `### Deferred from knowledge` below for the contact-melee rationale. |
-| Pain chance | 78% (200/255) | knowledge/enemy_types.md § Pain System ("Basic hitscan trooper (low HP) pain chance: 200/256 (~78%)"). Chance to enter pain/stagger state when hit. |
-| Pain duration | 0.17 seconds | knowledge/enemy_types.md § State Machine ("Pain: Two frames of 3 ticks each (6 ticks total, ~0.17 seconds)") at 35 ticks/sec. Pain interrupts whatever state the trooper was in (Idle, Chase, or Attack) and returns to Chase on expiry. |
-| AI states | Idle, Chase, Attack, Pain, Death | knowledge/enemy_types.md § State Machine. The Attack state was added in the 2026-05-13 combat slice (replacing the prior contact-damage path); per `### Deferred from knowledge` below, melee Idle/Chase/Pain/Death timings, the no-double-attack flag, and the distance-based attack probability check are deferred. |
-| Drop on death | Ammo clip (10 rounds) | knowledge/enemy_types.md § Death and Item Drops ("The basic hitscan trooper drops a clip (bullet ammo) on death"); knowledge/pickups.md § Drop on Kill ("basic hitscan trooper → small primary-ammo pickup (dropped, ~half clip-load)"). Knowledge says reference drops a *half*-clip via the "dropped" flag (5 rounds at our `PICKUP_AMMO_AMOUNT = 10`); the prototype simplifies by spawning the existing full-amount `Pickup { kind: Ammo, amount: PICKUP_AMMO_AMOUNT, active: true }` at the trooper's death position, reusing the `level.pickups` channel that the per-frame pickup check already drains. The half-clip "dropped" flag is deferred (single-amount ammo pickup; promotes to a richer pickup model when more enemy types ship). See specs/60 § Enemy Ammo Drops. |
+| Reaction delay | 0.23 seconds | knowledge/enemy_types.md § Detection and Alerting ("reaction time of 8 ticks" at 35 ticks/sec) and § Chase Behavior ("reaction time counter ... will not attack while non-zero"). Time before the first Attack-state entry after the trooper spots the player. Both archetypes share the 8-tick reaction time. |
+| Attack type | Hitscan at range | knowledge/enemy_types.md § Basic Hitscan Attack and § Shotgun Variant — both archetypes are pure hitscan (no projectile). The shotgun variant is hitscan ×3 (a single salvo of 3 traces sharing the base angle, with per-pellet horizontal spread offsets and per-pellet damage rolls). |
+| Attack damage per pellet | 3, 6, 9, 12, or 15 | Formula: `(random(0..5) + 1) * 3`, mean ~9. knowledge/combat_balance.md § Hitscan Damage Formula ("Enemy hitscan (basic grunt): `((rnd%5) + 1) * 3` = 3-15 per shot"; § Shotgun Variant pins the same per-pellet formula). For the shotgun trooper this rolls independently per pellet — salvo total range 9–45, mean ~27 (knowledge/combat_balance.md § Hitscan Damage Formula). |
+| Attack range | 64.0 tiles (= 2048 map units) | knowledge/combat_balance.md § Range and Hit Detection ("Hitscan maximum range (MISSILERANGE): 2048 world units"). At 32 px/tile (`TILE_SIZE`), 2048 / 32 = 64 tiles — same conversion as `PISTOL_RANGE_TILES` for the player. Both archetypes share `MISSILERANGE`. |
+| Attack spread | +/- 22 degrees max | knowledge/combat_balance.md § Accuracy and Spread — basic grunt `shift = 20` (≈ ±22°), shotgun grunt "each pellet rolls `(rnd_a − rnd_b) << 20` independently — same shift (20) and same per-pellet max spread (~22 degrees each side) as the basic grunt." Triangular distribution applied per pellet via `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD`. |
+| Pain duration | 0.17 seconds | knowledge/enemy_types.md § State Machine ("Pain: Two frames of 3 ticks each (6 ticks total, ~0.17 seconds)") at 35 ticks/sec. Pain interrupts whatever state the trooper was in (Idle, Chase, or Attack) and returns to Chase on expiry. Both archetypes share the 6-tick pain. |
+| AI states | Idle, Chase, Attack, Pain, Death | knowledge/enemy_types.md § State Machine. The Attack state was added in the 2026-05-13 combat slice (replacing the prior contact-damage path); the multi-archetype refactor in the 2026-05-13 combat-slice-2 commit kept the state machine identical between archetypes — only the per-archetype constants in the table above vary. |
+| ENEMY_RADIUS_TILES | 0.375 | Derived from enemy visual radius 12 px / TILE_SIZE (32). Used for collision detection in `enemy_logic.rs` and implicitly by `ENEMY_CONTACT_RANGE_TILES`. Both archetypes share this radius (per the per-archetype table above). |
+| ENEMY_CONTACT_RANGE_TILES | 0.8125 tile (= 26 px) | Derived from player + enemy visual radii in `## Visual` (14 px + 12 px) divided by `TILE_SIZE`. Retained as a public constant because the bot's kite-mode buffer (`BOT_KITE_RANGE` in § Autopilot) and the demo-level rationales (specs/15) both reference it. The Attack state replaces contact damage as the trooper's primary harm vector — see `### Deferred from knowledge` below for the contact-melee rationale. Archetype-agnostic — both archetypes have identical radius. |
+
+### Pellet-loop salvo behavior (shotgun trooper)
+
+Knowledge basis: `knowledge/enemy_types.md § Shotgun Variant` and `knowledge/combat_balance.md § Hitscan Damage Formula / § Accuracy and Spread` (the shotgun-grunt rows).
+
+The shotgun trooper's Attack state, at the wind-up boundary (`time_in_state >= ENEMY_ATTACK_WINDUP_SEC`), fires a **single salvo of 3 hitscan traces** within one tick. Concretely:
+
+1. The base aim angle is computed once: `aim = angle_to(player.pos, enemy.pos)`. All three pellets share this base angle — pellets do NOT re-face per pellet (knowledge: "face-target and auto-aim slope are computed once *before* the pellet loop").
+2. For `i in 0..pellet_count` (with `pellet_count = 3` for the shotgun trooper, `1` for the basic trooper):
+   a. Roll horizontal spread offset: `spread = (rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD`. Independent per pellet.
+   b. Roll damage: `damage = ENEMY_ATTACK_DAMAGE_VALUES[(rand_u32() % 5) as usize]`. Independent per pellet.
+   c. Ray-march from `enemy.pos` along `aim + spread` up to `ENEMY_ATTACK_RANGE_TILES`. On player hit: apply damage via `player_state::take_damage`, spawn a blood splat at `player.pos`, stop this pellet's ray. On wall hit: spawn a wall puff at the trace endpoint, stop this pellet's ray. On range exceeded: no effect, stop this pellet's ray.
+3. Set `attack_fired_this_sequence = true` after the pellet loop returns (one latch per salvo, not per pellet).
+
+The basic trooper's behavior is the `pellet_count = 1` degenerate case of the same loop — knowledge confirms the basic-grunt single-shot and the shotgun-grunt 3-pellet salvo share their per-pellet damage and per-pellet horizontal-spread rolls; only the count differs. Implementing one loop for both archetypes is the contract (the Coder MAY hard-code the loop body for `pellet_count = 1` to avoid the loop overhead — both shapes meet the spec; see `ir/contracts/enemy_logic.yaml § coder_degrees_of_freedom`).
+
+**Independence of pellets.** Each pellet's ray-march is independent: a pellet hitting the player does NOT stop subsequent pellets in the same salvo (each starts fresh from `enemy.pos`); a pellet blocked by a wall stops only itself. The salvo can therefore deal up to `3 * 15 = 45` damage in one hit, but typically deals fewer due to per-pellet spread variance (knowledge/enemy_types.md § Shotgun Variant § Feel: "the cone is tight vertically and wide horizontally, so the salvo 'fans out' sideways as range grows").
+
+**RNG advancement.** The basic trooper's RNG consumption per Attack is unchanged from slice 1: spread → damage → ray-march (one trace). The shotgun trooper's RNG consumption is 3× that — `(spread_i, damage_i, ray-march_i)` triples in order `i = 0, 1, 2`. Existing `--autopilot` scenarios that use only basic troopers (`kill_enemy`, `kite_enemy`, etc.) consume RNG byte-identically to slice 1.
+
+### Drop-on-death (both archetypes)
+
+| Behavior | Value | Source |
+|----------|-------|--------|
+| Drop on death | Ammo clip (10 rounds) | knowledge/enemy_types.md § Death and Item Drops ("The basic hitscan trooper drops a clip (bullet ammo) on death"); the shotgun trooper drops a shotgun in the reference but the prototype only ships a pistol, so the shotgun-trooper drop substitutes the same ammo-clip pickup (the basic-archetype drop) until a second weapon variant ships (specs/25 § Deferred Combat Features — Multiple weapons). knowledge/pickups.md § Drop on Kill ("basic hitscan trooper → small primary-ammo pickup (dropped, ~half clip-load)"). Knowledge says reference drops a *half*-clip via the "dropped" flag (5 rounds at our `PICKUP_AMMO_AMOUNT = 10`); the prototype simplifies by spawning the existing full-amount `Pickup { kind: Ammo, amount: PICKUP_AMMO_AMOUNT, active: true }` at the trooper's death position, reusing the `level.pickups` channel that the per-frame pickup check already drains. The half-clip "dropped" flag is deferred (single-amount ammo pickup; promotes to a richer pickup model when more enemy types ship). See specs/60 § Enemy Ammo Drops. *(Generation default — knowledge says reference drops a shotgun for the shotgun trooper; we drop an ammo clip because the prototype has no shotgun weapon to model. Promotes when a second weapon ships.)*
 
 ### Deferred from knowledge
 
@@ -124,12 +165,14 @@ When a target takes damage, there is a percentage chance it enters a brief pain 
 
 ### Enemy spawns
 
-`level_data::build_default()` populates two basic-trooper enemies (`Vec<Vec2>` order is the deterministic tie-breaker for `Scenario` targets — per `specs/30 § Targets` "enemy" resolves to the *nearest* alive enemy with ties broken by index in `enemy_spawns`):
+`level_data::build_default()` populates two basic-trooper enemies (`Vec<EnemySpawn>` order is the deterministic tie-breaker for `Scenario` targets — per `specs/30 § Targets` "enemy" resolves to the *nearest* alive enemy with ties broken by index in `enemy_spawns`):
 
-| Order | Position (tile coords) | Rationale |
-|-------|------------------------|-----------|
-| 1 | (17.5, 12.5) | Existing SE-corner spawn. Kept first so it wins index-tie-breaks when both enemies are equidistant; in single-enemy fixtures (`tests/combat/kill_enemy.yaml` etc.) it is the only candidate so the resolved target is unambiguous. Generation default — no knowledge backing. |
-| 2 | (4.5, 11.5) | SW spawn — geographically isolated from the spawn → enemy 1 → ammo → exit corridor used by `scavenge_run.yaml`, so it does not chase down the primary trajectory. Provides multi-enemy combat in `tests/level/local_chase_obstacle.yaml`-equivalents that target this position explicitly, and gives the recorded demo a second engagement. Generation default — no knowledge backing. |
+| Order | Position (tile coords) | Archetype | Rationale |
+|-------|------------------------|-----------|-----------|
+| 1 | (17.5, 12.5) | BasicTrooper | Existing SE-corner spawn. Kept first so it wins index-tie-breaks when both enemies are equidistant; in single-enemy fixtures (`tests/combat/kill_enemy.yaml` etc.) it is the only candidate so the resolved target is unambiguous. Generation default — no knowledge backing. |
+| 2 | (4.5, 11.5) | BasicTrooper | SW spawn — geographically isolated from the spawn → enemy 1 → ammo → exit corridor used by `scavenge_run.yaml`, so it does not chase down the primary trajectory. Provides multi-enemy combat in `tests/level/local_chase_obstacle.yaml`-equivalents that target this position explicitly, and gives the recorded demo a second engagement. Generation default — no knowledge backing. |
+
+Both default-level spawns use `Archetype::BasicTrooper` so existing `--autopilot` scenarios that consume the default level (`kill_enemy`, `scavenge_run`, `complete_level`, `reach_exit`) replay byte-identically with the multi-archetype refactor. The shotgun trooper archetype is exercised via the dedicated `ShotgunStandoff` demo level (specs/15) and the `enemy_logic` / `level_generator` unit tests; the planned `tests/combat/shotgun_trooper_salvo.yaml` autopilot fixture is **deferred** (see specs/15 § Implementation Status). The archetype is not introduced into the default level in this slice.
 
 ### Interior walls
 
@@ -609,8 +652,7 @@ The following are documented in knowledge but out of current scope (one weapon, 
 
 - Multiple weapons (shotgun, chaingun, fist, super shotgun)
 - Projectile-based attacks (hybrid fireball, travel time, dodging)
-- Multiple enemy types -- see knowledge/enemy_types.md for full roster:
-  - Shotgun trooper (30 HP, hitscan x3, 66% pain chance)
+- Multiple enemy types -- see knowledge/enemy_types.md for full roster (shotgun trooper landed in slice 2 of the 2026-05-13 combat slice — see § Enemy § Per-archetype constants above):
   - Rapid-hitscan trooper (70 HP, rapid hitscan, 66% pain chance)
   - Ranged-melee hybrid (60 HP, melee + projectile, 78% pain chance)
   - Melee-only beast (150 HP, melee only, 70% pain chance)

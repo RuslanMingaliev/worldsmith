@@ -57,14 +57,26 @@ public_methods:
       gate `if player.ammo == 0 { return; }` -- no side effects, no
       time_since_fire reset, (3) reset time_since_fire and aim, (4)
       all spawn/march/damage steps, (5) ammo -= 1.
-  - signature: "pub fn pistol_damage_roll() -> i32"
-    notes: |
-      Returns one of {5, 10, 15} uniformly at random per the
-      formula 5 * (rand(0..3) + 1) (specs/25 § Damage Randomization).
-      Public so unit tests in the same module can verify the
-      distribution; if no caller outside the module exists at
-      end-of-run, Reconciler should flag and Coder may downgrade
-      to private.
+  # pistol_damage_roll: NO public free-function form.
+  # The damage roll is module-private. Coder MUST implement as a
+  # private helper that takes `&mut player.weapon_rng` (or whichever
+  # stream the LCG sits behind):
+  #
+  #     fn pistol_damage_roll_with_rng(rng: &mut u64) -> i32 {
+  #         5 * ((lcg_next(rng) % 3) as i32 + 1)
+  #     }
+  #
+  # Returns one of {5, 10, 15} uniformly at random per the formula
+  # 5 * (rand(0..3) + 1) (specs/25 § Damage Randomization). The
+  # earlier contract form `pub fn pistol_damage_roll() -> i32` was
+  # demoted to module-private during the 2026.05 release Reconciler
+  # pass — no in-crate consumer exists outside `weapon_system::fire`,
+  # the in-module damage-distribution test calls the private helper
+  # directly, and a public no-arg form would require unsafe module-
+  # private static-mut RNG state (forbidden by spec/80 § Safety).
+  # Public re-promotion is appropriate only when a non-test caller
+  # outside the module materialises AND that caller passes its own
+  # RNG state in via &mut (preserving the no-global-state property).
 cross_module_borrows:
   - "&mut Player (write health via take_damage path; reset time_since_fire)"
   - "&mut [Enemy] (apply damage)"

@@ -79,6 +79,51 @@ shared_types:
       Pickup Consumption rationale). Copy/Clone is fine because
       Pickup is a tiny POD.
 
+  - name: Archetype
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+      pub enum Archetype {
+          BasicTrooper,
+          ShotgunTrooper,
+      }
+    notes: |
+      Tag for the enemy variant a Level places at a given spawn.
+      Two variants in this slice (specs/25 § Enemy § Per-archetype
+      constants); promotes to more variants when additional enemy
+      types ship (specs/25 § Deferred Combat Features — Multiple
+      enemy types). Lives in level_data (zero-dep module) so the
+      EnemySpawn record below can carry it without inverting the
+      enemy_logic ↔ level_data dependency graph. Consumed by
+      enemy_logic (`Enemy.archetype` field; per-archetype constant
+      lookup via the module-private `archetype_stats` helper) and
+      by level_generator (each demo level's enemy_spawns vector
+      names the variant directly). Coder MAY add `#[repr(u8)]` if
+      a const-array lookup shape is picked for `archetype_stats`
+      (Coder degree of freedom in enemy_logic.yaml).
+
+  - name: EnemySpawn
+    home_module: level_data
+    definition: |
+      #[derive(Clone, Copy, Debug)]
+      pub struct EnemySpawn {
+          pub pos: Vec2,
+          pub archetype: Archetype,
+      }
+    notes: |
+      One enemy-spawn record in a Level. Replaces the prior plain
+      `Vec2` enemy-spawns shape so each spawn carries its archetype.
+      Construction: every Level builder (level_data::build_default,
+      level_generator::build_local_chase_obstacle,
+      level_generator::build_kite_melee,
+      level_generator::build_ranged_standoff,
+      level_generator::build_shotgun_standoff) populates
+      `Level::enemy_spawns: Vec<EnemySpawn>` directly; consumers
+      (game_loop::new) iterate the vec and call
+      `Enemy::new(s.pos, s.archetype)` per record. Copy/Clone keeps
+      the iteration shape ergonomic (no &borrow gymnastics) since
+      the struct is two stack values.
+
   - name: InputState
     home_module: input_controller
     definition: |
@@ -296,7 +341,7 @@ frame_update_order:
   - "if input.quit { state.running = false; return; }"
   - "player_state::apply_input(&mut state.player, input, &state.level, dt)"
   - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds (Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX), set pickup.active=false, call player_state::take_health_pickup or take_ammo_pickup based on pickup.kind, and call visual_effects::increment_pickup_tint(&mut state.fx) (specs/40 § Pickup Tint Screen Flash)."
-  - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)"
+  - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)  // enemy.archetype is consulted internally via archetype_stats() for max_health / pain_chance / pellet_count / attack_sequence_sec"
   - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire. Ammo gate is also inside fire(): if player.ammo == 0, fire() returns without side effects after the cooldown gate."
   - "// specs/25 § Enemy drop on death + specs/60 § Enemy Ammo Drops: scan state.enemies AFTER the enemy update loop AND after weapon_system::fire (so a same-frame kill drops the pickup that frame, not next frame). For each enemy where !enemy.alive AND !enemy.ammo_drop_spawned, push Pickup { kind: PickupKind::Ammo, pos: enemy.pos, active: true } onto state.level.pickups and set enemy.ammo_drop_spawned = true. Coder may use a two-pass shape (collect dropped positions, then push) to side-step split-borrow ergonomics; both shapes meet the contract. The behavior is `exactly one Pickup pushed per dead trooper, at the trooper's death position, in the same frame death is detected`. Re-running this scan on subsequent frames is a no-op because ammo_drop_spawned remains true. The drop is collectible by the existing per-frame pickup check on the next frame (the pickup check ran earlier this frame, before enemy update + weapon_system::fire, so the new Pickup is not seen until the next frame's pickup-check step)."
   - "player_state::decay_damage_tint(&mut state.player, dt)"

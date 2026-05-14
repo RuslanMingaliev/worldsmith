@@ -35,11 +35,15 @@ public_types:
       uses level_data::build_default(). Present => caller calls
       level_generator::build(kind). The serde rename_all attribute
       on DemoLevelKind handles snake_case YAML names
-      (e.g. `local_chase_obstacle`). Unknown names yield a
-      serde_yaml deserialization error which `parse_scenario`'s
-      `.expect("valid scenario YAML")` propagates as a panic with
-      a clear message — matching the existing parse error handling
-      rule in specs/30 § Execution Rules.
+      (e.g. `local_chase_obstacle`, `shotgun_standoff`). Unknown
+      names yield a serde_yaml deserialization error which
+      `parse_scenario`'s `.expect("valid scenario YAML")` propagates
+      as a panic with a clear message — matching the existing parse
+      error handling rule in specs/30 § Execution Rules. The
+      shotgun_standoff variant was added in the 2026-05-13 combat
+      slice 2 alongside the ShotgunTrooper archetype; no signature
+      or struct shape change is required here since the field type
+      is already `Option<DemoLevelKind>`.
 
       `scenario` (the test-name string) and `assertions` are
       #[cfg(test)]-gated because the only consumers are the test

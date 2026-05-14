@@ -13,16 +13,24 @@ public_types:
           LocalChaseObstacle,
           KiteMelee,
           RangedStandoff,
+          ShotgunStandoff,
       }
     notes: |
       Public because autopilot::Scenario.level holds
       Option<DemoLevelKind> (specs/15 § Scenario YAML Extension), so
       serde_yaml can deserialize the YAML name directly into the
       enum. `rename_all = "snake_case"` maps `LocalChaseObstacle`
-      -> `local_chase_obstacle`, `KiteMelee` -> `kite_melee`, and
-      `RangedStandoff` -> `ranged_standoff` for YAML readability.
+      -> `local_chase_obstacle`, `KiteMelee` -> `kite_melee`,
+      `RangedStandoff` -> `ranged_standoff`, and `ShotgunStandoff`
+      -> `shotgun_standoff` for YAML readability.
       Adding a new demo level: add one variant here and one match arm
       in build() below; nothing else changes.
+
+      `ShotgunStandoff` was added in the 2026-05-13 combat slice 2
+      (specs/25 § Enemy § Per-archetype constants) to exercise the
+      shotgun trooper end-to-end without modifying the default level
+      (which would break byte-identical replay of existing scenarios).
+      See specs/15 § ShotgunStandoff for the layout and rationale.
 public_constants: []
 public_methods:
   - signature: "pub fn build(kind: DemoLevelKind) -> Level"
@@ -37,6 +45,7 @@ public_methods:
             DemoLevelKind::LocalChaseObstacle => build_local_chase_obstacle(),
             DemoLevelKind::KiteMelee          => build_kite_melee(),
             DemoLevelKind::RangedStandoff     => build_ranged_standoff(),
+            DemoLevelKind::ShotgunStandoff    => build_shotgun_standoff(),
         }
       where each helper is a private function returning the Level
       layout pinned in specs/15 § <variant>.
@@ -49,13 +58,19 @@ public_methods:
                       || (x == 10 && (4..=10).contains(&y)))
                       else Floor;
         player_spawn = Vec2::new(3.5, 7.5);
-        enemy_spawns = vec![Vec2::new(16.5, 7.5)];
+        enemy_spawns = vec![
+          EnemySpawn { pos: Vec2::new(16.5, 7.5),
+                       archetype: Archetype::BasicTrooper },
+        ];
         exit         = Vec2::new(1.5, 1.5);
         pickups      = vec![];   // no pickups
       Reuses GRID_WIDTH / GRID_HEIGHT from level_data; does not
       introduce new constants. Coder may inline the layout (one
       double-loop over the grid is the obvious form) or use a small
       helper -- the *Level* it produces is what matters.
+      The BasicTrooper archetype is per scope ("Do NOT change demo
+      levels ('LocalChaseObstacle', 'KiteMelee') to use the shotgun
+      trooper").
   - signature: "fn build_kite_melee() -> Level"
     notes: |
       Module-private. Builds the KiteMelee layout from specs/15 §
@@ -64,7 +79,10 @@ public_methods:
         tiles[y][x] = Wall iff (x == 0 || x == 19 || y == 0 || y == 14)
                       else Floor;
         player_spawn = Vec2::new(4.5, 7.5);
-        enemy_spawns = vec![Vec2::new(6.0, 7.5)];
+        enemy_spawns = vec![
+          EnemySpawn { pos: Vec2::new(6.0, 7.5),
+                       archetype: Archetype::BasicTrooper },
+        ];
         exit         = Vec2::new(1.5, 1.5);
         pickups      = vec![];   // no pickups
       No interior walls. Distance from player_spawn to the lone
@@ -72,7 +90,9 @@ public_methods:
       specs/25 § Autopilot) so the bot enters kite mode on frame 1,
       and outside ENEMY_CONTACT_RANGE_TILES (0.8125, specs/25 §
       Enemy) so the bot has buffer to back-pedal before contact
-      damage starts.
+      damage starts. The BasicTrooper archetype is per scope ("Do
+      NOT change demo levels ('LocalChaseObstacle', 'KiteMelee') to
+      use the shotgun trooper").
   - signature: "fn build_ranged_standoff() -> Level"
     notes: |
       Module-private. Builds the RangedStandoff layout from specs/15
@@ -81,7 +101,10 @@ public_methods:
         tiles[y][x] = Wall iff (x == 0 || x == 19 || y == 0 || y == 14)
                       else Floor;
         player_spawn = Vec2::new(4.5, 7.5);
-        enemy_spawns = vec![Vec2::new(12.5, 7.5)];
+        enemy_spawns = vec![
+          EnemySpawn { pos: Vec2::new(12.5, 7.5),
+                       archetype: Archetype::BasicTrooper },
+        ];
         exit         = Vec2::new(1.5, 1.5);
         pickups      = vec![];   // no pickups
       No interior walls. Distance from player_spawn to the lone
@@ -91,9 +114,44 @@ public_methods:
       contact-damage the player from spawn. The trooper has direct
       LoS along y = 7.5 (open arena), so its Attack-state hitscan
       is the only source of player damage during the bot's `wait:`
-      objective in tests/combat/trooper_ranged_hits.yaml. Within
-      ENEMY_ATTACK_RANGE_TILES (64.0) so the trooper can fire from
-      spawn without range-gating.
+      objective. Within ENEMY_ATTACK_RANGE_TILES (64.0) so the
+      trooper can fire from spawn without range-gating. The
+      BasicTrooper archetype is the variant this level was designed
+      to exercise (specs/15 § RangedStandoff "Purpose. A short
+      scenario that exercises the basic trooper's ranged hitscan
+      attack").
+  - signature: "fn build_shotgun_standoff() -> Level"
+    notes: |
+      Module-private. Builds the ShotgunStandoff layout from
+      specs/15 § ShotgunStandoff. Concretely:
+        width = GRID_WIDTH (20); height = GRID_HEIGHT (15);
+        tiles[y][x] = Wall iff (x == 0 || x == 19 || y == 0 || y == 14)
+                      else Floor;
+        player_spawn = Vec2::new(4.5, 7.5);
+        enemy_spawns = vec![
+          EnemySpawn { pos: Vec2::new(8.5, 7.5),
+                       archetype: Archetype::ShotgunTrooper },
+        ];
+        exit         = Vec2::new(1.5, 1.5);
+        pickups      = vec![];   // no pickups
+      No interior walls. Distance from player_spawn to the lone
+      enemy_spawn is 4.0 tiles -- outside BOT_KITE_RANGE (2.0) so
+      the bot does not enter kite mode at frame 0, outside
+      ENEMY_CONTACT_RANGE_TILES (0.8125) by ~5x so the trooper
+      cannot contact-damage the player from spawn, and close
+      enough that a meaningful number of pellets from each 3-pellet
+      salvo land on the player (knowledge/enemy_types.md § Shotgun
+      Variant — "the cone is tight vertically and wide horizontally,
+      so the salvo 'fans out' sideways as range grows"). At 4 tiles
+      the ±22° per-pellet horizontal spread cone produces a
+      half-width of ~1.6 tiles around the aim direction, and the
+      triangular distribution concentrates pellets near aim — the
+      typical salvo lands 1-2 pellets on a player-sized target.
+      Within ENEMY_ATTACK_RANGE_TILES (64.0) so the trooper fires
+      from spawn without range-gating. The ShotgunTrooper archetype
+      is exercised here without modifying the default level or
+      either of the existing LocalChaseObstacle / KiteMelee demos
+      (per the slice-2 task scope).
 cross_module_borrows: []
 notes: |
   Consumed by main.rs at startup (one call per --autopilot launch

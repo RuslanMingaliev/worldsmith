@@ -13,16 +13,20 @@ public_types:
     note: "Defined here; see shared_types.PickupKind."
   - name: Pickup
     note: "Defined here; see shared_types.Pickup."
+  - name: Archetype
+    note: "Defined here; see shared_types.Archetype."
+  - name: EnemySpawn
+    note: "Defined here; see shared_types.EnemySpawn."
   - name: Level
     definition: |
       pub struct Level {
-          pub width: usize,                 // GRID_WIDTH (20)
-          pub height: usize,                // GRID_HEIGHT (15)
-          pub tiles: Vec<Vec<Tile>>,        // tiles[y][x]
-          pub player_spawn: Vec2,           // tile coords (specs/25 § Level Layout)
-          pub enemy_spawns: Vec<Vec2>,      // two entries in build_default; resolution order is index-tie-breaker for "enemy" target (specs/30 § Targets)
-          pub exit: Vec2,                   // tile coords
-          pub pickups: Vec<Pickup>,         // static pickups (specs/60)
+          pub width: usize,                  // GRID_WIDTH (20)
+          pub height: usize,                 // GRID_HEIGHT (15)
+          pub tiles: Vec<Vec<Tile>>,         // tiles[y][x]
+          pub player_spawn: Vec2,            // tile coords (specs/25 § Level Layout)
+          pub enemy_spawns: Vec<EnemySpawn>, // two entries in build_default; resolution order is index-tie-breaker for "enemy" target (specs/30 § Targets). Carries per-spawn archetype.
+          pub exit: Vec2,                    // tile coords
+          pub pickups: Vec<Pickup>,          // static pickups (specs/60)
       }
 public_constants:
   - { name: TILE_SIZE,    type: f32,   value: "32.0", source: "specs/25 § Visual" }
@@ -39,13 +43,29 @@ public_methods:
         - mid-left horizontal, y=7, x=4..9
         - SE pocket cover, y=10, x=13..15 (Rust half-open: x=13, 14)
       Player spawn (2.5, 2.5); two enemy spawns in resolution order
-      (17.5, 12.5) then (4.5, 11.5); exit (17.5, 2.5). No I/O.
+      (both Archetype::BasicTrooper for byte-identical replay with
+      slice 1):
+        enemy_spawns: vec![
+          EnemySpawn { pos: Vec2::new(17.5, 12.5), archetype: Archetype::BasicTrooper },
+          EnemySpawn { pos: Vec2::new(4.5, 11.5),  archetype: Archetype::BasicTrooper },
+        ]
+      exit (17.5, 2.5). No I/O.
       Pickups (specs/25 § Pickups § Default Level Placement):
         pickups: vec![
           Pickup { kind: PickupKind::Health, pos: Vec2::new(5.5, 12.5), active: true },
           Pickup { kind: PickupKind::Health, pos: Vec2::new(12.5, 4.5), active: true },
           Pickup { kind: PickupKind::Ammo,   pos: Vec2::new(15.5, 7.5), active: true },
         ]
+      Default-level archetype choice: both spawns are BasicTrooper so
+      existing `--autopilot` scenarios that consume the default level
+      (kill_enemy, scavenge_run, reach_exit, complete_level) replay
+      byte-identically with the multi-archetype refactor. The shotgun
+      trooper archetype is exercised via the `ShotgunStandoff` demo
+      level (specs/15) and the `level_generator` + `enemy_logic` unit
+      tests; the planned autopilot fixture
+      `tests/combat/shotgun_trooper_salvo.yaml` is **deferred** (see
+      specs/15 § Implementation Status). Not exercised via the
+      default level either way.
   - signature: "pub fn is_wall(level: &Level, tile_x: i32, tile_y: i32) -> bool"
     notes: |
       Boundary-safe. Out-of-bounds (negative or >= width/height) returns
@@ -53,7 +73,16 @@ public_methods:
       collision (player_state) and weapon ray-march (weapon_system).
 cross_module_borrows: []
 notes: |
-  Owner of Vec2 and Tile shared types. No deps; first to generate.
-  EXIT_RADIUS lives here because game_loop's win check is `player.pos
-  .distance_to(level.exit) < EXIT_RADIUS` -- the level owns the exit
-  geometry, not the loop.
+  Owner of Vec2, Tile, PickupKind, Pickup, Archetype, and EnemySpawn
+  shared types. No deps; first to generate. EXIT_RADIUS lives here
+  because game_loop's win check is `player.pos.distance_to(level.exit)
+  < EXIT_RADIUS` -- the level owns the exit geometry, not the loop.
+
+  The Archetype enum lives here (not in enemy_logic) because
+  level_data is the zero-dep module that owns the "what kind of
+  entity does a Level place" tagged unions — Pickup/PickupKind
+  already live here for the same reason. enemy_logic depends on
+  level_data and imports Archetype to store on Enemy and to drive
+  per-archetype lookups. Moving Archetype to enemy_logic would
+  require level_data to depend on enemy_logic for the EnemySpawn
+  record, inverting the dependency graph.

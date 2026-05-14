@@ -63,18 +63,23 @@ The existing console messages from `weapon_system.rs` ("Hit for X! ...") and `en
 
 ### Enemy
 
-One enemy archetype exists: a basic hitscan trooper (low HP, single hitscan attack, high pain chance).
+Two enemy archetypes exist in the prototype, tagged via a small `level_data::Archetype` enum (variants `BasicTrooper`, `ShotgunTrooper`). Each `level_data::EnemySpawn` record in a `Level` carries both a position and an `Archetype`, and the live `Enemy` entity stores the archetype as a field. Both archetypes share the same state machine, the same Attack-state windup gate, the same per-pellet damage formula, and the same `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD` triangular spread shape. Per-archetype values (max HP, pain chance, pellet count per Attack, Attack-sequence duration) are looked up via `enemy_logic::archetype_stats(archetype)` at the relevant call sites. See `25_game_tuning.md § Enemy § Per-archetype constants` for the full table.
 
-#### Current Implementation
+| Archetype | HP | Pellet count / Attack | Pain chance | Attack sequence |
+|-----------|----|------------------------|-------------|-----------------|
+| BasicTrooper (slice 1) | 20 | 1 | 0.78 (200/256) | 0.74 s |
+| ShotgunTrooper (slice 2) | 30 | 3 (single salvo) | 170/256 (≈ 0.664) | ≈ 0.857 s |
+
+#### Current Implementation (both archetypes)
 
 The enemy uses an LoS-gated ranged AI:
 - Detects the player on the first Idle tick the LoS check passes (knowledge/enemy_types.md § Detection and Alerting). The 180° forward arc is omnidirectional in the prototype; sound propagation is not modeled.
-- Waits a reaction delay (`ENEMY_REACTION_DELAY = 0.23s`) before transitioning Idle → Chase. The first Attack-state entry can fire on the very next Chase tick because `time_since_attack` is initialized to `ENEMY_ATTACK_SEQUENCE_SEC` at spawn (the cooldown gate is satisfied from the start).
-- Moves toward the player while in Chase using smooth axis-aligned slide (the same code path as `player_state::apply_input`, not the reference's 8-direction grid — see `25_game_tuning.md § Enemy § Deferred from knowledge`).
-- In Chase, transitions to Attack iff (a) line of sight to the player is clear, (b) distance ≤ `ENEMY_ATTACK_RANGE_TILES = 64.0`, and (c) `time_since_attack >= ENEMY_ATTACK_SEQUENCE_SEC = 0.74`.
-- In Attack, stays stationary for `ENEMY_ATTACK_SEQUENCE_SEC` total. At `ENEMY_ATTACK_WINDUP_SEC = 0.286s` into the state, fires a single hitscan trace toward the player with `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD` triangular spread (±22° max). Damage on hit is one of `ENEMY_ATTACK_DAMAGE_VALUES = [3, 6, 9, 12, 15]` (formula `(rand(0..5) + 1) * 3`). On player hit, spawns a blood splat at the player's position; on wall hit, spawns a wall puff at the trace endpoint; on out-of-range, no impact effect. After the sequence elapses, returns to Chase and may re-enter Attack on the next tick if conditions still hold.
-- Enters pain state on hit (78% chance per damage event, 0.17s duration). Pain interrupts Idle, Chase, or Attack and returns to Chase on expiry.
-- Dies at 0 HP; transitions to Dead state, plays the death-fade visual (`specs/40 § Enemy Death Visual`), and spawns one ammo-clip pickup at the death position via the `game_loop` drop-spawn step (`specs/60 § Enemy Ammo Drops`). The pickup is collectible by the player via the existing `game_loop` per-frame pickup check.
+- Waits a reaction delay (`ENEMY_REACTION_DELAY = 0.23s`) before transitioning Idle → Chase. The first Attack-state entry can fire on the very next Chase tick because `time_since_attack` is initialized to the archetype's `attack_sequence_sec` at spawn (the cooldown gate is satisfied from the start). The reaction delay is archetype-agnostic — both archetypes share the 8-tick reference value.
+- Moves toward the player while in Chase using smooth axis-aligned slide (the same code path as `player_state::apply_input`, not the reference's 8-direction grid — see `25_game_tuning.md § Enemy § Deferred from knowledge`). Both archetypes share the same `2.0 tiles/sec` smooth speed in the prototype; the reference's per-archetype chase-cycle cadence (basic 4-tick frames, shotgun 3-tick frames) is **deferred** because the prototype does not model tick-based animation.
+- In Chase, transitions to Attack iff (a) line of sight to the player is clear, (b) distance ≤ `ENEMY_ATTACK_RANGE_TILES = 64.0`, and (c) `time_since_attack >= archetype_stats(archetype).attack_sequence_sec`.
+- In Attack, stays stationary for the archetype's `attack_sequence_sec` total. At `ENEMY_ATTACK_WINDUP_SEC = 0.286 s` into the state, fires a salvo of `archetype_stats(archetype).pellet_count` independent hitscan traces toward the player, each with its own `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD` triangular spread (±22° max) and its own damage roll from `ENEMY_ATTACK_DAMAGE_VALUES = [3, 6, 9, 12, 15]` (formula `(rand(0..5) + 1) * 3`). All pellets in a salvo share the same base aim angle (computed once before the pellet loop) but roll independent spread offsets and damage rolls (knowledge/enemy_types.md § Shotgun Variant). The pellet loop is the basic-trooper Attack's natural generalization — `pellet_count = 1` for the basic trooper, `pellet_count = 3` for the shotgun trooper. Per pellet: on player hit, spawns a blood splat at the player's position and applies damage via `player_state::take_damage`; on wall hit, spawns a wall puff at the trace endpoint; on out-of-range, no impact effect. After the sequence elapses, returns to Chase and may re-enter Attack on the next tick if conditions still hold.
+- Enters pain state on hit (per-archetype chance per damage event: 0.78 for BasicTrooper, ≈ 0.664 for ShotgunTrooper; 0.17 s duration shared). Pain interrupts Idle, Chase, or Attack and returns to Chase on expiry.
+- Dies at 0 HP; transitions to Dead state, plays the death-fade visual (`specs/40 § Enemy Death Visual`), and spawns one ammo-clip pickup at the death position via the `game_loop` drop-spawn step (`specs/60 § Enemy Ammo Drops`). Both archetypes drop an ammo clip in this slice — the reference's shotgun-weapon drop for the shotgun trooper is **deferred** (specs/25 § Deferred Combat Features — Multiple weapons). The pickup is collectible by the player via the existing `game_loop` per-frame pickup check.
 
 **State machine** (ranged-attack form):
 ```
@@ -125,7 +130,7 @@ Concretely, this requires the loop-exit *decision* and the loop-exit *action* to
 - Player movement (forward/backward/strafe) with thrust+friction momentum model (see [`21_player_movement.md`](21_player_movement.md)).
 - World collision — player cannot walk through walls; axis-aligned wall sliding.
 - Combat — hitscan pistol: fire cycle, discrete damage (5/10/15), triangular spread, first-shot accuracy, pain/stagger system.
-- Enemy basic trooper — AI states Idle/Chase/Attack/Pain/Dead; LoS-gated ranged hitscan attack with windup/fire/cooldown sequence and ±22° triangular spread; reaction delay before first Attack-state entry; pain flash visual; one ammo-clip pickup dropped at the death position.
+- Enemy archetypes: BasicTrooper (slice 1) and ShotgunTrooper (slice 2). Shared AI: states Idle/Chase/Attack/Pain/Dead; LoS-gated ranged hitscan attack with windup/fire/cooldown sequence and ±22° triangular spread; reaction delay before first Attack-state entry; pain flash visual; one ammo-clip pickup dropped at the death position. Per-archetype values (HP, pain chance, pellet count, Attack-sequence duration) are looked up via `enemy_logic::archetype_stats`.
 - Level — walls, walkable space, player spawn, enemy spawn, exit objective.
 - HUD — health bar + digits + ammo pane (see [`50_hud.md`](50_hud.md)).
 - Pickups — health and ammo pickups; refused-at-cap rule; ammo gates firing (see [`60_pickups.md`](60_pickups.md)).
@@ -141,7 +146,7 @@ Concretely, this requires the loop-exit *decision* and the loop-exit *action* to
 - Multiple weapons (shotgun, chaingun, fist, super shotgun)
 - Projectile-based enemy attacks (fireball with travel time, dodging)
 - Distance-based ranged-fire probability gate, no-double-attack direction switch, 8-directional grid pathing, idle-scan animation, target threshold, sound propagation, gib threshold, half-clip "dropped" ammo flag — see [`25_game_tuning.md § Enemy § Deferred from knowledge`](25_game_tuning.md#deferred-from-knowledge) for the full list and per-row rationale.
-- Multiple enemy types (shotgun trooper, rapid-hitscan trooper, ranged-melee hybrid, melee-only beast, invisible melee-only beast, floating projectile mid-tier, kamikaze flyer, mid-tier melee+projectile boss, heavy melee+projectile boss, homing-missile boss, triple-projectile boss, rapid-plasma boss, area-attack boss with corpse-resurrect, rocket-launcher mega-boss, super-chaingun mega-boss)
+- Multiple enemy types beyond BasicTrooper + ShotgunTrooper (rapid-hitscan trooper, ranged-melee hybrid, melee-only beast, invisible melee-only beast, floating projectile mid-tier, kamikaze flyer, mid-tier melee+projectile boss, heavy melee+projectile boss, homing-missile boss, triple-projectile boss, rapid-plasma boss, area-attack boss with corpse-resurrect, rocket-launcher mega-boss, super-chaingun mega-boss)
 - Armor and damage reduction system
 - Full ammo economy (multiple categories, scarcity pressure, dropped-from-enemy pickups, backpack/cap expander)
 - Difficulty levels (damage scaling)

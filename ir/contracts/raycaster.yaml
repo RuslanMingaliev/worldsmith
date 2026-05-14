@@ -254,6 +254,16 @@ public_methods:
                `enemy.alive`. world_half_* = ENEMY_RADIUS_TILES.
                color = COLOR_PAIN_FLASH if pain_flash_remaining > 0,
                else COLOR_ENEMY. full_bright = false.
+               Both archetypes (BasicTrooper, ShotgunTrooper) share
+               ENEMY_RADIUS_TILES and COLOR_ENEMY in this slice
+               (specs/25 § Enemy § Per-archetype constants — radius
+               row, knowledge has both at 20 map units; specs/25
+               § Visual has one color for the enemy). Per-archetype
+               visual differentiation (distinct color, sprite
+               variant) is deferred (specs/25 § Enemy § Per-archetype
+               constants — promotes when an extractor pass derives
+               per-archetype palette / sprite shapes). enemy.archetype
+               is NOT consumed by the sprite pass at this slice.
              - Dying-enemy death fade: iterate `fx.effects`; include
                where `kind == EffectKind::EnemyDeathFade`.
                Compute fade_t = 1.0 - lifetime_remaining /

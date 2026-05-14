@@ -103,17 +103,25 @@ Enemies in the classic reference FPS share a common AI framework built around a 
 
 ### Shotgun Variant (shotgun trooper, 3-pellet hitscan)
 
-- **Behavior**: The shotgun trooper (3-pellet hitscan) fires three hitscan pellets instead of one, each with independent spread and damage rolls. Otherwise uses the same core logic as the basic attack.
+- **Behavior**: The shotgun trooper (3-pellet hitscan) fires a salvo of three hitscan pellets in a single attack action. The face-target rotation and the vertical auto-aim slope are computed once *before* the pellet loop, so all three pellets share the same base aim direction and vertical slope. Each pellet then rolls its own horizontal spread offset and its own damage value, producing a per-shot cone with variance both in pattern and in total impact.
 - **Rules**:
-  - Fires 3 pellets, each with independent random spread
-  - Each pellet deals (random 1-5) * 3 damage (same formula as single-shot)
-  - Same horizontal spread per pellet as the basic attack
-  - Maximum potential damage: 45 (3 pellets * 15 each)
+  - On entering the fire frame, the attack action plays the shotgun fire sound, faces the target, and computes the auto-aim slope to the target *once* (single `aim_line_attack` call, shared across all pellets in the salvo)
+  - The base horizontal angle is captured (= the actor's facing angle after `face_target`); pellets do NOT re-face per pellet
+  - For each of 3 pellets, two independent gameplay-PRNG rolls produce:
+    - horizontal angle offset `(rnd_a - rnd_b) << 20` (triangular distribution centered on zero, same shift as the basic hitscan trooper)
+    - damage `(rnd % 5 + 1) * 3` = one of {3, 6, 9, 12, 15}
+  - Each pellet then runs an independent hitscan trace from the actor at the computed angle and the shared slope; pellets cannot dodge each other or block each other (each trace is independent)
+  - All three pellets are emitted within a single tick — there is no per-pellet delay; the salvo lands simultaneously from the simulation's point of view
+  - No first-shot accuracy bonus exists for the shotgun trooper (unlike the player's pistol/chaingun) — every pellet of every salvo always rolls full spread
 - **Constants**:
-  - Pellet count: 3
-  - Damage per pellet: 3-15 (average 9)
-  - Total damage range: 9-45 (average 27)
-- **Feel**: Much more dangerous than the basic trooper at close range. The three independent pellets make the shotgun trooper a high-priority target. The per-pellet spread means some pellets can miss at range, making the damage fall off naturally with distance.
+  - Pellet count: 3 per salvo
+  - Damage per pellet: 3-15 (mean 9), formula `(rnd % 5 + 1) * 3`
+  - Total salvo damage range: 9-45 (mean 27)
+  - Per-pellet horizontal spread shift: 20 (≈ ±22 degrees max, same as the basic hitscan trooper)
+  - Attack state cycle: 10 + 10 + 10 = 30 ticks (~0.857 seconds), face-wind-up / fire-frame / cooldown
+  - Reaction time: 8 ticks (~0.23 sec), same as basic trooper
+  - Attack range: 2048 world units (the reference engine's coordinate unit) (the standard missile range, same as the basic trooper's hitscan)
+- **Feel**: Much more dangerous than the basic trooper at close range — a point-blank salvo can land all three pellets for up to 45 damage. The per-pellet horizontal spread (but shared slope and base angle) means the cone is tight vertically and wide horizontally, so the salvo "fans out" sideways as range grows. At long range a typical salvo only lands one pellet, giving natural distance fall-off without explicit range modifiers. The 30-tick attack cycle (4 ticks slower than the basic trooper) is a slight tell — players who time the cone can step out of it between salvos.
 
 ### Pain System
 
@@ -219,30 +227,31 @@ Enemies in the classic reference FPS share a common AI framework built around a 
 
 ## Enemy Constants Summary
 
-| Enemy Archetype | Health | Speed | Radius | Height | Pain Chance | Attack Type | Damage/Shot | Mass |
-|---|---|---|---|---|---|---|---|---|
-| Basic hitscan trooper (low HP) | 20 | 8 | 20 | 56 | 200/256 (78%) | Hitscan x1 | 3-15 | 100 |
-| Shotgun trooper (3-pellet hitscan) | 30 | 8 | 20 | 56 | 170/256 (66%) | Hitscan x3 | 9-45 | 100 |
-| Rapid-hitscan trooper | 70 | 8 | 20 | 56 | 170/256 (66%) | Hitscan x1 (rapid) | 3-15 | 100 |
-| Ranged-melee hybrid (claw + projectile) | 60 | 8 | 20 | 56 | 200/256 (78%) | Melee + Projectile | 3-24 (melee) / 3-24 (fireball) | 100 |
-| Melee-only beast | 150 | 10 | 30 | 56 | 180/256 (70%) | Melee only | 4-40 | 400 |
-| Invisible melee-only beast | 150 | 10 | 30 | 56 | 180/256 (70%) | Melee only (invisible) | 4-40 | 400 |
-| Floating projectile mid-tier | 400 | 8 | 31 | 56 | 128/256 (50%) | Projectile | 5-40 (fireball) | 400 |
-| Kamikaze flyer | 100 | 8 | 16 | 56 | 256/256 (100%) | Charge (3 dmg) | 3 | 50 |
-| Heavy melee+projectile boss | 1000 | 8 | 24 | 64 | 50/256 (20%) | Melee + Projectile | 10-80 (melee) / 8 (fireball) | 1000 |
-| Mid-tier melee+projectile boss | 500 | 8 | 24 | 64 | 50/256 (20%) | Melee + Projectile | 10-80 (melee) / 8 (fireball) | 1000 |
-| Homing-missile boss | 300 | 10 | 20 | 56 | 100/256 (39%) | Melee + Homing missile | Varies | 500 |
-| Triple-projectile boss | 600 | 8 | 48 | 64 | 80/256 (31%) | Projectile x3 | 8 per fireball | 1000 |
-| Rapid-plasma boss | 500 | 12 | 64 | 64 | 128/256 (50%) | Rapid plasma | Varies | 600 |
-| Area-attack boss with corpse-resurrect | 700 | 15 | 20 | 56 | 10/256 (4%) | Area fire attack | 20+70 blast | 500 |
-| Rocket-launcher mega-boss | 4000 | 16 | 40 | 110 | 20/256 (8%) | Rockets x3 | 20-160 per rocket | 1000 |
-| Super-chaingun mega-boss | 3000 | 12 | 128 | 100 | 40/256 (16%) | Super chaingun | 3-15 per bullet | 1000 |
+| Enemy Archetype | Health | Speed | Radius | Height | Pain Chance | Attack Type | Damage/Shot | Attack Cycle | Mass |
+|---|---|---|---|---|---|---|---|---|---|
+| Basic hitscan trooper (low HP) | 20 | 8 | 20 | 56 | 200/256 (78%) | Hitscan x1 | 3-15 | 26 ticks (~0.74s) | 100 |
+| Shotgun trooper (3-pellet hitscan) | 30 | 8 | 20 | 56 | 170/256 (66%) | Hitscan x3 (salvo) | 3-15 per pellet, 9-45 total | 30 ticks (~0.857s) | 100 |
+| Rapid-hitscan trooper | 70 | 8 | 20 | 56 | 170/256 (66%) | Hitscan x1 (rapid) | 3-15 | (rapid; see chase notes) | 100 |
+| Ranged-melee hybrid (claw + projectile) | 60 | 8 | 20 | 56 | 200/256 (78%) | Melee + Projectile | 3-24 (melee) / 3-24 (fireball) | n/a (see archetype) | 100 |
+| Melee-only beast | 150 | 10 | 30 | 56 | 180/256 (70%) | Melee only | 4-40 | n/a | 400 |
+| Invisible melee-only beast | 150 | 10 | 30 | 56 | 180/256 (70%) | Melee only (invisible) | 4-40 | n/a | 400 |
+| Floating projectile mid-tier | 400 | 8 | 31 | 56 | 128/256 (50%) | Projectile | 5-40 (fireball) | n/a | 400 |
+| Kamikaze flyer | 100 | 8 | 16 | 56 | 256/256 (100%) | Charge (3 dmg) | 3 | n/a | 50 |
+| Heavy melee+projectile boss | 1000 | 8 | 24 | 64 | 50/256 (20%) | Melee + Projectile | 10-80 (melee) / 8 (fireball) | n/a | 1000 |
+| Mid-tier melee+projectile boss | 500 | 8 | 24 | 64 | 50/256 (20%) | Melee + Projectile | 10-80 (melee) / 8 (fireball) | n/a | 1000 |
+| Homing-missile boss | 300 | 10 | 20 | 56 | 100/256 (39%) | Melee + Homing missile | Varies | n/a | 500 |
+| Triple-projectile boss | 600 | 8 | 48 | 64 | 80/256 (31%) | Projectile x3 | 8 per fireball | n/a | 1000 |
+| Rapid-plasma boss | 500 | 12 | 64 | 64 | 128/256 (50%) | Rapid plasma | Varies | n/a | 600 |
+| Area-attack boss with corpse-resurrect | 700 | 15 | 20 | 56 | 10/256 (4%) | Area fire attack | 20+70 blast | n/a | 500 |
+| Rocket-launcher mega-boss | 4000 | 16 | 40 | 110 | 20/256 (8%) | Rockets x3 | 20-160 per rocket | n/a | 1000 |
+| Super-chaingun mega-boss | 3000 | 12 | 128 | 100 | 40/256 (16%) | Super chaingun | 3-15 per bullet | n/a | 1000 |
 
 Notes on the table:
 - Radius and height are in world units (before FRACUNIT conversion)
 - Speed is in world units per movement step (not per second)
-- Actual movement speed per second = speed * moves_per_second (varies with chase frame rate)
+- Actual movement speed per second = speed * moves_per_second (varies with chase frame rate). For example, the basic hitscan trooper and the shotgun trooper share `speed = 8` per move step, but the shotgun trooper's chase animation cycles 3 ticks per frame versus the basic trooper's 4 ticks per frame, so the shotgun trooper's *effective* tiles-per-second is ~33% higher. Speed of the move *step* is identical; chase-cycle cadence is per-archetype.
 - All enemies share reaction time of 8 ticks
+- Attack cycle "n/a" rows have not been measured in this knowledge extraction pass (only the two basic hitscan archetypes are pinned here)
 - Damage for projectile enemies refers to the projectile's damage field, not direct attack damage
 
 ## Open Questions
