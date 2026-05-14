@@ -61,8 +61,11 @@ public_methods:
       (kill_enemy, scavenge_run, reach_exit, complete_level) replay
       byte-identically with the multi-archetype refactor. The shotgun
       trooper archetype is exercised via the `ShotgunStandoff` demo
-      level (specs/15) and `tests/combat/shotgun_trooper_salvo.yaml`,
-      not via the default level.
+      level (specs/15) and the `level_generator` + `enemy_logic` unit
+      tests; the planned autopilot fixture
+      `tests/combat/shotgun_trooper_salvo.yaml` is **deferred** (see
+      specs/15 § Implementation Status). Not exercised via the
+      default level either way.
   - signature: "pub fn is_wall(level: &Level, tile_x: i32, tile_y: i32) -> bool"
     notes: |
       Boundary-safe. Out-of-bounds (negative or >= width/height) returns
