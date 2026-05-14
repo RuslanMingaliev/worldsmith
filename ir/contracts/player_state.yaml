@@ -24,11 +24,21 @@ public_types:
           pub ammo: i32,               // pistol ammo (specs/60, knowledge/pickups.md §
                                        // Ammo Gating of Firing). Bounded by
                                        // PLAYER_AMMO_MAX; gated > 0 in weapon_system::fire.
-          pub armor: u8,               // armor pool 0..=PLAYER_ARMOR_MAX (200);
+          pub armor: u8,               // armor pool 0..=200;
                                        // specs/25 § Armor, knowledge/pickups.md
                                        // § Armor Pickup Tiers. Consumed
                                        // armor-first by take_damage
                                        // (specs/25 § Armor Damage Routing).
+                                       // The 200 ceiling is implicit (the two
+                                       // pickup target values are 100 and 200,
+                                       // and take_damage only decreases). No
+                                       // named PLAYER_ARMOR_MAX constant: spec/80
+                                       // § API Surface forbids dead pub exports,
+                                       // and the value has no runtime consumer
+                                       // (clamp is implicit in pickup-side
+                                       // overwrite). Reintroduce as a public
+                                       // const only when an in-crate non-test
+                                       // caller materialises.
           pub armor_type: ArmorTier,   // current armor tier; specs/25 § Armor.
                                        // ArmorTier::None means no absorption
                                        // happens in take_damage regardless of
@@ -62,7 +72,18 @@ public_constants:
   - { name: PICKUP_HEALTH_AMOUNT, type: i32, value: "25", source: "specs/25 § Pickups (knowledge-backed: § Health Pickup Tiers, large heal +25)" }
   - { name: PICKUP_AMMO_AMOUNT,   type: i32, value: "10", source: "specs/25 § Pickups (knowledge-backed: § Ammo Pickup Tiers, 1 clip-load × clip_size 10 for Cat. A)" }
   - { name: PLAYER_ARMOR_INITIAL, type: u8,  value: "0",   source: "specs/25 § Armor (knowledge-backed: knowledge/pickups.md § Armor Pickup Tiers — 'Player's starting armor: 0 points, type 0 (none)')" }
-  - { name: PLAYER_ARMOR_MAX,     type: u8,  value: "200", source: "specs/25 § Armor (knowledge-backed: knowledge/pickups.md § Armor Pickup Tiers — 'Absolute armor ceiling (any source): 200 points')" }
+  # PLAYER_ARMOR_MAX (knowledge value 200) is intentionally NOT a named
+  # public constant. Spec/80 § API Surface forbids dead pub exports, and
+  # the 200 ceiling has no runtime consumer: armor pool is bounded
+  # implicitly by the two pickup target values (PICKUP_ARMOR_*_TARGET_POINTS
+  # below, 100 and 200) overwriting on accept and take_damage only
+  # decreasing the pool. spec/25 § Armor row 33 still documents the
+  # logical ceiling for human reading; it just doesn't materialise as a
+  # `pub const`. Dropped from this shard on 2026-05-14 reconcile after the
+  # Coder masked the symbol with #[allow(dead_code)] to satisfy the
+  # previous contract entry. Reintroduce as a public const only when an
+  # in-crate non-test caller materialises (e.g. a future over-cap bonus
+  # pickup that needs the 200 clamp at the call site).
   - { name: PICKUP_ARMOR_GREEN_TARGET_POINTS, type: u8, value: "100", source: "specs/25 § Pickups (knowledge-backed: § Armor Pickup Tiers — green target pool 100)" }
   - { name: PICKUP_ARMOR_BLUE_TARGET_POINTS,  type: u8, value: "200", source: "specs/25 § Pickups (knowledge-backed: § Armor Pickup Tiers — blue target pool 200)" }
   - { name: ARMOR_GREEN_ABSORB_NUM, type: u32, value: "1", source: "specs/25 § Armor (knowledge-backed: knowledge/combat_balance.md § Damage to Player — 'saved = damage/3 for green')" }
