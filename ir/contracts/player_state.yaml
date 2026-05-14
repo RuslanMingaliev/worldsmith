@@ -5,6 +5,9 @@ name: player_state
 file: src/player_state.rs
 depends_on: [level_data]
 public_types:
+  - name: ArmorTier
+    note: "Defined here; see shared_types.ArmorTier."
+
   - name: Player
     definition: |
       pub struct Player {
@@ -21,6 +24,17 @@ public_types:
           pub ammo: i32,               // pistol ammo (specs/60, knowledge/pickups.md §
                                        // Ammo Gating of Firing). Bounded by
                                        // PLAYER_AMMO_MAX; gated > 0 in weapon_system::fire.
+          pub armor: u8,               // armor pool 0..=PLAYER_ARMOR_MAX (200);
+                                       // specs/25 § Armor, knowledge/pickups.md
+                                       // § Armor Pickup Tiers. Consumed
+                                       // armor-first by take_damage
+                                       // (specs/25 § Armor Damage Routing).
+          pub armor_type: ArmorTier,   // current armor tier; specs/25 § Armor.
+                                       // ArmorTier::None means no absorption
+                                       // happens in take_damage regardless of
+                                       // armor pool value (the pool is always
+                                       // zeroed alongside the tier — specs/25
+                                       // § Armor Damage Routing rule 3).
           pub weapon_rng: u64,         // weapon-firing RNG state (LCG seed +
                                        // accumulator). Consumed by
                                        // weapon_system::fire for triangular spread
@@ -47,6 +61,14 @@ public_constants:
   - { name: PLAYER_AMMO_MAX,     type: i32, value: "30",  source: "specs/25 § Pickups (Generation default — knowledge cap=200 too high for prototype)" }
   - { name: PICKUP_HEALTH_AMOUNT, type: i32, value: "25", source: "specs/25 § Pickups (knowledge-backed: § Health Pickup Tiers, large heal +25)" }
   - { name: PICKUP_AMMO_AMOUNT,   type: i32, value: "10", source: "specs/25 § Pickups (knowledge-backed: § Ammo Pickup Tiers, 1 clip-load × clip_size 10 for Cat. A)" }
+  - { name: PLAYER_ARMOR_INITIAL, type: u8,  value: "0",   source: "specs/25 § Armor (knowledge-backed: knowledge/pickups.md § Armor Pickup Tiers — 'Player's starting armor: 0 points, type 0 (none)')" }
+  - { name: PLAYER_ARMOR_MAX,     type: u8,  value: "200", source: "specs/25 § Armor (knowledge-backed: knowledge/pickups.md § Armor Pickup Tiers — 'Absolute armor ceiling (any source): 200 points')" }
+  - { name: PICKUP_ARMOR_GREEN_TARGET_POINTS, type: u8, value: "100", source: "specs/25 § Pickups (knowledge-backed: § Armor Pickup Tiers — green target pool 100)" }
+  - { name: PICKUP_ARMOR_BLUE_TARGET_POINTS,  type: u8, value: "200", source: "specs/25 § Pickups (knowledge-backed: § Armor Pickup Tiers — blue target pool 200)" }
+  - { name: ARMOR_GREEN_ABSORB_NUM, type: u32, value: "1", source: "specs/25 § Armor (knowledge-backed: knowledge/combat_balance.md § Damage to Player — 'saved = damage/3 for green')" }
+  - { name: ARMOR_GREEN_ABSORB_DEN, type: u32, value: "3", source: "specs/25 § Armor (knowledge-backed: same source)" }
+  - { name: ARMOR_BLUE_ABSORB_NUM,  type: u32, value: "1", source: "specs/25 § Armor (knowledge-backed: knowledge/combat_balance.md § Damage to Player — 'saved = damage/2 for blue')" }
+  - { name: ARMOR_BLUE_ABSORB_DEN,  type: u32, value: "2", source: "specs/25 § Armor (knowledge-backed: same source)" }
   - { name: PLAYER_TURN_SPEED, type: f32, value: "2.0",   source: "specs/25 § Player (rad/sec @ 60FPS)" }
   - { name: THRUST_FACTOR,     type: f32, value: "10.0",  source: "specs/21 § Thrust" }
   - { name: FRICTION,          type: f32, value: "0.906", source: "specs/21 § Friction" }
@@ -60,6 +82,8 @@ public_methods:
       damage_count = 0.0, time_since_fire = f32::INFINITY (so the first
       shot of the game gets first-shot accuracy),
       ammo = PLAYER_AMMO_INITIAL (specs/60),
+      armor = PLAYER_ARMOR_INITIAL (specs/25 § Armor — 0),
+      armor_type = ArmorTier::None (specs/25 § Armor),
       weapon_rng = weapon_rng_seed.
 
       The seed is supplied by the caller. Today game_loop::new passes
@@ -99,10 +123,49 @@ public_methods:
       trooper's trace lands on the player (specs/20 § Enemy ranged
       attack form, specs/25 § Enemy Implemented). Mutates only the
       player struct (no &mut VisualEffects param -- spec/80 § API
-      Surface forbids it on non-orchestration methods). Behavior:
-        health -= amount;
-        damage_count = (damage_count + amount as f32).min(DAMAGE_TINT_CAP);
-        if health <= 0 { alive = false; health = 0; }
+      Surface forbids it on non-orchestration methods).
+
+      Armor-first damage routing (specs/25 § Armor Damage Routing;
+      knowledge/combat_balance.md § Damage to Player). Behavior:
+        let mut saved: u32 = 0;
+        if player.armor_type != ArmorTier::None && player.armor > 0 {
+            let (num, den) = match player.armor_type {
+                ArmorTier::Green => (ARMOR_GREEN_ABSORB_NUM, ARMOR_GREEN_ABSORB_DEN),
+                ArmorTier::Blue  => (ARMOR_BLUE_ABSORB_NUM,  ARMOR_BLUE_ABSORB_DEN),
+                ArmorTier::None  => unreachable!(),  // gated above
+            };
+            saved = (amount as u32) * num / den;     // integer division, knowledge
+                                                     // "saved = damage/3 / damage/2"
+            if saved > player.armor as u32 {         // clamp underflow
+                saved = player.armor as u32;
+                player.armor_type = ArmorTier::None; // mid-hit depletion clears type
+            }
+            player.armor -= saved as u8;
+        }
+        let residual = amount - saved as i32;
+        player.health -= residual;
+        player.damage_count = (player.damage_count + residual as f32)
+                                  .min(DAMAGE_TINT_CAP);
+        if player.health <= 0 { player.alive = false; player.health = 0; }
+      Notes:
+        - The clamp-and-clear-type rule on saved-overflow is the
+          knowledge-pinned "armor depletes mid-hit reverts to no
+          armor" behavior. After this branch, `armor == 0 AND
+          armor_type == None` simultaneously (matching the steady-
+          state invariant in specs/60 § Player Armor).
+        - damage_count accumulates `residual`, not `amount` — the
+          screen tint reflects HEALTH-reaching damage. Knowledge does
+          not pin pre-vs-post; this is a generation default
+          (specs/25 § Armor Damage Routing rule 5).
+        - The Coder MAY swap the unreachable! arm for an else-branch
+          early return; the two shapes are equivalent (every path
+          through the function ends at the residual computation).
+        - The pre-armor halving on the easiest skill
+          (knowledge/combat_balance.md § Damage to Player) is
+          deferred (single difficulty band, specs/25 § Deferred
+          Combat Features); when implemented, it applies BEFORE
+          the armor routing step (knowledge order).
+
       Caller (enemy_logic) is responsible for any console message and any
       direct pain-flash side effect on its own enemy. The damage tint is
       DERIVED at draw time by renderer from player.damage_count; no
@@ -130,6 +193,32 @@ public_methods:
       player.ammo, clamps to PLAYER_AMMO_MAX. Caller (game_loop)
       flips the Pickup's active flag and applies the refused-at-cap
       guard.
+  - signature: "pub fn take_armor_pickup(player: &mut Player, tier: ArmorTier)"
+    notes: |
+      specs/60 § Armor Pickup Consumption (both green and blue
+      arms share this entry point). Behavior:
+        let target = match tier {
+            ArmorTier::Green => PICKUP_ARMOR_GREEN_TARGET_POINTS,
+            ArmorTier::Blue  => PICKUP_ARMOR_BLUE_TARGET_POINTS,
+            ArmorTier::None  => return,  // defensive — caller never
+                                          // passes None; per knowledge
+                                          // § Armor Pickup Tiers the
+                                          // bonus +1 pickup that uses
+                                          // armor_type=None is
+                                          // deferred this slice.
+        };
+        player.armor = target;
+        player.armor_type = tier;
+      Overwrite semantics: knowledge/pickups.md § Armor Pickup
+      Tiers — "overwrites *both* the armor type and the armor
+      points with the new tier and its target pool". The caller
+      (game_loop) is responsible for:
+        - flipping the Pickup's active flag,
+        - applying the refused-at-pool guard
+          (`player.armor < target` — see specs/60
+          § Per-Frame Pickup Check).
+      No clamp needed because the target writes are the literal
+      pool sizes (100 or 200), both within PLAYER_ARMOR_MAX.
 cross_module_borrows:
   - "&Level (immutable read in apply_input for collision)"
   - "&InputState (immutable read in apply_input)"

@@ -94,6 +94,7 @@ Checked after the simulation ends (all objectives complete or timeout).
 |-------|------|-------------|
 | `player.alive` | bool | Player is alive |
 | `player.health` | number | Player health (0-100) |
+| `player.armor` | number | Player armor pool (0-200); added 2026-05-14 armor slice (specs/25 § Armor). |
 | `player.position.x` | number | Player X coordinate |
 | `player.position.y` | number | Player Y coordinate |
 | `enemy.alive` | bool | Enemy is alive |
@@ -333,7 +334,7 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 - Optional `level:` field on Scenario (specs/15) — selects a generated demo level instead of `level_data::build_default()` when set; backwards compatible with all existing fixtures.
 - Objective types: `kill:`, `reach:`, `approach:`, `wait:`.
 - Target names: `enemy`, `exit`, `spawn`, `pickup_health`, `pickup_ammo` (with fallback semantics).
-- Assertion fields: `player.alive`, `player.health`, `enemy.alive`, `game.won`, `game.frames` — these five are implemented in `autopilot::eval_assertion`.
+- Assertion fields: `player.alive`, `player.health`, `player.armor`, `enemy.alive`, `game.won`, `game.frames` — these six are implemented in `autopilot::eval_assertion`. `player.armor` was added in the 2026-05-14 armor slice for the `tests/combat/armor_absorbs_damage.yaml` scenario.
 - **Not yet implemented** (return "unknown assertion field" error at runtime): `player.position.x`, `player.position.y`, `enemy.health`, `game.running`.
 - Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
 - Bot behavior: turn-toward objective, BFS pathfinding with periodic replan and bee-line fallback, kite at `BOT_KITE_RANGE`, range-gated firing at `BOT_FIRE_MAX_RANGE`, LoS-gated firing via tile-grid ray-cast, stuck detection with strafe recovery as fallback.

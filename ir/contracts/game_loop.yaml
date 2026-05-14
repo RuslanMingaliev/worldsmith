@@ -11,6 +11,9 @@ depends_on:
   - input_controller
   - visual_effects
 public_types:
+  - name: ArmorTier
+    note: "Consumed; see shared_types.ArmorTier. game_loop's per-frame pickup-check step translates PickupKind::ArmorGreen/ArmorBlue to ArmorTier::Green/Blue at the call site to player_state::take_armor_pickup (frame_update_order)."
+
   - name: GameState
     definition: |
       pub struct GameState {

@@ -46,6 +46,46 @@ shared_types:
       are NOT modeled as tiles; they live as Pickup entities in
       Level::pickups (see PickupKind / Pickup below).
 
+  - name: ArmorTier
+    home_module: player_state
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+      pub enum ArmorTier {
+          None,
+          Green,
+          Blue,
+      }
+    notes: |
+      Player-side armor tier discriminator. Homed in player_state
+      because the type lives on Player and mutates via
+      take_damage / take_armor_pickup. Consumed by:
+        - player_state (home): take_damage's armor-first routing
+          (mid-hit depletion clears to None — specs/25 § Armor
+          Damage Routing rule 3), take_armor_pickup overwrites
+          to Green or Blue from the matching PickupKind variant.
+        - game_loop: per-frame pickup-check dispatch — translates
+          PickupKind::ArmorGreen / ArmorBlue into the matching
+          ArmorTier::Green / Blue value when calling
+          take_armor_pickup (specs/60 § Per-Frame Pickup Check;
+          frame_update_order above).
+        - renderer: draw_hud's topdown armor pane color dispatch
+          (specs/50 § Armor Pane), draw_hud_fps's raycaster
+          armor pane color dispatch (specs/45 § Armor Pane).
+      Knowledge basis: knowledge/pickups.md § Armor Pickup Tiers
+      "armor type values: 0 = none, 1 = small (green), 2 = large
+      (blue)". The reference's u8 0/1/2 encoding maps to this enum
+      directly; the named variants are preferred over an integer
+      cast so pattern matching reads the tier semantics off the
+      variant name.
+
+      ArmorTier is a SEPARATE type from PickupKind below. The two
+      do not unify because PickupKind also covers Health and Ammo
+      while ArmorTier covers the player-state-only None / Green /
+      Blue triple including the absent-armor state (which has no
+      corresponding pickup). game_loop's pickup-check step performs
+      the mapping (ArmorGreen → Green, ArmorBlue → Blue) at the
+      call site.
+
   - name: PickupKind
     home_module: level_data
     definition: |
@@ -53,11 +93,32 @@ shared_types:
       pub enum PickupKind {
           Health,
           Ammo,
+          ArmorGreen,
+          ArmorBlue,
       }
     notes: |
       Discriminator for Pickup. Source: specs/60_pickups.md,
       knowledge/pickups.md. Renderer dispatches sprite drawing on
       this; game_loop dispatches pickup application on this.
+
+      ArmorGreen and ArmorBlue variants added in the 2026-05-14
+      armor slice. The tier choice is encoded in the variant
+      (per knowledge/pickups.md § Armor Pickup Tiers — "Two named
+      tiers exist"). game_loop's per-frame pickup check matches
+      on PickupKind and forwards the tier to
+      player_state::take_armor_pickup(player, ArmorTier::Green |
+      ArmorTier::Blue) via the obvious mapping
+      (ArmorGreen → Green, ArmorBlue → Blue). The renderer's
+      pickup sprite pass dispatches on the same variant to pick
+      between PICKUP_ARMOR_GREEN_COLOR and PICKUP_ARMOR_BLUE_COLOR.
+
+      ArmorTier (the player-side enum) is homed in player_state
+      and is a SEPARATE type from PickupKind — see
+      ir/contracts/player_state.yaml § ArmorTier. The two enums
+      do not unify because PickupKind also covers Health and Ammo
+      while ArmorTier covers the player-state-only None / Green /
+      Blue triple including the absent-armor state that has no
+      corresponding pickup.
 
   - name: Pickup
     home_module: level_data
@@ -340,7 +401,7 @@ main_cli:
 frame_update_order:
   - "if input.quit { state.running = false; return; }"
   - "player_state::apply_input(&mut state.player, input, &state.level, dt)"
-  - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds (Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX), set pickup.active=false, call player_state::take_health_pickup or take_ammo_pickup based on pickup.kind, and call visual_effects::increment_pickup_tint(&mut state.fx) (specs/40 § Pickup Tint Screen Flash)."
+  - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds — Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX; ArmorGreen: state.player.armor < PICKUP_ARMOR_GREEN_TARGET_POINTS; ArmorBlue: state.player.armor < PICKUP_ARMOR_BLUE_TARGET_POINTS — set pickup.active=false, dispatch on pickup.kind to call the matching player_state method (take_health_pickup / take_ammo_pickup / take_armor_pickup(player, ArmorTier::Green) / take_armor_pickup(player, ArmorTier::Blue)), and call visual_effects::increment_pickup_tint(&mut state.fx) (specs/40 § Pickup Tint Screen Flash). All four pickup kinds use the SAME pickup tint — knowledge/pickups.md § Single-use Consumption confirms every pickup contributes the same flash amount."
   - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)  // enemy.archetype is consulted internally via archetype_stats() for max_health / pain_chance / pellet_count / attack_sequence_sec"
   - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire. Ammo gate is also inside fire(): if player.ammo == 0, fire() returns without side effects after the cooldown gate."
   - "// specs/25 § Enemy drop on death + specs/60 § Enemy Ammo Drops: scan state.enemies AFTER the enemy update loop AND after weapon_system::fire (so a same-frame kill drops the pickup that frame, not next frame). For each enemy where !enemy.alive AND !enemy.ammo_drop_spawned, push Pickup { kind: PickupKind::Ammo, pos: enemy.pos, active: true } onto state.level.pickups and set enemy.ammo_drop_spawned = true. Coder may use a two-pass shape (collect dropped positions, then push) to side-step split-borrow ergonomics; both shapes meet the contract. The behavior is `exactly one Pickup pushed per dead trooper, at the trooper's death position, in the same frame death is detected`. Re-running this scan on subsequent frames is a no-op because ammo_drop_spawned remains true. The drop is collectible by the existing per-frame pickup check on the next frame (the pickup check ran earlier this frame, before enemy update + weapon_system::fire, so the new Pickup is not seen until the next frame's pickup-check step)."
@@ -421,6 +482,28 @@ service_emit_decisions:
       player_state independent of visual_effects symbol-wise EXCEPT for
       the two constants DAMAGE_TINT_CAP and DAMAGE_TINT_DECAY_PER_SEC
       (constant import is fine; struct import is not).
+
+      The 2026-05-14 armor slice extends take_damage to apply the
+      armor-first routing rule (specs/25 § Armor Damage Routing). The
+      resolution is unchanged — take_damage still mutates only the
+      player struct (armor / armor_type / health / damage_count /
+      alive), and the residual damage that reaches health is what
+      feeds damage_count for the tint. No &mut VisualEffects is
+      introduced.
+
+  - call_site: "player_state::take_armor_pickup"
+    resolution: B
+    rationale: |
+      Same shape as take_health_pickup / take_ammo_pickup — the
+      method is called from inside game_loop's per-frame pickup-check
+      step (frame_update_order above), which itself is an
+      orchestration hook. take_armor_pickup mutates only the player
+      struct (armor + armor_type overwrite to the tier's target
+      pool). The pickup-tint flash is emitted by game_loop's
+      pickup-check step via visual_effects::increment_pickup_tint,
+      not from inside take_armor_pickup — preserving the spec/80
+      § API Surface "non-orchestration methods do not take service
+      borrows" rule.
 
   - call_site: "renderer::draw"
     resolution: B

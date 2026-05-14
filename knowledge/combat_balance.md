@@ -80,7 +80,7 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
 ### Damage to Player (Armor and Damage Reduction)
 
 - **Behavior**: When the player takes damage, armor absorbs a fraction of it. Skill level also affects damage taken
-- **Rules**: Green armor (type 1) absorbs 1/3 of damage. Blue armor (type 2) absorbs 1/2 of damage. Absorbed damage is subtracted from armor points. When armor is depleted mid-hit, only the remaining armor points are absorbed. On the easiest skill, all damage is halved (right shift by 1)
+- **Rules**: Damage routing is armor-first: the engine computes a candidate absorbed value from the active armor type's fraction (`saved = damage/3` for green, `saved = damage/2` for blue), then clamps `saved` to the remaining armor points if the pool would go negative. The clamped `saved` is subtracted from both armor points and incoming damage; the residual damage hits health. When the clamp fires (armor depletes mid-hit), the armor type field is *also* cleared to 0, so the *next* incoming hit takes no absorption — a partially-depleted blue armor that empties on this tick reverts to "no armor" for the next tick, not to "small armor with leftover points." On the easiest skill, all damage is halved (right shift by 1) before the armor routing step.
 - **Constants**:
   - Player starting health: 100
   - Maximum normal health: 100 (powerups can push to 200)
