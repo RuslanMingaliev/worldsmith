@@ -440,6 +440,12 @@ def _revert_out_of_scope(
 def main() -> int:
     args = parse_args()
 
+    # CI mode signal per tooling/agents/coder.md § CI mode output:
+    # "when an `artifacts/` directory is present at the repo root before you start".
+    # Sampled BEFORE the phase runs because the phase itself (and this wrapper's
+    # prompt_artifact write) will create the directory.
+    ci_mode = (REPO_ROOT / "artifacts").exists()
+
     baseline: Optional[Path] = None
     if args.target_modules:
         baseline = _snapshot_src(GENERATED_SRC_DIR)
@@ -481,6 +487,19 @@ def main() -> int:
         f"cache_r={usage.cache_read} cache_c={usage.cache_creation} "
         f"turns={usage.turns}"
     )
+
+    if ci_mode and args.phase == "coder":
+        coder_report = REPO_ROOT / "artifacts" / "coder_report.md"
+        if not coder_report.exists():
+            print(
+                f"Coder phase exited without writing {coder_report.relative_to(REPO_ROOT)}. "
+                "Required by tooling/agents/coder.md § CI mode output; Reconciler's "
+                "Step 0 framing-grep and Step 3 cross-walk depend on it. The PR #80 "
+                "armor regen exited cleanly after 67 turns / 26.8k output tokens with "
+                "no report, blinding both downstream phases. Aborting.",
+                file=sys.stderr,
+            )
+            return 1
 
     cap_env = os.environ.get("WORLDSMITH_MAX_TOKENS_PER_RUN")
     if cap_env:
