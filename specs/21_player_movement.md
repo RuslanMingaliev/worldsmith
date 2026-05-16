@@ -208,6 +208,7 @@ This specification defines the player movement system for the retro shooter. Mov
 - Player can fire weapons while moving
 - Movement does not affect weapon accuracy (no spread penalty)
 - Taking damage does not interrupt movement directly
+- Armor absorbs a tier-dependent fraction of incoming damage before health (green = 33%, blue = 50%); the binding rule sequence lives in `ir/contracts/player_state.yaml § public_methods § take_damage`. The absorption is clamped to the remaining armor pool *before* the residual damage is computed — when an incoming hit would absorb more than the player currently has in armor, the surplus still lands as health damage rather than being silently dropped. No implicit floor (`saved.max(1)`, `absorbed.min(amount)` etc.) is permitted on the absorbed amount — those would either inflate absorption beyond the armor pool or drop residual damage that the contract requires to reach health.
 
 ### With Level Geometry
 - Walls block movement but allow sliding
