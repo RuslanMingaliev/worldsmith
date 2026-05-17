@@ -24,7 +24,7 @@ Inputs:
 - --scope            optional free-text scope (forwarded into the prompt)
 - --usage-jsonl      output path for the usage record (default: artifacts/usage.jsonl)
 - --transcript       optional path to also save the raw stream-json transcript
-- --max-turns        cap on agent turns (default: 160)
+- --max-turns        cap on agent turns (default: 240)
 - --model            override the Claude model id (default: inherits from CLI/env)
 
 Exit codes:
@@ -363,7 +363,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scope", default=None)
     parser.add_argument("--usage-jsonl", type=Path, default=DEFAULT_USAGE)
     parser.add_argument("--transcript", type=Path, default=None)
-    parser.add_argument("--max-turns", type=int, default=160)
+    parser.add_argument("--max-turns", type=int, default=240)
     parser.add_argument("--model", default=None)
     parser.add_argument(
         "--target-modules",
