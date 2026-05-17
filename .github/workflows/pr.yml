@@ -118,7 +118,7 @@ jobs:
         run: |
           set -e
           if [ -d reference ]; then
-            extra=$(find reference -mindepth 1 ! -name '.gitignore' ! -name 'README.md')
+            extra=$(find reference -mindepth 1 ! -path 'reference/textures' ! -path 'reference/textures/*' ! -name '.gitignore' ! -name 'README.md')
             if [ -n "$extra" ]; then
               echo "::error::reference/ contains non-template files; PR regen flow refuses to run with reference present."
               echo "$extra"

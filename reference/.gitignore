@@ -1,3 +1,10 @@
 *
 !.gitignore
 !README.md
+!textures/
+!textures/README.md
+!textures/.gitignore
+!textures/good/
+!textures/good/README.md
+!textures/bad/
+!textures/bad/README.md

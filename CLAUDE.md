@@ -71,14 +71,14 @@ This prevents specs and code from drifting apart across regenerations.
 
 This project's whole proposition is "specs distilled from a real reference, regenerated into code". That only works if the chain stays honest. Two rules:
 
-1. **`reference/` is gitignored and may be empty.** When it contains only `.gitignore` and `README.md`, no extraction is possible. The Extractor agent must STOP in that state — it must NOT infer mechanics from training data, genre conventions, or common knowledge of similar games. See `tooling/agents/extractor.md` § Step 0.
+1. **`reference/` is gitignored and may be empty.** When it contains only `.gitignore`, `README.md`, and the `textures/` subtree (which is the operationally-orthogonal texture corpus, see `adr/0001-textures-evals-as-source-of-truth.md`), no knowledge extraction is possible. The Extractor agent must STOP in that state — it must NOT infer mechanics from training data, genre conventions, or common knowledge of similar games. See `tooling/agents/extractor.md` § Step 0.
 
 2. **Only the Extractor writes to `knowledge/`, and only when `reference/` is loaded.** Architect, Orchestrator, Reconciler, and PostMortem must never add or modify knowledge files. If a spec value has no knowledge backing, mark its Source as `Generation default — no knowledge backing` in `specs/25_game_tuning.md` and add a parking-lot item to the run journal — never invent a knowledge citation. See `tooling/agents/architect.md` § Citation discipline.
 
 `tooling/validate_specs.py` enforces this mechanically. Two hard rules, no warning paths:
 
 - A session that modifies `knowledge/` while `reference/` is empty fails validation with a loud banner.
-- Any forbidden source-identifier token (proper nouns, source-code identifiers, release-year sentinels) in any `knowledge/*.md` fails validation, regardless of git status. The pattern table lives in `tooling/check_sanitization.py`. Pre-existing leaks in committed files must be cleaned up in the same PR that next touches the affected file.
+- Any forbidden source-identifier token (proper nouns, source-code identifiers, release-year sentinels) in any `knowledge/*.md` or top-level `evals/textures/*.md` fails validation, regardless of git status. The pattern table lives in `tooling/check_sanitization.py`. Pre-existing leaks in committed files must be cleaned up in the same PR that next touches the affected file.
 
 Trust the gate; do not work around it. If the gate fires unexpectedly, the right responses are (a) revert the knowledge edit, (b) load the relevant reference and re-run Extractor properly, (c) demote the value to a `Generation default` in spec/25, or (d) for sanitization leaks, paraphrase the offending text without changing numerics.
 
@@ -89,6 +89,7 @@ When a decision is made during conversation, **automatically**:
 1. **Record decision** — Use ADR format (Decision N: Title, Date, Context, Decision, Consequences); accepted public workflow/source-of-truth decisions should graduate into tracked docs
 2. **Update agent prompts** — If workflow or process changes, update `tooling/agents/*.md`
 3. **Update README files** — If directory structure or conventions change
+4. **Record accepted ADRs** in `adr/` (numbered `NNNN-kebab-title.md`, committed); local-only drafts stay outside the tracked tree.
 
 Don't wait for user to ask — document immediately when decisions are made.
 
