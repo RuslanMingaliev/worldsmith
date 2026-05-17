@@ -1,0 +1,22 @@
+{
+  "source_sha": "21e73388693ff065c5e0d82c6a29b66b651313cf",
+  "source_pr": 80,
+  "pr_workflow_run_id": "25956815820",
+  "regenerated_modules": [
+    "autopilot",
+    "enemy_logic",
+    "frame_recorder",
+    "game_loop",
+    "input_controller",
+    "level_data",
+    "level_generator",
+    "main",
+    "player_state",
+    "presentation",
+    "raycaster",
+    "renderer",
+    "visual_effects",
+    "weapon_system"
+  ],
+  "timestamp": "2026-05-17T06:23:42Z"
+}
