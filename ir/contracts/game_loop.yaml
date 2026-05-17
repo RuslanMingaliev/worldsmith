@@ -11,6 +11,9 @@ depends_on:
   - input_controller
   - visual_effects
 public_types:
+  - name: ArmorTier
+    note: "Consumed; see shared_types.ArmorTier. game_loop's per-frame pickup-check step translates PickupKind::ArmorGreen/ArmorBlue to ArmorTier::Green/Blue at the call site to player_state::take_armor_pickup (frame_update_order)."
+
   - name: GameState
     definition: |
       pub struct GameState {
@@ -71,7 +74,16 @@ cross_module_borrows:
   - "Owns Level, Player, Enemies, VisualEffects -- all by value."
   - "Borrows &InputState for the duration of update()."
 notes: |
-  The `frames` field is `#[cfg(test)]` because the only consumer is
-  autopilot's `game.frames` assertion (specs/30). Per spec/80 §
-  API Surface "no dead pub exports", a release-build symbol with
-  no consumer must not be public.
+  The `frames` field is `#[cfg(test)]`-gated because its only consumer
+  is game_loop's own `test_frames_increment` unit test. It is NOT
+  consumed by autopilot's `--autopilot` run loop (which uses its own
+  module-private `BotState.frame_count` keyed off `BOT_MAX_FRAMES`,
+  see autopilot.yaml § BotState) or by the autopilot field-value
+  resolver (specs/30 § Implementation Status lists `game.frames` under
+  "Not yet implemented" — see autopilot.yaml § Field-value resolver).
+  Per spec/80 § API Surface "no dead pub exports", a release-build
+  symbol with no consumer must not be public; the `#[cfg(test)]` gate
+  keeps the field available for the unit test without releasing it.
+  Corrected 2026-05-14 release reconcile after the prior note
+  incorrectly attributed the consumer to a `game.frames` assertion
+  field that the resolver does not implement.

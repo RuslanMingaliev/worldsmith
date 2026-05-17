@@ -21,6 +21,34 @@ Existing rows below this point predate the convention and are kept verbatim — 
 | Turn speed | 2.0 rad/sec | Tuned for 60 FPS (original was 35 ticks/sec) |
 | PLAYER_RADIUS_TILES | 0.4375 | Derived from player visual radius 14 px / `TILE_SIZE` (32). Used by `player_state::collides` to size the four-corner overlap test against `level_data::is_wall`, and referenced by name in `specs/15_level_generator.md § LocalChaseObstacle` to verify gap traversability. Captured during reconcile pass — the IR contract already cited `specs/25 § Visual` as its source but no named row existed. |
 
+### Armor
+
+The player carries a tiered armor pool that absorbs a fraction of incoming damage before it reaches `Player.health`. Two tiers ship (green, blue); the bonus over-cap +1 pickup and any third tier are deferred (see § Deferred Combat Features).
+
+Knowledge basis: `knowledge/combat_balance.md § Damage to Player (Armor and Damage Reduction)` and `knowledge/pickups.md § Armor Pickup Tiers`. The reference's "armor-first routing then clamp" rule, the "armor type clears when the pool depletes mid-hit" rule, and the per-tier absorption fractions and pool sizes are reproduced verbatim. The over-cap +1 bonus armor pickup and the easy-skill 0.5× pre-armor halving are knowledge-documented but **deferred** in this slice (single difficulty band; no bonus pickup).
+
+| Constant | Value | Source |
+|----------|-------|--------|
+| PLAYER_ARMOR_INITIAL | 0 | knowledge/pickups.md § Armor Pickup Tiers — "Player's starting armor: 0 points, type 0 (none)". Direct match. |
+| PLAYER_ARMOR_MAX | 200 | knowledge/pickups.md § Armor Pickup Tiers — "Absolute armor ceiling (any source): 200 points". knowledge/combat_balance.md § Damage to Player § Constants — "Blue armor points: 200". Direct match. |
+| ARMOR_GREEN_POOL | 100 | knowledge/pickups.md § Armor Pickup Tiers — "small armor pickup (tier 1, green) → target pool 100". knowledge/combat_balance.md § Damage to Player § Constants — "Green armor points: 100". Direct match. |
+| ARMOR_BLUE_POOL | 200 | knowledge/pickups.md § Armor Pickup Tiers — "large armor pickup (tier 2, blue) → target pool 200". knowledge/combat_balance.md § Damage to Player § Constants — "Blue armor points: 200". Direct match. |
+| ARMOR_GREEN_ABSORB_NUM / ARMOR_GREEN_ABSORB_DEN | 1 / 3 | knowledge/pickups.md § Armor Pickup Tiers — "small armor pickup (tier 1, green) → absorb rate 1/3 (i.e. ~33% of damage diverts to armor)". knowledge/combat_balance.md § Damage to Player — "`saved = damage/3` for green". The reference's integer division is preserved: `saved = damage * 1 / 3` rounded toward zero. |
+| ARMOR_BLUE_ABSORB_NUM / ARMOR_BLUE_ABSORB_DEN | 1 / 2 | knowledge/pickups.md § Armor Pickup Tiers — "large armor pickup (tier 2, blue) → absorb rate 1/2 (i.e. 50% of damage diverts to armor)". knowledge/combat_balance.md § Damage to Player — "`saved = damage/2` for blue". |
+
+### Armor Damage Routing
+
+`player_state::take_damage` applies the armor-first routing rule pinned in `knowledge/combat_balance.md § Damage to Player (Armor and Damage Reduction)`. Sequence:
+
+1. If `armor_type == ArmorTier::None` OR `armor == 0`, fall through to step 5 (no absorption). `saved = 0`.
+2. Compute `saved = damage * armor_num / armor_den` where `(armor_num, armor_den)` is `(1, 3)` for `Green` and `(1, 2)` for `Blue`. Integer division rounds toward zero (knowledge: `damage/3` and `damage/2`).
+3. If `saved > armor` (the pool would underflow), clamp: `saved = armor` AND set `armor_type = ArmorTier::None`. *(Knowledge: § Damage to Player — "the armor type field is *also* cleared to 0, so the *next* incoming hit takes no absorption".)* This is the "armor depletes mid-hit reverts to no armor" rule.
+4. `armor -= saved`. Note: if step 3 fired, this leaves `armor == 0`; otherwise `armor` retains the residual pool at the current tier.
+5. `residual = damage - saved`. `health -= residual`. `damage_count = (damage_count + residual as f32).min(DAMAGE_TINT_CAP)` — the damage tint accumulates from the HEALTH-reaching damage, not the pre-armor amount. *(Generation default — knowledge does not specify whether the screen tint reads pre-armor or post-armor damage; we use post-armor because the tint is a derived overlay of HP loss, and HP loss is what the player observes. Re-extract if knowledge surfaces the reference's exact pre-vs-post behavior.)*
+6. If `health <= 0`, set `alive = false; health = 0` (unchanged from pre-armor behavior).
+
+The easy-skill 0.5× pre-armor halving (`knowledge/combat_balance.md § Damage to Player`) is **deferred** (single difficulty band — see § Deferred Combat Features).
+
 ## Enemy
 
 The prototype now ships TWO enemy archetypes: the **basic hitscan trooper** (slice-1, low HP, 1-pellet hitscan) and the **shotgun trooper** (slice-2, 30 HP, 3-pellet hitscan salvo). Both share the same state machine (`Idle / Chase / Attack / Pain / Dead`), the same Attack-state windup gate, the same `(rand_a − rand_b) * ENEMY_ATTACK_SPREAD_RAD` triangular spread shape, and the same `[3, 6, 9, 12, 15]` per-pellet damage roll. The differences live in a small per-archetype constant table (`### Per-archetype constants` below): max health, pain chance, pellet count per Attack, and Attack-sequence duration.
@@ -311,16 +339,20 @@ Behavior spec: [`60_pickups.md`](60_pickups.md). Knowledge: [`knowledge/pickups.
 | PICKUP_HEALTH_AMOUNT | 25 | Knowledge § Health Pickup Tiers — "large health pickup → +25 HP, clamps at normal_max, refused at full". Direct match. |
 | PICKUP_AMMO_AMOUNT | 10 | Knowledge § Ammo Pickup Tiers — "Small pickup: 1 clip-load granted" × `clip_size = 10` for Category A (primary clip ammo). Direct knowledge value. |
 | PICKUP_RADIUS_TILES | 1.0 | Knowledge § Pickup Touch Detection — "AABB sum-of-radii: `r_player + r_thing` = 16+16 = 32 world units = 1 tile at 32 px/tile". Translation note: knowledge value is AABB Chebyshev; we use circle distance for consistency with our other collision checks (see spec/60 § Per-Frame Pickup Check); the magnitude (1 tile) carries over. |
+| PICKUP_ARMOR_GREEN_TARGET_POINTS | 100 | Knowledge § Armor Pickup Tiers — "small armor pickup (tier 1, green) → target pool 100 ... refused if current armor points >= 100". Pool size written on accept; refusal threshold (`armor >= 100`) also reads this constant. Direct match. |
+| PICKUP_ARMOR_BLUE_TARGET_POINTS | 200 | Knowledge § Armor Pickup Tiers — "large armor pickup (tier 2, blue) → target pool 200 ... refused if current armor points >= 200". Pool size on accept and refusal threshold both read this. Direct match. |
 
 ### Default Level Placement
 
-Three pickups in `level_data::build_default()`:
+Five pickups in `level_data::build_default()`:
 
 | Pickup | Position (tile coords) | Rationale |
 |--------|------------------------|-----------|
 | Health | (5.5, 12.5) | Generation default — south corridor, off the direct path from spawn → enemy → exit. Rationale: rewards exploration; player must detour from the optimal kill-then-exit path to find it. Tests the refused-at-cap rule because at full health the player can intentionally skip it. |
 | Health | (12.5, 4.5) | Generation default — north of the central wall divider, on the natural BFS path between spawn and the SE enemy at (17.5, 12.5). With two enemies in the default level the bot is more likely to take damage during the run; this pickup sits on a low-detour line so `BOT_HEALTH_PICKUP_THRESHOLD`-triggered routing fires when HP drops below 50%. Generation default — no knowledge backing. |
 | Ammo | (15.5, 7.5) | Generation default — east of the interior horizontal wall, on a natural approach line toward the enemy at (17.5, 12.5). Rationale: lies on the path the player will most likely take; reinforces the "ammo replenish before combat" loop. Sized so a player who fired wastefully on the way still has ammo for the encounter. |
+| Armor (green) | (8.5, 12.5) | Generation default — south corridor, two tiles east of the southern health pickup at (5.5, 12.5). Rationale: sits on the same SW exploration loop, so a bot routing for the SW enemy at (4.5, 11.5) naturally walks past it; visible in any GIF that visits the south corridor. Tier choice (green, not blue) so the cheaper tier is the first armor the player encounters along the typical path — matches the reference's "small pickup before big pickup" placement convention even though knowledge does not pin per-level placement. |
+| Armor (blue) | (3.5, 4.5) | Generation default — NW pocket, west of the player's spawn at (2.5, 2.5) and outside the natural spawn → enemy → exit corridor. Rationale: a "reward for exploration" placement that mirrors the SW health pickup's role at (5.5, 12.5). Blue armor's 200-point pool is the cap, so picking it up is a meaningful resource event the player must detour for. Generation default — no knowledge backing for per-level placement. |
 
 ### Sprite Visual
 
@@ -334,6 +366,9 @@ All sprite constants are `Generation default — no knowledge backing`. Knowledg
 | PICKUP_HEALTH_INNER_THICKNESS_PX | 4 | — | Generation default. Rationale: 1/3 of the pickup width — the cross arms are bold enough to read at a distance but leave white space on either side so the pickup still reads as "white square + cross", not "red mass". |
 | PICKUP_AMMO_SIZE_PX | 10 | — | Generation default. Rationale: smaller than the health pickup (12 px) — visual hierarchy: health is the more "rare and valuable" pickup, gets the larger silhouette. |
 | PICKUP_AMMO_COLOR | — | #FFFF00 yellow | Generation default. Rationale: pure yellow is the universal "ammo / pickup" color and is reused for the HUD ammo pane (`HUD_AMMO_COLOR`) so the two visually link. Distinct from `COLOR_MUZZLE_FLASH` (`#FFFF80` pale yellow) so the static pickup does not look like a transient effect. |
+| PICKUP_ARMOR_SIZE_PX | 12 | — | Generation default. Rationale: same diameter as the health pickup (12 px) — armor pickups carry comparable "rare and valuable" weight, so they share the larger silhouette tier. Distinguished from health by color, not size. |
+| PICKUP_ARMOR_GREEN_COLOR | — | #20C020 green | Generation default — knowledge `pickups.md § Armor Pickup Tiers` names the tier "green" but does not pin a hex value (reference uses sprite assets). The shade is a mid-saturated forest green: distinguishable from `COLOR_PLAYER` (`#00FF00` pure green, used for the player disc and HUD high-health band) and from `HUD_HEALTH_COLOR_HIGH` (`#00C000`) so the static pickup does not visually merge with the player or with the topdown HUD bar at full health. |
+| PICKUP_ARMOR_BLUE_COLOR | — | #2060E0 blue | Generation default — knowledge `pickups.md § Armor Pickup Tiers` names the tier "blue" but does not pin a hex value. Mid-saturated cobalt blue: distinct from every existing in-game color (walls #404040 gray, floor #808080 gray, player #00FF00, enemy #FF0000, exit marker #00FFFF, direction line #FFFF00, pickup tint #FFCC00). |
 
 ### HUD Ammo Pane (extends [`50_hud.md`](50_hud.md))
 
@@ -342,6 +377,15 @@ All sprite constants are `Generation default — no knowledge backing`. Knowledg
 | HUD_PANE_GAP_PX | 4 | — | Generation default. Rationale: half the digit on-screen height (~10 px) — wide enough that the two panes read as separate fields, narrow enough that they read as one HUD cluster. |
 | HUD_AMMO_ICON_PX | 8 | — | Generation default. Rationale: matches the digit on-screen height (8 ≈ HUD_DIGIT_HEIGHT_PX × HUD_DIGIT_PIXEL_SIZE = 10) so icon + digits visually align as one row. |
 | HUD_AMMO_COLOR | — | #FFFF00 yellow | Generation default — same yellow as the on-map ammo pickup so the player's eye links them. Knowledge § Color / State Encoding shows the reference uses *different fonts* (tall vs short) for primary vs secondary readouts; we substitute color since our font is monolithic. |
+
+### HUD Armor Pane (extends [`50_hud.md`](50_hud.md))
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| HUD_ARMOR_ICON_PX | 8 | — | Generation default — same as `HUD_AMMO_ICON_PX` for visual symmetry; same "icon ≈ digit height" rationale. |
+| HUD_ARMOR_COLOR_GREEN | — | #20C020 green | Generation default — same `PICKUP_ARMOR_GREEN_COLOR` so on-map green armor and the green-armor HUD readout share one color (mirrors how `HUD_AMMO_COLOR` reuses `PICKUP_AMMO_COLOR`). |
+| HUD_ARMOR_COLOR_BLUE | — | #2060E0 blue | Generation default — same `PICKUP_ARMOR_BLUE_COLOR` so on-map blue armor and the blue-armor HUD readout share one color. |
+| HUD_ARMOR_COLOR_NONE | — | #606060 mid-gray | Generation default — used when `armor_type == ArmorTier::None`; reads as "inactive instrument" rather than "active green" or "active blue" so the zero-armor state is unambiguous. Knowledge `hud.md § Color / State Encoding` notes the reference does not color-shift digits by value; this prototype uses a tri-state color (green/blue/gray) keyed off `armor_type`, not `armor` value. Documented as a generation-default deviation from "single-color-per-pane" because the armor pane uniquely carries a tier discriminator that the health and ammo panes do not. |
 
 ## HUD
 
@@ -570,8 +614,9 @@ Knowledge `raycaster_hud.md` § Widget Layout Within the Strip pins the referenc
 |----------|-------|--------|
 | RAYCASTER_HUD_DIGIT_PIXEL_SIZE | 4 | Generation default — no knowledge backing for the exact value (reference fonts are asset-bitmap-driven). 4× scale on the existing 3 × 5 digit font (specs/25 § Bitmap Font) produces 12 × 20 px digits — closest analogue to the reference's "tall-digit" font (~14 × 16 px, knowledge `raycaster_hud.md` § Bottom-Strip Font Treatment) at our framebuffer size. The topdown HUD uses 2× scale (6 × 10 digits); the FPS strip's bigger panes need bigger digits to read across the player's "instrument panel" attention span. |
 | RAYCASTER_HUD_PANE_X_HEALTH | 32 | Generation default — no knowledge backing. Left padding for the health pane. The reference's tall-digit health % anchors at x=90 in the 320-wide strip (knowledge `raycaster_hud.md` § Widget Layout Within the Strip); 32 in our 640-wide strip is the same fractional position (~10% in from the left edge) accounting for the absence of the reference's ammo pane to the left of health. |
-| RAYCASTER_HUD_PANE_X_AMMO | 256 | Generation default — no knowledge backing. Middle pane anchor; sized to clear the health digits (max width = 3 digits × 12 px + 2 × 1 px kern = ~38 px from the health icon at x≈40) with comfortable margin. |
-| RAYCASTER_HUD_PANE_X_WEAPON | 480 | Generation default — no knowledge backing. Right pane anchor; sized to fit a weapon icon (~80 px wide, see below) inside the strip without overlapping the framebuffer right edge. |
+| RAYCASTER_HUD_PANE_X_AMMO | 256 | Generation default — no knowledge backing. Second-left pane anchor; sized to clear the health digits (max width = 3 digits × 12 px + 2 × 1 px kern = ~38 px from the health icon at x≈40) with comfortable margin. Unchanged by the armor-slice insertion (the armor pane fits in the 166-pixel gap between the ammo pane's right edge ≈ x=314 and the weapon pane at x=480 without shifting ammo — see RAYCASTER_HUD_PANE_X_ARMOR). |
+| RAYCASTER_HUD_PANE_X_ARMOR | 384 | Generation default — no knowledge backing. Inserted between the ammo pane (right edge ≈ x=314) and the weapon pane (x=480) in the armor-slice without shifting either neighbor. Knowledge `raycaster_hud.md` § Widget Layout Within the Strip pins the reference's armor pane at x = 221 in the 320-wide strip (a ~69% fractional anchor; our equivalent would be ~441), but the reference layout omits an explicit ammo pane between health and armor — we have one, so the armor pane sits at the centroid of the ammo→weapon gap (≈ (314 + 480) / 2 ≈ 397, rounded to 384 for an even pixel boundary). Armor icon at x=384 + max-3-digit field (~16 + 4 + 38 = ~58 px) ends near x ≈ 442, leaving ~38 px margin from the weapon pane at x = 480. |
+| RAYCASTER_HUD_PANE_X_WEAPON | 480 | Generation default — no knowledge backing. Rightmost pane anchor; sized to fit a weapon icon (~48 px wide, see below) inside the strip without overlapping the framebuffer right edge. Unchanged by the armor-slice insertion. |
 | RAYCASTER_HUD_PANE_TEXT_Y | `RAYCASTER_HUD_STRIP_TOP_Y + (RAYCASTER_HUD_STRIP_HEIGHT_PX - RAYCASTER_HUD_DIGIT_PIXEL_SIZE * HUD_DIGIT_HEIGHT_PX) / 2` (= 400 + (80 - 20) / 2 = 430) | Vertically centers the digits inside the strip. Derived from the strip dimensions and digit size. |
 
 #### Pane Colors and Glyphs
@@ -580,7 +625,10 @@ Knowledge `raycaster_hud.md` § Widget Layout Within the Strip pins the referenc
 |----------|-------|-------|--------|
 | RAYCASTER_HUD_HEALTH_COLOR | — | #D00000 saturated red | knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — "Tall-digit red: a saturated red roughly in the (200, 0, 0) – (220, 0, 0) range". `#D00000` ≈ (208, 0, 0). Distinct from the topdown HUD's `HUD_HEALTH_COLOR_LOW` (`#C00000`) so a topdown→raycaster mode switch reads as deliberately different rather than an accidental color drift. |
 | RAYCASTER_HUD_AMMO_COLOR | reuse `HUD_AMMO_COLOR` (`#FFFF00`) | #FFFF00 yellow | knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — "Short-digit yellow (active weapons-owned): a saturated yellow roughly (220, 220, 0)". `#FFFF00` is the closest 8-bit value and reuses the existing topdown `HUD_AMMO_COLOR` (specs/25 § HUD Ammo Pane) so the on-map ammo pickup, the topdown HUD ammo pane, and the FPS HUD ammo pane all share one yellow. The reference uses two distinct font weights for primary vs secondary readouts; with our monolithic font we substitute pane position (separate strip slot) instead of a separate font (knowledge `raycaster_hud.md` § Bottom-Strip Font Treatment + § Widget Layout). |
-| RAYCASTER_HUD_WEAPON_COLOR | — | #B0B0B0 mid-gray | Generation default — no knowledge backing for a single-weapon icon (reference shows a 6-slot weapons-owned subpanel, knowledge `raycaster_hud.md` § Widget Layout Within the Strip — "Weapons-owned indicators: 6 slots ... gray = unowned, yellow = owned"; we have one weapon and do not need the slot-based representation). Mid-gray reads as "tool / equipment", distinct from the alarm-panel red (health) and the ammo yellow. |
+| RAYCASTER_HUD_ARMOR_COLOR_NONE | reuse `HUD_ARMOR_COLOR_NONE` (`#606060`) | #606060 mid-gray | Generation default. The FPS strip's armor pane reuses the topdown HUD's tri-state color rule keyed on `armor_type`: this row covers `armor_type == ArmorTier::None`. Knowledge `raycaster_hud.md` § Color Treatment (Bottom Strip) — "Within the strip itself there is no per-widget threshold coloring" — applies to the value (health digits at 5% are not redder than at 95%); the armor pane's color discriminates by *tier*, not value, so the rule is preserved at the per-tier level. |
+| RAYCASTER_HUD_ARMOR_COLOR_GREEN | reuse `HUD_ARMOR_COLOR_GREEN` (`#20C020`) | #20C020 green | Generation default — same shade as the on-map green armor pickup and the topdown HUD's green armor pane (specs/25 § HUD Armor Pane). |
+| RAYCASTER_HUD_ARMOR_COLOR_BLUE | reuse `HUD_ARMOR_COLOR_BLUE` (`#2060E0`) | #2060E0 blue | Generation default — same shade as the on-map blue armor pickup and the topdown HUD's blue armor pane. |
+| RAYCASTER_HUD_WEAPON_COLOR | — | #B0B0B0 mid-gray | Generation default — no knowledge backing for a single-weapon icon (reference shows a 6-slot weapons-owned subpanel, knowledge `raycaster_hud.md` § Widget Layout Within the Strip — "Weapons-owned indicators: 6 slots ... gray = unowned, yellow = owned"; we have one weapon and do not need the slot-based representation). Mid-gray reads as "tool / equipment", distinct from the alarm-panel red (health), the ammo yellow, and the armor green/blue/gray. |
 
 #### Health Icon (Left of Health Digits)
 
@@ -598,6 +646,14 @@ The HUD strip's health pane composes a small icon glyph + the player's health di
 |----------|-------|-------|--------|
 | RAYCASTER_HUD_AMMO_ICON_PX | 16 | — | Generation default — same size as the health icon for visual symmetry. Reuses the yellow-square convention from the topdown HUD (`HUD_AMMO_ICON_PX = 8` at topdown's 2× digit scale; ours is 16 at the strip's 4× digit scale, preserving the same "icon ≈ digit height" ratio). |
 | (icon color) | — | reuse `RAYCASTER_HUD_AMMO_COLOR` | Single solid yellow square. |
+
+#### Armor Icon (Left of Armor Digits)
+
+| Constant | Value | Color | Source |
+|----------|-------|-------|--------|
+| RAYCASTER_HUD_ARMOR_ICON_PX | 16 | — | Generation default — same size as the health and ammo icons for visual symmetry. |
+| (icon color) | — | per-tier color: green / blue / gray | The armor icon takes the same tri-state color as the armor digits (`RAYCASTER_HUD_ARMOR_COLOR_NONE` when `armor_type == None`, `_GREEN` when `Green`, `_BLUE` when `Blue`) so the pane reads as a single colored unit. Knowledge `raycaster_hud.md` § Bottom-Strip Palette Reference does not pin per-tier armor colors; we generate-default to match the on-map pickup colors (`PICKUP_ARMOR_GREEN_COLOR` / `PICKUP_ARMOR_BLUE_COLOR`). |
+| (icon shape) | filled square | — | Generation default — knowledge `raycaster_hud.md` § Bottom-Strip Palette Reference does not pin an armor icon glyph shape. A filled square (same shape as the ammo icon) is the simplest "this is a stat readout" glyph; future iterations may swap to a chevron/shield silhouette without changing the contract (Coder degree of freedom on the silhouette in renderer's `draw_hud_fps`). |
 
 #### Weapon Icon (Right Pane)
 
@@ -660,7 +716,8 @@ The following are documented in knowledge but out of current scope (one weapon, 
   - Heavy melee+projectile boss (1000 HP, melee + projectile, 20% pain chance)
   - Rocket-launcher mega-boss (4000 HP, rockets, 8% pain chance)
   - And others (see knowledge/enemy_types.md)
-- Armor system (green 33% absorption, blue 50% absorption)
+- Tiny over-cap armor bonus pickup (knowledge `pickups.md § Armor Pickup Tiers` — "tiny armor bonus pickup → +1 armor point, clamps at 200, never refused, defaults tier to small if currently untyped"). Two-tier system (green + blue) ships in the 2026-05-14 armor slice; the +1 bonus is deferred to keep the slice scope tight.
+- Third armor tier and above (knowledge `combat_balance.md § Damage to Player` lists only green and blue; future "soulsphere"-equivalent or mega-armor would require a knowledge re-extraction and a new tier enum variant).
 - Ammo economy (ammo types, pickups, scarcity pressure)
 - Difficulty-based damage scaling (easy = 0.5x incoming damage)
 - Auto-aim / vertical targeting assistance

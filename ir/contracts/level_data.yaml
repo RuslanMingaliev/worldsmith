@@ -52,10 +52,18 @@ public_methods:
       exit (17.5, 2.5). No I/O.
       Pickups (specs/25 § Pickups § Default Level Placement):
         pickups: vec![
-          Pickup { kind: PickupKind::Health, pos: Vec2::new(5.5, 12.5), active: true },
-          Pickup { kind: PickupKind::Health, pos: Vec2::new(12.5, 4.5), active: true },
-          Pickup { kind: PickupKind::Ammo,   pos: Vec2::new(15.5, 7.5), active: true },
+          Pickup { kind: PickupKind::Health,     pos: Vec2::new(5.5, 12.5), active: true },
+          Pickup { kind: PickupKind::Health,     pos: Vec2::new(12.5, 4.5), active: true },
+          Pickup { kind: PickupKind::Ammo,       pos: Vec2::new(15.5, 7.5), active: true },
+          Pickup { kind: PickupKind::ArmorGreen, pos: Vec2::new(8.5, 12.5), active: true },
+          Pickup { kind: PickupKind::ArmorBlue,  pos: Vec2::new(3.5, 4.5),  active: true },
         ]
+      The ArmorGreen / ArmorBlue spawns were added in the 2026-05-14
+      armor slice (specs/25 § Pickups § Default Level Placement).
+      Demo levels (level_generator) deliberately keep
+      `pickups: vec![]` for visual clarity and do not need armor
+      pickups; the autopilot scenario tests/combat/armor_absorbs_damage.yaml
+      uses the default level to exercise the armor system end-to-end.
       Default-level archetype choice: both spawns are BasicTrooper so
       existing `--autopilot` scenarios that consume the default level
       (kill_enemy, scavenge_run, reach_exit, complete_level) replay

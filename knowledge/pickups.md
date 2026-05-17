@@ -77,11 +77,31 @@ Four ammo categories (call them A, B, C, D). For each category there is a "small
   - Dropped-from-enemy small pickup grant: 0.5 clip-load (rounded down for cat. D — see open questions)
 - **Feel**: The "small = 1 clip, large = 5 clips" pattern keeps the math memorable for the level designer. The dropped-half rule subtly discourages enemy-farming for ammo: each kill returns less than what spawned the enemy used, so the level still has to *place* ammo. The auto-weapon-switch on zero→nonzero is invisible most of the time but rescues the player from a footgun: if you go dry mid-fight and find a clip, you don't have to manually re-equip the weapon you were already trying to use.
 
+### Armor Pickup Tiers
+
+The reference engine has three armor-affecting pickups across two semantic groups: *tiered* pickups that grant a fixed armor pool at a tier-specific absorb rate, and a *tiny over-cap bonus* that adds one point at a time up to an absolute ceiling.
+
+- **Behavior**: An armor pickup grants an *absorb pool* (an integer count of "absorption points") plus an *absorb rate* (the fraction of incoming damage that is taken out of the pool instead of the player's HP). Two named tiers exist, plus a bonus pickup that trickles single points and never changes the tier.
+- **Rules**:
+  - The two tiered pickups both call a shared give-armor helper. The helper computes the target pool size from the tier (`target_points = tier * 100`), refuses the pickup if the player's current armor points are already `>= target_points`, otherwise overwrites *both* the armor type and the armor points with the new tier and its target pool.
+  - The overwrite semantics matter: picking up the small-tier (green) armor when the player has 50 green sets it to 100 green. Picking up the large-tier (blue) armor when the player has 100 green overwrites to 200 blue — the new tier and its full pool both apply. Picking up the small-tier (green) armor when the player has 200 blue is refused, even though the green pool would itself be a full +100 — the refusal compares raw points, not value, so a partially-depleted blue at >100 points blocks a fresh green.
+  - The tiny over-cap bonus pickup bypasses the helper. It increments armor points by exactly +1, clamps at an absolute ceiling (200), is *never refused*, and — only if the player has no armor type set — defaults the armor type to the small tier (so the absorb rate becomes 1/3 if you had none). Note: it does NOT upgrade an existing small tier to the large tier; if the player already has small-tier armor, the bonus keeps the small absorb rate even after the points exceed the small pool's nominal 100 cap.
+  - Both tiered pickups, when accepted, also set the underlying "items collected" counter (per the deferred mechanic in the Cap Behavior section above). The bonus pickup does the same.
+  - No drop variant exists for any armor pickup — enemies do not drop armor on death. Armor pickups are placed by the level designer only.
+- **Constants** (role → value):
+  - small armor pickup (tier 1, green) → target pool 100, absorb rate 1/3 (i.e. ~33% of damage diverts to armor) → refused if current armor points >= 100
+  - large armor pickup (tier 2, blue) → target pool 200, absorb rate 1/2 (i.e. 50% of damage diverts to armor) → refused if current armor points >= 200
+  - tiny armor bonus pickup → +1 armor point, clamps at 200, never refused, defaults tier to small if currently untyped
+  - armor type values: 0 = none, 1 = small (green), 2 = large (blue)
+  - Absolute armor ceiling (any source): 200 points
+  - Player's starting armor: 0 points, type 0 (none)
+- **Feel**: The two-tier system gives armor a sense of *progression* without ammo-style scarcity: small armor doubles effective health on the next 33 HP of incoming damage, large armor extends that to ~100 HP. The bonus pickup is a slow trickle the level designer can scatter without worrying about waste — it always advances the player's survival margin by a tiny amount. The "refused if at or above target pool" rule is what prevents the player from "downgrading" by walking over a fresh small pickup at high points — the refusal protects the existing pool. The asymmetric overwrite (large always replaces small if there's room, small never replaces large) makes the player's pickup choices read as monotonic upgrades.
+
 ### Cap Behavior
 
 - **Behavior**: At cap, behavior splits cleanly by pickup family:
-  - Normal-cap health, all ammo, armor, weapons-already-owned-without-ammo: **refused, pickup remains in world**, no message.
-  - Over-cap health pickups (tiny bonus, large overheal, full-restore mega): **always accepted**.
+  - Normal-cap health, all ammo, *tiered* armor (small + large), weapons-already-owned-without-ammo: **refused, pickup remains in world**, no message.
+  - Over-cap health pickups (tiny bonus, large overheal, full-restore mega) and the tiny armor bonus pickup: **always accepted** up to the absolute ceiling (200 for both health and armor). The tiny armor bonus is parallel to the tiny health bonus: never refused, clamped at 200, trickles single points.
   - Keycard already held: pickup is silently consumed but no message is shown (in single-player; multiplayer keeps cards in the world). This is a special case because cards are one-bit state.
 - **Rules**: Each give-X helper returns a boolean. The dispatch checks the boolean and either falls through to the shared "remove + sound + flash" tail or returns early without removing.
 - **Constants**: None new beyond those already listed in tier sections.
@@ -99,6 +119,9 @@ A pickup writes to a small set of fields on the player struct. This is the compl
   - `player.maxammo[category]` — cap for that category. Only the inventory-expander pickup writes this.
   - `player.owns_expander` — one-bit flag, only the expander pickup writes this.
   - `player.pending_weapon` — only on the zero→nonzero ammo transition, set to the best owned weapon for that category. The actual weapon swap happens later when the current weapon's lower-animation finishes.
+- **Armor pickup writes**:
+  - `player.armor_points` — current absorption-point pool (0..200).
+  - `player.armor_type` — tier identifier (0 = none, 1 = small, 2 = large). The two tiered pickups overwrite both fields; the tiny bonus pickup writes only `armor_points` and only sets `armor_type` to 1 if it was 0.
 - **Common writes (any successful pickup)**:
   - `player.pickup_flash_counter` — short visual tint counter, incremented by a small fixed amount.
   - `player.message` — pointer to a static "you got X" string for the HUD message line. (Note: this is a pointer assignment, so the message strings live elsewhere; only the pointer is per-player state.)
@@ -181,7 +204,6 @@ The engine *does* multiply ammo pickup amounts by skill, but only on the two ext
 ## Deferred
 
 - **Weapon pickups** — same dispatch path, give-weapon helper. Has its own rules around "first-time weapon" vs "duplicate" vs "dropped" (dropped weapons grant 1 clip, found weapons grant 2, and in the multiplayer-deathmatch sub-rule, 5). Out of scope for this pass.
-- **Armor pickups** — small armor pickup grants 100 absorption-points at 1/3 absorb rate; large armor pickup grants 200 points at 1/2 absorb rate. Granted only if strictly better than current; refused otherwise. There is also a tiny over-cap armor bonus pickup (+1 absorption-point, capped at 200, never refused) parallel to the tiny health bonus.
 - **Keycard pickups** — six total (three colors, two visual variants per color). One-bit flags. Always picked up but the entity remains in the world in network/multiplayer mode.
 - **Powerup pickups** (invulnerability, partial invisibility, environmental-protection suit, full-map reveal, low-light vision, melee-strength) — all route through a give-power helper that writes a tic countdown timer (or a one-bit flag for the map reveal). Each has its own duration constant. Out of scope for this pass; would warrant a separate `knowledge/powerups.md` if the prototype adds any.
 - **Sound and HUD message routing** — pickups play a pickup sound and set a HUD message string. The sound varies by pickup family (generic-item sound vs power-up sound vs weapon-up sound). The message strings are localized in a separate header. Both are intentionally not extracted here as constants.

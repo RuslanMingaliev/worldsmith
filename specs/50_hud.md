@@ -70,6 +70,22 @@ Source: [`knowledge/hud.md`](../knowledge/hud.md). Spec values that are NOT dire
 - Ammo digits are single-color (`HUD_AMMO_COLOR`). No band thresholds. Low-ammo warning color is **deferred**.
 - Always drawn — including when `ammo == 0` (renders the digit `0`).
 
+### Armor Pane
+
+**Trigger:** Every frame, in the same `draw_hud` call that draws the health and ammo panes. Shipped together with the armor system (see [`60_pickups.md § Armor (Green) Pickup Consumption`](60_pickups.md), [`25_game_tuning.md § Armor`](25_game_tuning.md#armor)).
+
+**Effect:** A third pane is drawn directly below the ammo pane:
+1. A small filled **armor icon** of size `HUD_ARMOR_ICON_PX × HUD_ARMOR_ICON_PX` in the per-tier color picked from `player.armor_type` (`HUD_ARMOR_COLOR_NONE` / `HUD_ARMOR_COLOR_GREEN` / `HUD_ARMOR_COLOR_BLUE` — specs/25 § HUD Armor Pane).
+2. The player's `armor` value drawn to the right of the icon using the same bitmap digit font, in the same per-tier color as the icon. Vertically centered against the icon.
+
+**Rules:**
+- Pane origin: `(HUD_MARGIN, HUD_MARGIN + HUD_HEALTH_BAR_HEIGHT_PX + HUD_PANE_GAP_PX + HUD_AMMO_ICON_PX + HUD_PANE_GAP_PX)`. The pane stacks below the ammo pane with the same inter-pane gap (`HUD_PANE_GAP_PX`) used between the health and ammo panes.
+- Icon-to-digits gap is `HUD_PANE_GAP_PX` (matches the ammo pane).
+- No background bar; the pane is `[icon] [digits]`.
+- Armor digits use the same left-aligned, no-leading-zeros, zero-special-cased rules as health and ammo digits (knowledge § Numeric Widget). Right-justification is deferred per the same § Deferred entry as health/ammo.
+- Armor digits are tri-state color (gray / green / blue), one per `armor_type`. No band thresholds within a tier — a blue armor at 1 point and at 200 points render in the same blue. Knowledge `hud.md § Color / State Encoding` notes the reference does NOT color-shift digits by value; the prototype's tri-state encoding discriminates by *tier* (categorical), not value (continuous), which matches the spirit of the reference's "color = state, not magnitude" rule. *(Generation default — knowledge does not pin a per-tier HUD color scheme; we reuse the on-map green/blue pickup colors for visual continuity. See specs/25 § HUD Armor Pane for the rationale.)*
+- Always drawn — including when `armor == 0` (renders the digit `0` in `HUD_ARMOR_COLOR_NONE`, mirroring the ammo pane's "always drawn at zero" rule).
+
 ### Render Order Update
 
 **Trigger:** The renderer's existing `draw()` routine.
@@ -110,7 +126,7 @@ The bitmap font is a compile-time constant table (`HUD_DIGIT_GLYPHS`) of ten ent
 - HUD reads no other module's state besides `Player` and the tuning constants already imported by the renderer.
 
 ### With Player State
-- Read-only. HUD reads `player.health` and `player.ammo`. It must not mutate the player. *(Knowledge: § Read-only Contract.)*
+- Read-only. HUD reads `player.health`, `player.ammo`, `player.armor`, and `player.armor_type`. It must not mutate the player. *(Knowledge: § Read-only Contract.)*
 
 ### With Visual Effects
 - None. HUD is drawn *on top of* the damage tint overlay produced by `visual_effects`, but does not interact with the effects list. *(In the reference, the equivalent damage feedback is a global palette tint that the digits inherit passively; we instead overlay digits *above* the tint so they remain readable.)*
@@ -180,6 +196,7 @@ The following are intentionally out of scope for this prototype HUD (or not yet 
 - Color-coded health bands (HIGH / MID / LOW thresholds).
 - HUD layered above damage tint, below game-over border.
 - Ammo pane below health pane (yellow icon + yellow digits, single color).
+- Armor pane below ammo pane (tri-state color per `armor_type`: gray / green / blue; icon + digits).
 
 **Deferred** (also listed in the Deferred section above):
 - Multi-state icon widgets.

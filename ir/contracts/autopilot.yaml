@@ -372,6 +372,32 @@ public_methods:
         5. return ScenarioResult { passed, failures }.
       Implemented in terms of bot_step so the test path and the
       --autopilot path share the same bot logic.
+
+      Field-value resolver (`get_field_value` helper, module-private,
+      #[cfg(test)] only). MUST support the field set pinned in
+      specs/30 § Available Fields. The resolver matches `assertion.field`
+      against the literal string and returns Option<AssertValue>; an
+      unrecognized field becomes `"unknown field: <name>"` in
+      ScenarioResult.failures (see the run_scenario loop body above).
+      Pinned field set as of the 2026-05-14 armor slice (the six fields
+      listed in specs/30 § Implementation Status as "implemented"):
+        "player.alive"   -> AssertValue::Bool(state.player.alive)
+        "player.health"  -> AssertValue::Number(state.player.health as f32)
+        "player.ammo"    -> AssertValue::Number(state.player.ammo as f32)
+        "player.armor"   -> AssertValue::Number(state.player.armor as f32)  [armor slice]
+        "enemy.alive"    -> AssertValue::Bool(state.enemies.iter().any(|e| e.alive))
+        "game.won"       -> AssertValue::Bool(state.won)
+      Any field listed in specs/30 § Available Fields as "implemented"
+      MUST appear in the match. Fields listed under specs/30 § "Not yet
+      implemented" (`player.position.x`, `player.position.y`,
+      `enemy.health`, `game.running`, `game.frames`) MUST NOT appear —
+      the resolver falls through to the `_ => None` arm so the
+      run_scenario loop surfaces `"unknown field: <name>"` failures
+      that mark the field as not-yet-available. Captured during the
+      2026-05-14 armor release reconcile after the prior contract
+      listed a stray `"game.frames" -> ... [counter-test field]` example
+      that contradicted specs/30 — removed to keep the contract aligned
+      with the spec's implemented/deferred split.
     cfg_test_only: true
   - signature: |
       #[test]

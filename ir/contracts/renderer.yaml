@@ -4,7 +4,9 @@
 name: renderer
 file: src/renderer.rs
 depends_on: [presentation, visual_effects]
-public_types: []
+public_types:
+  - name: ArmorTier
+    note: "Consumed (read-only); see shared_types.ArmorTier. draw_hud (topdown HUD § Armor Pane) and draw_hud_fps (raycaster HUD § Armor Pane) dispatch icon and digit colors on the tier variant."
 public_constants:
   # RGB packed 0xRRGGBB; the renderer is the only consumer of these.
   - { name: COLOR_WALL,                type: u32, value: "0x404040", source: "specs/25 § Visual" }
@@ -34,10 +36,19 @@ public_constants:
   - { name: PICKUP_HEALTH_INNER_THICKNESS_PX, type: i32, value: "4",      source: "specs/25 § Pickups (Generation default)" }
   - { name: PICKUP_AMMO_SIZE_PX,           type: i32, value: "10",        source: "specs/25 § Pickups (Generation default)" }
   - { name: PICKUP_AMMO_COLOR,             type: u32, value: "0xFFFF00",  source: "specs/25 § Pickups (Generation default)" }
+  # Pickup armor sprite constants (specs/25 § Pickups, 2026-05-14 armor slice)
+  - { name: PICKUP_ARMOR_SIZE_PX,          type: i32, value: "12",        source: "specs/25 § Pickups (Generation default — same as PICKUP_HEALTH_SIZE_PX for visual parity)" }
+  - { name: PICKUP_ARMOR_GREEN_COLOR,      type: u32, value: "0x20C020",  source: "specs/25 § Pickups (Generation default — knowledge-backed tier name only)" }
+  - { name: PICKUP_ARMOR_BLUE_COLOR,       type: u32, value: "0x2060E0",  source: "specs/25 § Pickups (Generation default — knowledge-backed tier name only)" }
   # HUD ammo pane constants (specs/25 § HUD Ammo Pane, all generation defaults)
   - { name: HUD_PANE_GAP_PX,               type: i32, value: "4",         source: "specs/25 § HUD Ammo Pane (Generation default)" }
   - { name: HUD_AMMO_ICON_PX,              type: i32, value: "8",         source: "specs/25 § HUD Ammo Pane (Generation default)" }
   - { name: HUD_AMMO_COLOR,                type: u32, value: "0xFFFF00",  source: "specs/25 § HUD Ammo Pane (Generation default)" }
+  # HUD armor pane constants (specs/25 § HUD Armor Pane, 2026-05-14 armor slice)
+  - { name: HUD_ARMOR_ICON_PX,             type: i32, value: "8",         source: "specs/25 § HUD Armor Pane (Generation default — same as HUD_AMMO_ICON_PX)" }
+  - { name: HUD_ARMOR_COLOR_GREEN,         type: u32, value: "0x20C020",  source: "specs/25 § HUD Armor Pane (Generation default — same as PICKUP_ARMOR_GREEN_COLOR)" }
+  - { name: HUD_ARMOR_COLOR_BLUE,          type: u32, value: "0x2060E0",  source: "specs/25 § HUD Armor Pane (Generation default — same as PICKUP_ARMOR_BLUE_COLOR)" }
+  - { name: HUD_ARMOR_COLOR_NONE,          type: u32, value: "0x606060",  source: "specs/25 § HUD Armor Pane (Generation default — 'inactive instrument' tone)" }
   # FPS HUD strip constants (slice 4; specs/25 § Renderer (Raycaster) /
   # FPS HUD Layout). Drawn by draw_hud_fps in --render-mode=raycaster
   # only; the topdown HUD path (draw_hud / monolithic draw) does not
@@ -46,10 +57,15 @@ public_constants:
   - { name: RAYCASTER_HUD_STRIP_COLOR,             type: u32, value: "0x585050", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (knowledge-backed: knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — 'Chrome warm-gray: a desaturated warm gray, roughly (90, 80, 80)')" }
   - { name: RAYCASTER_HUD_DIGIT_PIXEL_SIZE,        type: i32, value: "4",        source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — pixel-scale factor on the existing 3×5 digit font, sized for the strip's tall-digit role)" }
   - { name: RAYCASTER_HUD_PANE_X_HEALTH,           type: i32, value: "32",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — left padding for the leftmost pane)" }
-  - { name: RAYCASTER_HUD_PANE_X_AMMO,             type: i32, value: "256",      source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — middle pane anchor)" }
-  - { name: RAYCASTER_HUD_PANE_X_WEAPON,           type: i32, value: "480",      source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — right pane anchor)" }
+  - { name: RAYCASTER_HUD_PANE_X_AMMO,             type: i32, value: "256",      source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — second-left pane anchor; unchanged by the 2026-05-14 armor-slice insertion)" }
+  - { name: RAYCASTER_HUD_PANE_X_ARMOR,            type: i32, value: "384",      source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — inserted between ammo and weapon panes by the 2026-05-14 armor slice)" }
+  - { name: RAYCASTER_HUD_PANE_X_WEAPON,           type: i32, value: "480",      source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — rightmost pane anchor; unchanged by the 2026-05-14 armor-slice insertion)" }
   - { name: RAYCASTER_HUD_HEALTH_COLOR,            type: u32, value: "0xD00000", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (knowledge-backed: knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — 'Tall-digit red: a saturated red roughly in the (200, 0, 0) – (220, 0, 0) range')" }
   - { name: RAYCASTER_HUD_AMMO_COLOR,              type: u32, value: "0xFFFF00", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout — reuses HUD_AMMO_COLOR (knowledge-backed: knowledge/raycaster_hud.md § Bottom-Strip Palette Reference — 'Short-digit yellow ... a saturated yellow roughly (220, 220, 0)')" }
+  - { name: RAYCASTER_HUD_ARMOR_COLOR_NONE,        type: u32, value: "0x606060", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout — reuses HUD_ARMOR_COLOR_NONE (Generation default)" }
+  - { name: RAYCASTER_HUD_ARMOR_COLOR_GREEN,       type: u32, value: "0x20C020", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout — reuses HUD_ARMOR_COLOR_GREEN (Generation default)" }
+  - { name: RAYCASTER_HUD_ARMOR_COLOR_BLUE,        type: u32, value: "0x2060E0", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout — reuses HUD_ARMOR_COLOR_BLUE (Generation default)" }
+  - { name: RAYCASTER_HUD_ARMOR_ICON_PX,           type: i32, value: "16",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — same size as health/ammo icons for visual symmetry)" }
   - { name: RAYCASTER_HUD_WEAPON_COLOR,            type: u32, value: "0xB0B0B0", source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — single-weapon icon collapses the reference's 6-slot weapons-owned subpanel; mid-gray reads as 'tool / equipment')" }
   - { name: RAYCASTER_HUD_HEALTH_ICON_PX,          type: i32, value: "16",       source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — sized to ~80% of the digit on-screen height)" }
   - { name: RAYCASTER_HUD_HEALTH_ICON_THICKNESS_PX,type: i32, value: "4",        source: "specs/25 § Renderer (Raycaster) / FPS HUD Layout (Generation default — 1/4 of icon width; mirrors PICKUP_HEALTH_INNER_THICKNESS_PX ratio)" }
@@ -95,11 +111,19 @@ public_methods:
         1. Floor + walls (level tiles).
         2. Exit marker (cyan X) and corpses.
         2.5. Active pickups (specs/60 § Pickup Rendering):
-              iterate level.pickups; skip !active. For Health draw a
-              filled square in PICKUP_HEALTH_OUTER_COLOR with a
-              centered cross in PICKUP_HEALTH_INNER_COLOR
-              (PICKUP_HEALTH_INNER_THICKNESS_PX wide). For Ammo draw
-              a filled square in PICKUP_AMMO_COLOR.
+              iterate level.pickups; skip !active. Dispatch on
+              pickup.kind:
+                Health     → filled square in PICKUP_HEALTH_OUTER_COLOR
+                             (PICKUP_HEALTH_SIZE_PX) with a centered
+                             cross in PICKUP_HEALTH_INNER_COLOR
+                             (PICKUP_HEALTH_INNER_THICKNESS_PX wide).
+                Ammo       → filled square in PICKUP_AMMO_COLOR
+                             (PICKUP_AMMO_SIZE_PX).
+                ArmorGreen → filled square in PICKUP_ARMOR_GREEN_COLOR
+                             (PICKUP_ARMOR_SIZE_PX). No inner detail.
+                ArmorBlue  → filled square in PICKUP_ARMOR_BLUE_COLOR
+                             (PICKUP_ARMOR_SIZE_PX). No inner detail.
+              Armor variants added in the 2026-05-14 armor slice.
         3. Blood splats and wall puffs.
         4. Tracer lines.
         5. Muzzle flashes.
@@ -121,17 +145,20 @@ public_methods:
              pickup_level = pickup_level.min(PICKUP_TINT_LEVEL_COUNT);
              if pickup_level > 0: software-blend COLOR_PICKUP_TINT at
              (PICKUP_TINT_MAX_ALPHA_PCT * pickup_level / PICKUP_TINT_LEVEL_COUNT).
-        9. HUD pane (specs/50 § Health Pane and § Ammo Pane):
+        9. HUD pane (specs/50 § Health Pane, § Ammo Pane, § Armor Pane):
            health bar + digits in top-left corner, ammo pane
-           (icon + digits) directly below.
+           (icon + digits) directly below, armor pane
+           (per-tier-colored icon + digits) directly below the ammo
+           pane (added 2026-05-14 armor slice).
         10. Game-over border if game_over.is_some()
            (green tint for win, red for lose; thickness
            GAME_OVER_BORDER_PX).
       The renderer reads visual_effects (including fx.pickup_tint_count),
-      player.damage_count, player.health, player.ammo, level.pickups,
-      enemy.pain_flash_remaining (live-enemy pain-flash color override),
-      and enemy.alive (live vs. corpse skip). It does NOT mutate any
-      other module's state. The death-fade interpolation reads
+      player.damage_count, player.health, player.ammo, player.armor,
+      player.armor_type (added 2026-05-14 armor slice for the armor
+      pane), level.pickups, enemy.pain_flash_remaining (live-enemy
+      pain-flash color override), and enemy.alive (live vs. corpse
+      skip). It does NOT mutate any other module's state. The death-fade interpolation reads
       `eff.lifetime_remaining / ENEMY_DEATH_FADE_DURATION` from the
       VisualEffects entry pushed by spawn_enemy_death_fade — NOT
       enemy.death_fade_remaining (which is a parallel timer on Enemy
@@ -150,11 +177,29 @@ public_methods:
       pub fn draw_hud(framebuffer: &mut Vec<u32>, player: &Player)
     notes: |
       Draws ONLY the topdown HUD layer (specs/50): top-left health
-      bar + digits, ammo pane below, in the same pixel position and
-      same color rules used by the monolithic `draw` above (its layer
-      9). The monolithic `draw` function may also call this helper
-      internally to avoid duplicating the HUD-drawing code; that is a
-      Coder degree of freedom.
+      bar + digits, ammo pane below, armor pane below ammo, in the
+      same pixel position and same color rules used by the monolithic
+      `draw` above (its layer 9). The monolithic `draw` function may
+      also call this helper internally to avoid duplicating the
+      HUD-drawing code; that is a Coder degree of freedom.
+
+      Armor pane (added 2026-05-14 armor slice — specs/50 § Armor Pane):
+        anchor = (HUD_MARGIN,
+                  HUD_MARGIN + HUD_HEALTH_BAR_HEIGHT_PX
+                  + HUD_PANE_GAP_PX     // bar -> ammo
+                  + HUD_AMMO_ICON_PX
+                  + HUD_PANE_GAP_PX);   // ammo -> armor
+        icon: filled square HUD_ARMOR_ICON_PX × HUD_ARMOR_ICON_PX in
+              the tier-dispatched color:
+                ArmorTier::None  -> HUD_ARMOR_COLOR_NONE   (gray)
+                ArmorTier::Green -> HUD_ARMOR_COLOR_GREEN
+                ArmorTier::Blue  -> HUD_ARMOR_COLOR_BLUE
+        digits: render player.armor (u8) as decimal in the SAME
+                tier color the icon uses, HUD_PANE_GAP_PX right of
+                the icon. No leading zeros, `0` special-cased
+                (knowledge/hud.md § Numeric Widget). Always drawn —
+                including when armor == 0 (renders `0` in
+                HUD_ARMOR_COLOR_NONE).
 
       As of slice 4, this function is consumed ONLY by
       --render-mode=topdown's monolithic draw path. The raycaster mode
@@ -163,8 +208,8 @@ public_methods:
       call site moved to draw_hud_fps in slice 4 (specs/45 § HUD Mode
       Dispatch).
 
-      Reads (no mutation): player.health, player.ammo. Writes the
-      framebuffer.
+      Reads (no mutation): player.health, player.ammo, player.armor,
+      player.armor_type. Writes the framebuffer.
   - signature: |
       pub fn draw_hud_fps(framebuffer: &mut Vec<u32>, player: &Player)
     notes: |
@@ -210,6 +255,24 @@ public_methods:
            as decimal in RAYCASTER_HUD_AMMO_COLOR using the same
            font + scale rules as the health pane. Always drawn,
            including when ammo == 0.
+        3.5. Armor pane (added 2026-05-14 armor slice — specs/45
+           § Armor Pane): a tier-dispatched-color square icon + the
+           player's armor digits. Icon at
+             (RAYCASTER_HUD_PANE_X_ARMOR, ...)
+           Shape: a filled square
+             RAYCASTER_HUD_ARMOR_ICON_PX × RAYCASTER_HUD_ARMOR_ICON_PX
+           in the per-tier color picked from player.armor_type:
+             ArmorTier::None  -> RAYCASTER_HUD_ARMOR_COLOR_NONE  (gray)
+             ArmorTier::Green -> RAYCASTER_HUD_ARMOR_COLOR_GREEN
+             ArmorTier::Blue  -> RAYCASTER_HUD_ARMOR_COLOR_BLUE
+           Digits: render player.armor (u8) as decimal in the SAME
+           tier color the icon uses, HUD_PANE_GAP_PX right of the
+           icon. No leading zeros, `0` special-cased. Always drawn,
+           including when armor == 0 (renders `0` in
+           RAYCASTER_HUD_ARMOR_COLOR_NONE). NO per-value-threshold
+           coloring within a tier — armor at 1 point and at 200
+           points render in the same tier color (knowledge
+           raycaster_hud.md § Color Treatment).
         4. Weapon icon: a static gray weapon-shape silhouette
            (specs/45 § Weapon Icon Pane) at
              (RAYCASTER_HUD_PANE_X_WEAPON, ...)
@@ -221,9 +284,10 @@ public_methods:
            the bounding box; the silhouette inside it is a Coder
            degree of freedom. Static across all frames.
 
-      Reads (no mutation): player.health, player.ammo. Writes the
-      framebuffer. Reuses the renderer-private HUD_DIGIT_GLYPHS table
-      (specs/50 § State); no new font is added.
+      Reads (no mutation): player.health, player.ammo, player.armor,
+      player.armor_type. Writes the framebuffer. Reuses the
+      renderer-private HUD_DIGIT_GLYPHS table (specs/50 § State); no
+      new font is added.
 
       Used by main.rs in --render-mode=raycaster after raycaster::draw
       fills the framebuffer (specs/45 § Interactions § With renderer
