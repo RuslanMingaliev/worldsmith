@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -497,6 +498,37 @@ def main() -> int:
                 "Step 0 framing-grep and Step 3 cross-walk depend on it. The PR #80 "
                 "armor regen exited cleanly after 67 turns / 26.8k output tokens with "
                 "no report, blinding both downstream phases. Aborting.",
+                file=sys.stderr,
+            )
+            return 1
+
+        forbidden = re.compile(
+            r"Unchanged|already correct|carried from|carry-forward|"
+            r"pre-existing|no changes needed|baseline was correct|no changes required"
+        )
+        report_lines = coder_report.read_text(encoding="utf-8").splitlines()
+        hits = [
+            f"  {coder_report.relative_to(REPO_ROOT)}:{lineno}: {line.rstrip()}"
+            for lineno, line in enumerate(report_lines, start=1)
+            if forbidden.search(line)
+        ]
+        if hits:
+            print(
+                f"Coder phase wrote forbidden release-style framing into "
+                f"{coder_report.relative_to(REPO_ROOT)}. "
+                "Mirrors the self-grep mandated by tooling/agents/coder.md § Quality "
+                "Checklist (the 'Before submitting artifacts/coder_report.md, self-grep "
+                "for forbidden release-style framing phrases' item). The same framing "
+                "has now shipped in seven consecutive release-style regens "
+                "(2026-05-11, -12, -14, -15 x2, -16 x2); prompt-side escalation is "
+                "exhausted, so the gate now runs here. Hits:",
+                file=sys.stderr,
+            )
+            for hit in hits:
+                print(hit, file=sys.stderr)
+            print(
+                "Rewrite each line to describe what THIS run emitted, not the baseline "
+                "delta. See tooling/agents/coder.md § Release regeneration mode.",
                 file=sys.stderr,
             )
             return 1
