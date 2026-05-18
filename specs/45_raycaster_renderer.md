@@ -178,9 +178,14 @@ The raycaster reads the following entity collections from the function arguments
 2. **Dying-enemy death fade** — iterate `fx.effects`; include entries where `kind == EffectKind::EnemyDeathFade`. Define `fade_t = 1.0 - (eff.lifetime_remaining / ENEMY_DEATH_FADE_DURATION)` — a single value drives both color and size interpolation. World half-extent shrinks from the live-enemy size toward the corpse size as the fade progresses: `lerp(ENEMY_RADIUS_TILES, ENEMY_CORPSE_RADIUS / TILE_SIZE, fade_t)` (applied to both `world_half_width` and `world_half_height`). Color is interpolated from `COLOR_ENEMY` toward `COLOR_CORPSE` by the same `fade_t`. The two interpolations sharing one `fade_t` keeps color and size in lock-step so the visual reads as a single "settle" beat rather than separate color and shape pops; at fade end (`fade_t == 1.0`), both extent and color match the corpse that spawns next, eliminating the size-and-color discontinuity that existed when the death-fade rendered at full live-enemy extent until the corpse replaced it.
 3. **Enemy corpses** — iterate `fx.effects`; include entries where `kind == EffectKind::EnemyCorpse`. World half-extent is `ENEMY_CORPSE_RADIUS / TILE_SIZE` (specs/25 § Enemy Death Visual; px-to-tile conversion). Color is `COLOR_CORPSE`.
 4. **Blood splats** — iterate `fx.effects`; include entries where `kind == EffectKind::BloodSplat`. World half-extent is `BLOOD_RADIUS / TILE_SIZE` (specs/25 § Blood Splat). Color is `COLOR_BLOOD`.
-5. **Active pickups** — iterate `level.pickups`; include entries where `pickup.active` is true. World half-extent is `PICKUP_HEALTH_SIZE_PX / 2.0 / TILE_SIZE` for `PickupKind::Health`, `PICKUP_AMMO_SIZE_PX / 2.0 / TILE_SIZE` for `PickupKind::Ammo` (specs/25 § Pickups § Sprite Visual; px-to-tile conversion). Color is `PICKUP_HEALTH_OUTER_COLOR` (Health) or `PICKUP_AMMO_COLOR` (Ammo). The inner red cross of the topdown health pickup is **deferred** — slice 2 draws a single flat-color rectangle per pickup.
+5. **Active pickups** — iterate `level.pickups`; include entries where `pickup.active` is true. World half-extent and color dispatched per `pickup.kind` (specs/25 § Pickups § Sprite Visual; px-to-tile conversion):
+   - `Health` → `PICKUP_HEALTH_SIZE_PX / 2.0 / TILE_SIZE`, `PICKUP_HEALTH_OUTER_COLOR`. The inner red cross of the topdown health pickup is **deferred** — single flat-color rectangle.
+   - `AmmoBullets` → `PICKUP_AMMO_SIZE_PX / 2.0 / TILE_SIZE`, `PICKUP_AMMO_COLOR` (yellow). (Renamed from `Ammo` in the 2026-05-18 ammo-split slice; the size/color constants keep the historical `PICKUP_AMMO_*` prefix.)
+   - `AmmoShells` → `PICKUP_SHELL_SIZE_PX / 2.0 / TILE_SIZE`, `PICKUP_SHELL_COLOR` (warm orange). New in the 2026-05-18 ammo-split slice.
+   - `ArmorGreen` → `PICKUP_ARMOR_SIZE_PX / 2.0 / TILE_SIZE`, `PICKUP_ARMOR_GREEN_COLOR`.
+   - `ArmorBlue`  → `PICKUP_ARMOR_SIZE_PX / 2.0 / TILE_SIZE`, `PICKUP_ARMOR_BLUE_COLOR`.
 
-The constants `COLOR_ENEMY`, `COLOR_PAIN_FLASH`, `COLOR_CORPSE`, `COLOR_BLOOD`, `PICKUP_HEALTH_OUTER_COLOR`, `PICKUP_AMMO_COLOR`, `ENEMY_CORPSE_RADIUS`, `BLOOD_RADIUS`, `PICKUP_HEALTH_SIZE_PX`, and `PICKUP_AMMO_SIZE_PX` already exist in their owning modules (renderer / visual_effects / specs/25); the raycaster imports them rather than redefining them. `ENEMY_RADIUS_TILES` is imported from `enemy_logic`. `TILE_SIZE` is imported from `level_data`. The Coder may inline the px-to-tile arithmetic or precompute it as a module-private const — both shapes meet the spec.
+The constants `COLOR_ENEMY`, `COLOR_PAIN_FLASH`, `COLOR_CORPSE`, `COLOR_BLOOD`, `PICKUP_HEALTH_OUTER_COLOR`, `PICKUP_AMMO_COLOR`, `PICKUP_SHELL_COLOR`, `PICKUP_ARMOR_GREEN_COLOR`, `PICKUP_ARMOR_BLUE_COLOR`, `ENEMY_CORPSE_RADIUS`, `BLOOD_RADIUS`, `PICKUP_HEALTH_SIZE_PX`, `PICKUP_AMMO_SIZE_PX`, `PICKUP_SHELL_SIZE_PX`, and `PICKUP_ARMOR_SIZE_PX` already exist in their owning modules (renderer / visual_effects / specs/25); the raycaster imports them rather than redefining them. `ENEMY_RADIUS_TILES` is imported from `enemy_logic`. `TILE_SIZE` is imported from `level_data`. The Coder may inline the px-to-tile arithmetic or precompute it as a module-private const — both shapes meet the spec. `PICKUP_SHELL_COLOR` and `PICKUP_SHELL_SIZE_PX` were added by the 2026-05-18 ammo-split slice.
 
 #### Camera-Space Transform
 
@@ -387,7 +392,7 @@ Knowledge [`raycaster_hud.md § On-View Crosshair — Absent in the Reference's 
 
 **Rules:**
 - `main.rs` selects between `draw_hud` and `draw_hud_fps` based on the `RenderMode` enum (`ir/contracts/_shared.yaml § main_cli § render_mode`). Topdown mode's HUD path is byte-for-byte unchanged (slice-1 invariant).
-- Both `draw_hud` and `draw_hud_fps` take `(framebuffer: &mut Vec<u32>, player: &Player)`. The FPS variant reads the same `player.health` and `player.ammo` fields the topdown variant does — no new `Player` field is added by slice 4.
+- Both `draw_hud` and `draw_hud_fps` take `(framebuffer: &mut Vec<u32>, player: &Player)`. The FPS variant reads `player.health` and the equipped weapon's ammo pool (`player.bullets` for the pistol — see § Ammo Pane below for the weapon-aware dispatch). Pre-ammo-split slices (1..4) consumed `player.ammo`; the 2026-05-18 ammo-split slice replaces that field with `player.bullets` + `player.shells` and adds the weapon-aware dispatch — no new `Player` field is added by this slice beyond the per-category split.
 - The game-over border (`renderer::draw_game_over_border`) draws after either HUD path. The colored border draws on top of the FPS strip; this is intentional — game-over is a state the player must register regardless of HUD mode.
 
 ### Bottom Chrome Strip
@@ -415,9 +420,13 @@ Knowledge [`raycaster_hud.md § On-View Crosshair — Absent in the Reference's 
 **Position:** anchored at `(RAYCASTER_HUD_PANE_X_AMMO, RAYCASTER_HUD_PANE_TEXT_Y)`.
 
 **Rules:**
-- A small filled yellow square icon (`RAYCASTER_HUD_AMMO_ICON_PX × RAYCASTER_HUD_HEALTH_ICON_PX`, color `RAYCASTER_HUD_AMMO_COLOR`) is drawn first.
-- The player's ammo value `player.ammo` is drawn immediately to the right of the icon with a `HUD_PANE_GAP_PX` gap, in `RAYCASTER_HUD_AMMO_COLOR`, using the same digit font + scale rules as the health pane. No leading zeros. Always drawn — including when `ammo == 0` (specs/50 § Ammo Pane "Always drawn — including when `ammo == 0`").
-- Same single-color, no per-value-threshold coloring as the health pane (knowledge same § Color Treatment).
+- The pane is **weapon-aware** (same dispatch rule as the topdown HUD ammo pane — specs/50 § Ammo Pane; knowledge `hud.md § Numeric Widget § Weapon-aware source rebinding (primary ammo widget only)`). The renderer reads the equipped weapon's `AmmoCategory` (currently `weapon_system::PISTOL_AMMO_CATEGORY = AmmoCategory::Bullets`) and dispatches:
+  - `Bullets` → display `player.bullets` in `RAYCASTER_HUD_AMMO_COLOR` (yellow).
+  - `Shells` → display `player.shells` in a future `RAYCASTER_HUD_SHELL_COLOR` (deferred — lands with the shotgun).
+- A small filled yellow square icon (`RAYCASTER_HUD_AMMO_ICON_PX × RAYCASTER_HUD_AMMO_ICON_PX`, color `RAYCASTER_HUD_AMMO_COLOR`) is drawn first when the dispatched category is `Bullets`.
+- The dispatched pool value is drawn immediately to the right of the icon with a `HUD_PANE_GAP_PX` gap, in the matching color, using the same digit font + scale rules as the health pane. No leading zeros. Always drawn — including when the pool reads `0` (specs/50 § Ammo Pane "Always drawn — including when `ammo == 0`").
+- Same single-color-per-frame, no per-value-threshold coloring as the health pane (knowledge same § Color Treatment).
+- With pistol as the only weapon, the dispatch is constant (`Bullets → player.bullets → RAYCASTER_HUD_AMMO_COLOR`) — the visual output is byte-identical to the pre-ammo-split FPS HUD ammo pane.
 
 #### Armor Pane
 
@@ -446,9 +455,9 @@ Knowledge [`raycaster_hud.md § On-View Crosshair — Absent in the Reference's 
 
 - `renderer::draw_hud_fps` reuses the renderer-private digit font glyphs (`HUD_DIGIT_GLYPHS`) already shipped for the topdown HUD (specs/50 § State). The only difference is the per-glyph pixel scale (`RAYCASTER_HUD_DIGIT_PIXEL_SIZE = 4` vs. the topdown HUD's `HUD_DIGIT_PIXEL_SIZE = 2`); all other glyph-rendering rules (no leading zeros, zero special-cased) are unchanged.
 - The draw order inside `renderer::draw_hud_fps` is: (a) strip background fill, (b) strip pane icons, (c) strip pane digits, (d) strip weapon icon. The background must precede every pane to avoid background-on-pane occlusion bugs.
-- No new `Player` field is consumed. `draw_hud_fps` reads `player.health`, `player.ammo`, and nothing else from `Player`.
+- No new `Player` field is consumed beyond the 2026-05-18 ammo-split slice's `bullets`/`shells` per-category fields. `draw_hud_fps` reads `player.health`, the equipped weapon's ammo pool (`player.bullets` for the pistol; `player.shells` for the deferred shotgun via the same dispatch), `player.armor`, `player.armor_type`, and nothing else from `Player`.
 - No new `VisualEffects` field is consumed. The HUD is entirely a function of `Player` state plus compile-time constants.
-- The FPS HUD is **stateless across frames** — every per-frame value is recomputed from `player.health` and `player.ammo`, matching the topdown HUD's read-only contract (specs/50 § State).
+- The FPS HUD is **stateless across frames** — every per-frame value is recomputed from `player.health`, the equipped weapon's ammo pool (`player.bullets` for the pistol), `player.armor`, and `player.armor_type`, matching the topdown HUD's read-only contract (specs/50 § State).
 
 ## State
 
@@ -480,7 +489,7 @@ The player's `pos` and `facing` are already tracked by `player_state::Player` (`
 ### With player_state
 
 - The raycaster reads `player.pos` (`Vec2`, tile units) and `player.facing` (radians). No mutation. No new `player_state` API is added.
-- `player.alive`, `player.health`, `player.ammo`, `player.damage_count`, etc. are not consumed by the raycaster — they remain consumed by the HUD and (in slice 3) the FPS effects.
+- `player.alive`, `player.health`, `player.bullets`, `player.shells`, `player.damage_count`, etc. are not consumed by the raycaster — they remain consumed by the HUD and (in slice 3) the FPS effects.
 
 ### With enemy_logic
 

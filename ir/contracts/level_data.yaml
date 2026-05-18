@@ -52,14 +52,21 @@ public_methods:
       exit (17.5, 2.5). No I/O.
       Pickups (specs/25 § Pickups § Default Level Placement):
         pickups: vec![
-          Pickup { kind: PickupKind::Health,     pos: Vec2::new(5.5, 12.5), active: true },
-          Pickup { kind: PickupKind::Health,     pos: Vec2::new(12.5, 4.5), active: true },
-          Pickup { kind: PickupKind::Ammo,       pos: Vec2::new(15.5, 7.5), active: true },
-          Pickup { kind: PickupKind::ArmorGreen, pos: Vec2::new(8.5, 12.5), active: true },
-          Pickup { kind: PickupKind::ArmorBlue,  pos: Vec2::new(3.5, 4.5),  active: true },
+          Pickup { kind: PickupKind::Health,      pos: Vec2::new(5.5, 12.5), active: true },
+          Pickup { kind: PickupKind::Health,      pos: Vec2::new(12.5, 4.5), active: true },
+          Pickup { kind: PickupKind::AmmoBullets, pos: Vec2::new(15.5, 7.5), active: true },
+          Pickup { kind: PickupKind::ArmorGreen,  pos: Vec2::new(8.5, 12.5), active: true },
+          Pickup { kind: PickupKind::ArmorBlue,   pos: Vec2::new(3.5, 4.5),  active: true },
         ]
       The ArmorGreen / ArmorBlue spawns were added in the 2026-05-14
       armor slice (specs/25 § Pickups § Default Level Placement).
+      The `AmmoBullets` variant was renamed from the pre-2026-05-18
+      `Ammo` variant when the per-category ammo split landed; the
+      pickup at (15.5, 7.5) is unchanged in position, sprite color
+      (yellow), and consumption effect (grants 10 bullets) — only
+      the variant name reflects the now-explicit category. No shell
+      pickup is seeded in the default level (the variant is exercised
+      via the ShellPickup demo level + tests/combat/shell_pickup.yaml).
       Demo levels (level_generator) deliberately keep
       `pickups: vec![]` for visual clarity and do not need armor
       pickups; the autopilot scenario tests/combat/armor_absorbs_damage.yaml

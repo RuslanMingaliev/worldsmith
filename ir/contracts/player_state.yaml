@@ -8,6 +8,9 @@ public_types:
   - name: ArmorTier
     note: "Defined here; see shared_types.ArmorTier."
 
+  - name: AmmoCategory
+    note: "Defined here; see shared_types.AmmoCategory."
+
   - name: Player
     definition: |
       pub struct Player {
@@ -21,9 +24,33 @@ public_types:
                                        // weapon_system can read & reset it for
                                        // first-shot accuracy + IDLE_THRESHOLD_SEC
                                        // (specs/25 § Weapon).
-          pub ammo: i32,               // pistol ammo (specs/60, knowledge/pickups.md §
-                                       // Ammo Gating of Firing). Bounded by
-                                       // PLAYER_AMMO_MAX; gated > 0 in weapon_system::fire.
+          pub bullets: i32,            // bullets pool (specs/60, specs/25 §
+                                       // Pickups § Player Ammo Pools,
+                                       // knowledge/combat_balance.md § Ammo
+                                       // Economy). Consumed by the pistol
+                                       // (weapon_system::fire decrements 1
+                                       // per shot when PISTOL_AMMO_CATEGORY
+                                       // = AmmoCategory::Bullets). Bounded
+                                       // by PLAYER_BULLETS_MAX; gated > 0
+                                       // in weapon_system::fire. Replaces
+                                       // the pre-2026-05-18 single-pool
+                                       // `ammo` field.
+          pub shells: i32,             // shells pool. New in the 2026-05-18
+                                       // ammo-split slice. Consumed by the
+                                       // deferred shotgun (specs/25 §
+                                       // Deferred Combat Features — Multiple
+                                       // weapons). Bounded by
+                                       // PLAYER_SHELLS_MAX. No consumer this
+                                       // slice — the field exists so the
+                                       // shell pickup can write into it
+                                       // (knowledge/combat_balance.md § Ammo
+                                       // Economy — "The two categories are
+                                       // stored as independent integers").
+                                       // Independence invariant: a write to
+                                       // one pool never reads or modifies
+                                       // the other (knowledge same § —
+                                       // "picking up shells never changes
+                                       // the bullets count, and vice versa").
           pub armor: u8,               // armor pool 0..=200;
                                        // specs/25 § Armor, knowledge/pickups.md
                                        // § Armor Pickup Tiers. Consumed
@@ -67,10 +94,13 @@ public_types:
       }
 public_constants:
   - { name: PLAYER_MAX_HEALTH, type: i32, value: "100",   source: "specs/25 § Player" }
-  - { name: PLAYER_AMMO_INITIAL, type: i32, value: "12",  source: "specs/25 § Pickups (Generation default — knowledge starting=50 too high for 1-enemy level)" }
-  - { name: PLAYER_AMMO_MAX,     type: i32, value: "30",  source: "specs/25 § Pickups (Generation default — knowledge cap=200 too high for prototype)" }
+  - { name: PLAYER_BULLETS_INITIAL, type: i32, value: "50",  source: "specs/25 § Pickups § Player Ammo Pools (knowledge-backed: knowledge/combat_balance.md § Ammo Economy + § Combat Constants Summary — 'Starting ammo (bullets): 50')" }
+  - { name: PLAYER_BULLETS_MAX,     type: i32, value: "200", source: "specs/25 § Pickups § Player Ammo Pools (knowledge-backed: knowledge/combat_balance.md § Combat Constants Summary — 'Max bullets: 200')" }
+  - { name: PLAYER_SHELLS_INITIAL,  type: i32, value: "0",   source: "specs/25 § Pickups § Player Ammo Pools (knowledge-backed: knowledge/combat_balance.md § Ammo Economy + § Combat Constants Summary — 'Starting ammo (shells): 0 — Shotgun unfireable until a shell pickup is found')" }
+  - { name: PLAYER_SHELLS_MAX,      type: i32, value: "50",  source: "specs/25 § Pickups § Player Ammo Pools (knowledge-backed: knowledge/combat_balance.md § Combat Constants Summary — 'Max shells: 50')" }
   - { name: PICKUP_HEALTH_AMOUNT, type: i32, value: "25", source: "specs/25 § Pickups (knowledge-backed: § Health Pickup Tiers, large heal +25)" }
-  - { name: PICKUP_AMMO_AMOUNT,   type: i32, value: "10", source: "specs/25 § Pickups (knowledge-backed: § Ammo Pickup Tiers, 1 clip-load × clip_size 10 for Cat. A)" }
+  - { name: PICKUP_BULLETS_AMOUNT, type: i32, value: "10", source: "specs/25 § Pickups (knowledge-backed: knowledge/combat_balance.md § Ammo Economy — 'Small bullet pickup (clip): 10 bullets'). Renamed from the pre-2026-05-18 single-pool PICKUP_AMMO_AMOUNT; the value (10) is unchanged so existing bullet-pickup placements are byte-identical." }
+  - { name: PICKUP_SHELLS_AMOUNT, type: i32, value: "4",  source: "specs/25 § Pickups (knowledge-backed: knowledge/combat_balance.md § Ammo Economy — 'Small shell pickup: 4 shells'). New in the 2026-05-18 ammo-split slice." }
   - { name: PLAYER_ARMOR_INITIAL, type: u8,  value: "0",   source: "specs/25 § Armor (knowledge-backed: knowledge/pickups.md § Armor Pickup Tiers — 'Player's starting armor: 0 points, type 0 (none)')" }
   # PLAYER_ARMOR_MAX (knowledge value 200) is intentionally NOT a named
   # public constant. Spec/80 § API Surface forbids dead pub exports, and
@@ -102,7 +132,8 @@ public_methods:
       health = PLAYER_MAX_HEALTH, alive = true, vel = (0,0), facing = 0.0,
       damage_count = 0.0, time_since_fire = f32::INFINITY (so the first
       shot of the game gets first-shot accuracy),
-      ammo = PLAYER_AMMO_INITIAL (specs/60),
+      bullets = PLAYER_BULLETS_INITIAL (specs/60 § Player Ammo Pools — 50),
+      shells = PLAYER_SHELLS_INITIAL (specs/60 § Player Ammo Pools — 0),
       armor = PLAYER_ARMOR_INITIAL (specs/25 § Armor — 0),
       armor_type = ArmorTier::None (specs/25 § Armor),
       weapon_rng = weapon_rng_seed.
@@ -208,12 +239,31 @@ public_methods:
       damage_count or alive. Caller (game_loop) is responsible for
       flipping the Pickup's active flag and for the refused-at-cap
       guard (knowledge/pickups.md § Cap Behavior).
-  - signature: "pub fn take_ammo_pickup(player: &mut Player, amount: i32)"
+  - signature: "pub fn take_ammo_pickup(player: &mut Player, category: AmmoCategory, amount: i32)"
     notes: |
-      specs/60 § Ammo Pickup Consumption. Adds `amount` to
-      player.ammo, clamps to PLAYER_AMMO_MAX. Caller (game_loop)
-      flips the Pickup's active flag and applies the refused-at-cap
-      guard.
+      specs/60 § Bullet/Shell Pickup Consumption. Dispatches on
+      `category`:
+        AmmoCategory::Bullets => player.bullets =
+            (player.bullets + amount).min(PLAYER_BULLETS_MAX);
+        AmmoCategory::Shells  => player.shells =
+            (player.shells  + amount).min(PLAYER_SHELLS_MAX);
+      Pool independence: the function writes only the pool named
+      by `category`; the other pool is not read or written
+      (knowledge/combat_balance.md § Ammo Economy — "picking up
+      shells never changes the bullets count, and vice versa").
+
+      Caller (game_loop) flips the Pickup's active flag and applies
+      the refused-at-cap guard against the matching pool
+      (frame_update_order in _shared.yaml § pickup-collision check).
+      The Coder MAY use a small private helper to fetch &mut to
+      the matching pool by category (cleaner) or inline the match
+      (simpler); both shapes meet the contract.
+
+      Renamed from the pre-2026-05-18 single-pool form
+      `take_ammo_pickup(player, amount)` when the per-category
+      split landed. The new signature adds the `category`
+      argument; callers updated in lockstep (game_loop's
+      pickup-check dispatch).
   - signature: "pub fn take_armor_pickup(player: &mut Player, tier: ArmorTier)"
     notes: |
       specs/60 § Armor Pickup Consumption (both green and blue

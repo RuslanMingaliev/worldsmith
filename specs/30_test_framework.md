@@ -72,7 +72,8 @@ Objectives are executed sequentially. Each must complete before the next begins.
 | `exit` | Level exit position |
 | `spawn` | Player spawn position |
 | `pickup_health` | First active health pickup (filtered by `kind == Health` AND `active == true`, per `specs/60 § Pickup Entity § Transitions`). Returns `None` when no active health pickup remains; combined with the `reach: pickup_<kind>` completion rule above, this means the objective completes (rather than stalls) once the bot has collected the pickup or the level had none to begin with. |
-| `pickup_ammo` | First active ammo pickup. Same filter and completion semantics as `pickup_health`. |
+| `pickup_ammo` | First active bullet pickup (filtered by `kind == AmmoBullets` AND `active == true`). Same filter and completion semantics as `pickup_health`. The target name is `pickup_ammo` rather than `pickup_bullets` for backwards-compat with the pre-ammo-split scenarios (`tests/level/scavenge_run.yaml`); the dispatch maps to the bullet variant because that is what the pre-slice "ammo" name covered. |
+| `pickup_shells` | First active shell pickup (filtered by `kind == AmmoShells` AND `active == true`). Same filter and completion semantics. Added in the 2026-05-18 ammo-split slice. |
 
 The "first active" filter is critical to the `reach: pickup_<kind>` semantics: it must distinguish between "pickup still on the floor" (objective unmet, keep routing toward it) and "pickup already collected" (objective satisfied, advance to next). Pickups can only deactivate, never reactivate within a run (`specs/60 § Pickup Entity § Transitions`), so the active filter encodes exactly the binary the objective check needs.
 
@@ -94,7 +95,9 @@ Checked after the simulation ends (all objectives complete or timeout).
 |-------|------|-------------|
 | `player.alive` | bool | Player is alive |
 | `player.health` | number | Player health (0-100) |
-| `player.ammo` | number | Player ammo count (0-`PLAYER_AMMO_MAX`). |
+| `player.bullets` | number | Player bullets pool (0-`PLAYER_BULLETS_MAX`); added 2026-05-18 ammo-split slice (specs/25 § Pickups § Player Ammo Pools). |
+| `player.shells` | number | Player shells pool (0-`PLAYER_SHELLS_MAX`); added 2026-05-18 ammo-split slice. |
+| `player.ammo` | number | Convenience alias for "the equipped weapon's ammo pool" — currently always `player.bullets` because pistol is the only weapon (its category is `AmmoCategory::Bullets`). When the deferred shotgun ships, this alias flips to read `player.shells` for any frame where the player has the shotgun equipped. Tests that need a per-category guarantee should use `player.bullets` / `player.shells` directly. |
 | `player.armor` | number | Player armor pool (0-200); added 2026-05-14 armor slice (specs/25 § Armor). |
 | `player.position.x` | number | Player X coordinate |
 | `player.position.y` | number | Player Y coordinate |
@@ -212,14 +215,14 @@ progression. While routing toward the health pickup, the bot still:
 
 **Trigger.** On any path replan, if the bot is in path-follow mode AND the
 HP-threshold modifier did NOT activate this replan AND
-`player.ammo == 0` AND there exists at least one `Pickup` in
-`level.pickups` with `kind == PickupKind::Ammo` and `active == true`, the
-modifier evaluates the detour cost.
+`player.bullets == 0` AND there exists at least one `Pickup` in
+`level.pickups` with `kind == PickupKind::AmmoBullets` and `active == true`, the
+modifier evaluates the detour cost. The trigger reads the bullets pool (not the shells pool) because the pistol — the only weapon this slice — consumes bullets; a future shotgun-shipping slice will either widen the gate to "the equipped weapon's pool is zero" or grow a parallel `player.shells == 0 + AmmoShells filter` arm. The 2026-05-18 ammo-split slice renamed `player.ammo == 0` to `player.bullets == 0` and narrowed the pickup filter to `AmmoBullets` (was `Ammo`).
 
 **Effect.** Trigger tightened from the earlier `< PLAYER_AMMO_MAX` rule:
-at the prototype's starting ammo of 12 / max 30, the looser trigger fires
+at the pre-slice prototype's starting ammo of 12 / max 30, the looser trigger fires
 unconditionally on round one and the demo always detours; `== 0` keeps
-the modifier discriminating. Reintroduce the broader trigger when the
+the modifier discriminating. The post-slice starting bullets / max bullets are 50 / 200 (knowledge-direct values — specs/25 § Pickups § Player Ammo Pools); the `== 0` gate continues to be the right discriminator at those values too — the bot does not run out of bullets in existing scenarios, so the gate stays cold and existing `--autopilot` recordings are byte-identical. Reintroduce the broader trigger when the
 ammo economy is rebalanced.
 
 The current implementation uses a Euclidean approximation of the detour
@@ -335,7 +338,7 @@ If the bot's position hasn't moved for `BOT_STUCK_FRAMES`, it begins strafing. A
 - Optional `level:` field on Scenario (specs/15) — selects a generated demo level instead of `level_data::build_default()` when set; backwards compatible with all existing fixtures.
 - Objective types: `kill:`, `reach:`, `approach:`, `wait:`.
 - Target names: `enemy`, `exit`, `spawn`, `pickup_health`, `pickup_ammo` (with fallback semantics).
-- Assertion fields: `player.alive`, `player.health`, `player.ammo`, `player.armor`, `enemy.alive`, `game.won` — these six are implemented in `autopilot::get_field_value` per `ir/contracts/autopilot.yaml § run_scenario § Field-value resolver`. `player.armor` was added in the 2026-05-14 armor slice for the `tests/combat/armor_absorbs_damage.yaml` scenario.
+- Assertion fields: `player.alive`, `player.health`, `player.ammo`, `player.bullets`, `player.shells`, `player.armor`, `enemy.alive`, `game.won` — these eight are implemented in `autopilot::get_field_value` per `ir/contracts/autopilot.yaml § run_scenario § Field-value resolver`. `player.armor` was added in the 2026-05-14 armor slice for the `tests/combat/armor_absorbs_damage.yaml` scenario. `player.bullets` and `player.shells` were added in the 2026-05-18 ammo-split slice for the `tests/combat/shell_pickup.yaml` scenario; `player.ammo` remains as a convenience alias for the equipped weapon's pool (currently always the bullets pool — see § Available Fields).
 - **Not yet implemented** (return "unknown field: <name>" failure at runtime): `player.position.x`, `player.position.y`, `enemy.health`, `game.running`, `game.frames`.
 - Assertion operators: `=`, `>`, `<`, `>=`, `<=`.
 - Bot behavior: turn-toward objective, BFS pathfinding with periodic replan and bee-line fallback, kite at `BOT_KITE_RANGE`, range-gated firing at `BOT_FIRE_MAX_RANGE`, LoS-gated firing via tile-grid ray-cast, stuck detection with strafe recovery as fallback.

@@ -7,6 +7,8 @@ depends_on: [presentation, visual_effects]
 public_types:
   - name: ArmorTier
     note: "Consumed (read-only); see shared_types.ArmorTier. draw_hud (topdown HUD § Armor Pane) and draw_hud_fps (raycaster HUD § Armor Pane) dispatch icon and digit colors on the tier variant."
+  - name: AmmoCategory
+    note: "Consumed (read-only); see shared_types.AmmoCategory. draw_hud (topdown HUD § Ammo Pane) and draw_hud_fps (raycaster HUD § Ammo Pane) read weapon_system::PISTOL_AMMO_CATEGORY (which equals AmmoCategory::Bullets) and dispatch on the value to pick which pool to display: Bullets → player.bullets in HUD_AMMO_COLOR (yellow); Shells → player.shells in a future HUD_SHELL_COLOR (deferred — lands with the shotgun). With pistol as the only weapon the dispatch is constant; the slice's runtime materialises a one-entry table but the dispatch machinery is what's contracted."
 public_constants:
   # RGB packed 0xRRGGBB; the renderer is the only consumer of these.
   - { name: COLOR_WALL,                type: u32, value: "0x404040", source: "specs/25 § Visual" }
@@ -34,8 +36,10 @@ public_constants:
   - { name: PICKUP_HEALTH_OUTER_COLOR,     type: u32, value: "0xFFFFFF",  source: "specs/25 § Pickups (Generation default)" }
   - { name: PICKUP_HEALTH_INNER_COLOR,     type: u32, value: "0xFF2020",  source: "specs/25 § Pickups (Generation default)" }
   - { name: PICKUP_HEALTH_INNER_THICKNESS_PX, type: i32, value: "4",      source: "specs/25 § Pickups (Generation default)" }
-  - { name: PICKUP_AMMO_SIZE_PX,           type: i32, value: "10",        source: "specs/25 § Pickups (Generation default)" }
-  - { name: PICKUP_AMMO_COLOR,             type: u32, value: "0xFFFF00",  source: "specs/25 § Pickups (Generation default)" }
+  - { name: PICKUP_AMMO_SIZE_PX,           type: i32, value: "10",        source: "specs/25 § Pickups (Generation default). Bullet-pickup (PickupKind::AmmoBullets) sprite size — name keeps the historical PICKUP_AMMO_* prefix from before the 2026-05-18 per-category split." }
+  - { name: PICKUP_AMMO_COLOR,             type: u32, value: "0xFFFF00",  source: "specs/25 § Pickups (Generation default). Bullet-pickup (PickupKind::AmmoBullets) sprite color (yellow). Reused for HUD_AMMO_COLOR so the on-map bullet pickup, the topdown HUD ammo pane, and the FPS HUD ammo pane share one yellow when the pistol is equipped." }
+  - { name: PICKUP_SHELL_SIZE_PX,          type: i32, value: "10",        source: "specs/25 § Pickups (Generation default — same as PICKUP_AMMO_SIZE_PX for visual symmetry; knowledge has no per-category sprite size since the reference is asset-driven). Shell-pickup (PickupKind::AmmoShells) sprite size. New in the 2026-05-18 ammo-split slice." }
+  - { name: PICKUP_SHELL_COLOR,            type: u32, value: "0xE08020",  source: "specs/25 § Pickups (Generation default — knowledge has no hex value for the shell pickup since the reference is sprite-asset-driven; warm orange is the most common retro-shooter convention for shotgun shells). Shell-pickup (PickupKind::AmmoShells) sprite color (warm orange). Visually distinct from PICKUP_AMMO_COLOR (yellow) so the player can tell which ammo category a pickup grants at a glance. New in the 2026-05-18 ammo-split slice." }
   # Pickup armor sprite constants (specs/25 § Pickups, 2026-05-14 armor slice)
   - { name: PICKUP_ARMOR_SIZE_PX,          type: i32, value: "12",        source: "specs/25 § Pickups (Generation default — same as PICKUP_HEALTH_SIZE_PX for visual parity)" }
   - { name: PICKUP_ARMOR_GREEN_COLOR,      type: u32, value: "0x20C020",  source: "specs/25 § Pickups (Generation default — knowledge-backed tier name only)" }
@@ -113,17 +117,22 @@ public_methods:
         2.5. Active pickups (specs/60 § Pickup Rendering):
               iterate level.pickups; skip !active. Dispatch on
               pickup.kind:
-                Health     → filled square in PICKUP_HEALTH_OUTER_COLOR
-                             (PICKUP_HEALTH_SIZE_PX) with a centered
-                             cross in PICKUP_HEALTH_INNER_COLOR
-                             (PICKUP_HEALTH_INNER_THICKNESS_PX wide).
-                Ammo       → filled square in PICKUP_AMMO_COLOR
-                             (PICKUP_AMMO_SIZE_PX).
-                ArmorGreen → filled square in PICKUP_ARMOR_GREEN_COLOR
-                             (PICKUP_ARMOR_SIZE_PX). No inner detail.
-                ArmorBlue  → filled square in PICKUP_ARMOR_BLUE_COLOR
-                             (PICKUP_ARMOR_SIZE_PX). No inner detail.
+                Health      → filled square in PICKUP_HEALTH_OUTER_COLOR
+                              (PICKUP_HEALTH_SIZE_PX) with a centered
+                              cross in PICKUP_HEALTH_INNER_COLOR
+                              (PICKUP_HEALTH_INNER_THICKNESS_PX wide).
+                AmmoBullets → filled square in PICKUP_AMMO_COLOR
+                              (PICKUP_AMMO_SIZE_PX). Yellow.
+                AmmoShells  → filled square in PICKUP_SHELL_COLOR
+                              (PICKUP_SHELL_SIZE_PX). Warm orange.
+                              Added 2026-05-18 ammo-split slice.
+                ArmorGreen  → filled square in PICKUP_ARMOR_GREEN_COLOR
+                              (PICKUP_ARMOR_SIZE_PX). No inner detail.
+                ArmorBlue   → filled square in PICKUP_ARMOR_BLUE_COLOR
+                              (PICKUP_ARMOR_SIZE_PX). No inner detail.
               Armor variants added in the 2026-05-14 armor slice.
+              AmmoBullets renamed from the pre-2026-05-18 single-pool
+              `Ammo` variant; AmmoShells is new in the same slice.
         3. Blood splats and wall puffs.
         4. Tracer lines.
         5. Muzzle flashes.
@@ -147,18 +156,24 @@ public_methods:
              (PICKUP_TINT_MAX_ALPHA_PCT * pickup_level / PICKUP_TINT_LEVEL_COUNT).
         9. HUD pane (specs/50 § Health Pane, § Ammo Pane, § Armor Pane):
            health bar + digits in top-left corner, ammo pane
-           (icon + digits) directly below, armor pane
-           (per-tier-colored icon + digits) directly below the ammo
-           pane (added 2026-05-14 armor slice).
+           (icon + digits, weapon-aware — see draw_hud notes below for
+           the dispatch on weapon_system::PISTOL_AMMO_CATEGORY)
+           directly below, armor pane (per-tier-colored icon + digits)
+           directly below the ammo pane (added 2026-05-14 armor slice).
+           Weapon-aware ammo dispatch added 2026-05-18 ammo-split slice.
         10. Game-over border if game_over.is_some()
            (green tint for win, red for lose; thickness
            GAME_OVER_BORDER_PX).
       The renderer reads visual_effects (including fx.pickup_tint_count),
-      player.damage_count, player.health, player.ammo, player.armor,
+      player.damage_count, player.health, player.bullets,
+      player.shells (added 2026-05-18 ammo-split slice; consumed only
+      via the weapon-aware ammo-pane dispatch), player.armor,
       player.armor_type (added 2026-05-14 armor slice for the armor
-      pane), level.pickups, enemy.pain_flash_remaining (live-enemy
-      pain-flash color override), and enemy.alive (live vs. corpse
-      skip). It does NOT mutate any other module's state. The death-fade interpolation reads
+      pane), level.pickups (renderer dispatches on pickup.kind for
+      the AmmoBullets and AmmoShells variants — see layer 2.5 above),
+      enemy.pain_flash_remaining (live-enemy pain-flash color
+      override), and enemy.alive (live vs. corpse skip). It does NOT
+      mutate any other module's state. The death-fade interpolation reads
       `eff.lifetime_remaining / ENEMY_DEATH_FADE_DURATION` from the
       VisualEffects entry pushed by spawn_enemy_death_fade — NOT
       enemy.death_fade_remaining (which is a parallel timer on Enemy
@@ -208,8 +223,25 @@ public_methods:
       call site moved to draw_hud_fps in slice 4 (specs/45 § HUD Mode
       Dispatch).
 
-      Reads (no mutation): player.health, player.ammo, player.armor,
-      player.armor_type. Writes the framebuffer.
+      Ammo pane is **weapon-aware** as of the 2026-05-18 ammo-split
+      slice (specs/50 § Ammo Pane). Dispatch:
+        let category = weapon_system::PISTOL_AMMO_CATEGORY;  // = AmmoCategory::Bullets
+        let (value, color) = match category {
+            AmmoCategory::Bullets => (player.bullets, HUD_AMMO_COLOR),
+            AmmoCategory::Shells  => (player.shells,  HUD_AMMO_COLOR), // future HUD_SHELL_COLOR, deferred
+        };
+      The icon (HUD_AMMO_ICON_PX × HUD_AMMO_ICON_PX filled square in
+      `color`) is drawn first, then the digits render `value` in the
+      same `color`. With pistol as the only weapon the dispatch is
+      constant (`Bullets → player.bullets → HUD_AMMO_COLOR`) — visual
+      output is byte-identical to the pre-slice HUD ammo pane. The
+      Coder MAY hard-code the Bullets arm (simplest, future-extension
+      via a match arm), OR write the match upfront (more future-proof
+      when the shotgun ships). Both shapes meet the contract; the pin
+      is "ammo pane reads via weapon_system::PISTOL_AMMO_CATEGORY".
+
+      Reads (no mutation): player.health, player.bullets, player.shells,
+      player.armor, player.armor_type. Writes the framebuffer.
   - signature: |
       pub fn draw_hud_fps(framebuffer: &mut Vec<u32>, player: &Player)
     notes: |
@@ -246,15 +278,26 @@ public_methods:
            NO per-value-threshold coloring: health at 5% renders the
            same red as health at 95% (knowledge raycaster_hud.md §
            Color Treatment).
-        3. Ammo pane: a yellow square icon + the player's ammo digits
-           (specs/45 § Ammo Pane). Icon at
+        3. Ammo pane (specs/45 § Ammo Pane): a colored square icon +
+           the equipped weapon's pool digits. The pane is
+           **weapon-aware** as of the 2026-05-18 ammo-split slice —
+           same dispatch as the topdown draw_hud's ammo pane above:
+             let category = weapon_system::PISTOL_AMMO_CATEGORY;  // = AmmoCategory::Bullets
+             let (value, color) = match category {
+                 AmmoCategory::Bullets => (player.bullets, RAYCASTER_HUD_AMMO_COLOR),
+                 AmmoCategory::Shells  => (player.shells,  RAYCASTER_HUD_AMMO_COLOR), // future RAYCASTER_HUD_SHELL_COLOR, deferred
+             };
+           Icon at
              (RAYCASTER_HUD_PANE_X_AMMO, ...)
            Shape: a filled square
              RAYCASTER_HUD_AMMO_ICON_PX × RAYCASTER_HUD_AMMO_ICON_PX
-           in RAYCASTER_HUD_AMMO_COLOR. Digits: render player.ammo
-           as decimal in RAYCASTER_HUD_AMMO_COLOR using the same
-           font + scale rules as the health pane. Always drawn,
-           including when ammo == 0.
+           in `color`. Digits: render `value` as decimal in `color`
+           using the same font + scale rules as the health pane.
+           Always drawn, including when the dispatched pool reads 0.
+           With pistol as the only weapon the dispatch is constant
+           (`Bullets → player.bullets → RAYCASTER_HUD_AMMO_COLOR`) —
+           visual output is byte-identical to the pre-slice FPS HUD
+           ammo pane.
         3.5. Armor pane (added 2026-05-14 armor slice — specs/45
            § Armor Pane): a tier-dispatched-color square icon + the
            player's armor digits. Icon at
@@ -284,10 +327,10 @@ public_methods:
            the bounding box; the silhouette inside it is a Coder
            degree of freedom. Static across all frames.
 
-      Reads (no mutation): player.health, player.ammo, player.armor,
-      player.armor_type. Writes the framebuffer. Reuses the
-      renderer-private HUD_DIGIT_GLYPHS table (specs/50 § State); no
-      new font is added.
+      Reads (no mutation): player.health, player.bullets,
+      player.shells, player.armor, player.armor_type. Writes the
+      framebuffer. Reuses the renderer-private HUD_DIGIT_GLYPHS table
+      (specs/50 § State); no new font is added.
 
       Used by main.rs in --render-mode=raycaster after raycaster::draw
       fills the framebuffer (specs/45 § Interactions § With renderer

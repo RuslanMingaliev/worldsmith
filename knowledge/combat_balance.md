@@ -116,18 +116,28 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
 
 ### Ammo Economy
 
-- **Behavior**: The player starts with a pistol and limited ammunition. Ammo pickups restore fixed amounts
-- **Rules**: Each weapon consumes a defined amount of ammo per shot from its ammo pool. Pistol and chaingun share the "clip" ammo type
+- **Behavior**: The player starts with a pistol and limited ammunition. Each weapon draws from one of several independent ammo pools indexed by an ammo-category enum on the weapon definition. Picking up ammo grants only the named category; pools never spill into each other. Ammo pickups restore fixed amounts.
+- **Rules**:
+  - Each weapon definition carries an `ammo_category` field (bullets, shells, energy cells, explosive missiles, or a "no ammo" sentinel for melee). The firing pipeline reads this field, decrements `player.ammo[category]`, and refuses to fire when the pool is empty.
+  - Pistol and the rapid-fire bullet weapon share the bullets pool. The shotgun and the double-barrel variant share the shells pool. The two categories are stored as independent integers (`player.ammo[bullets]`, `player.ammo[shells]`, …) — picking up shells never changes the bullets count, and vice versa.
+  - The player starts the level with bullets pre-filled and every other category at zero. Adding a weapon does NOT seed its ammo category from zero; the player must pick up an ammo pickup of the matching category to actually fire that weapon.
+  - Each ammo category has its own per-category cap (see pickup knowledge for the cap values and the "doubled by inventory-expander" rule).
 - **Constants**:
-  - Starting ammo: 50 bullets (clip type)
-  - Clip pickup: 10 bullets (half = 5 from dropped clips)
-  - Box of bullets: 50
+  - Starting bullets: 50 (the pistol's pool, pre-filled at level start)
+  - Starting shells: 0 (the shotgun's pool, empty at level start until a shell pickup is found)
+  - Starting energy cells: 0
+  - Starting explosive missiles: 0
+  - Small bullet pickup (clip): 10 bullets (half = 5 from a dropped-on-kill clip)
+  - Large bullet pickup (box): 50 bullets
+  - Small shell pickup: 4 shells (half = 2 from a dropped-on-kill shell pickup)
+  - Large shell pickup (shell box): 20 shells
   - Max ammo (bullets): 200 (400 with ammo capacity expander)
-  - Pistol: 1 bullet per shot
-  - Chaingun: 1 bullet per shot (but fires 2 per cycle)
-  - Shotgun: 1 shell per shot
   - Max ammo (shells): 50 (100 with ammo capacity expander)
-- **Feel**: Starting with 50 bullets means ~25 basic troopers worth of ammo at average damage, or only ~8 ranged-melee hybrids. This creates early scarcity pressure that drives exploration and weapon acquisition
+  - Pistol: 1 bullet per shot
+  - Rapid-fire bullet weapon: 1 bullet per shot (but fires 2 per cycle)
+  - Shotgun: 1 shell per shot
+  - Double-barrel shotgun variant: 2 shells per shot
+- **Feel**: Starting with 50 bullets means ~25 basic troopers worth of ammo at average damage, or only ~8 ranged-melee hybrids. Starting with 0 shells means the shotgun is unfireable until the player finds a shell pickup, which gates the weapon behind exploration even after the gun is in hand. The independent pools per category make every pickup feel directed — a shell pickup is meaningful only if the player is carrying (or will soon carry) a shell-consuming weapon.
 
 ### Damage Randomization System
 
@@ -183,8 +193,13 @@ The reference game uses a deterministic pseudo-random number generator (a fixed 
 | Green armor absorption | 33% | Type 1 |
 | Blue armor absorption | 50% | Type 2 |
 | Starting ammo (bullets) | 50 | ~25 basic trooper kills |
+| Starting ammo (shells) | 0 | Shotgun unfireable until a shell pickup is found |
 | Clip pickup | 10 bullets | Half from drops |
+| Bullet box pickup | 50 bullets | Large bullet pickup |
+| Small shell pickup | 4 shells | Half from drops |
+| Shell box pickup | 20 shells | Large shell pickup |
 | Max bullets | 200 | 400 with ammo capacity expander |
+| Max shells | 50 | 100 with ammo capacity expander |
 | Enemy spread (grunt) | +/- ~22 deg max | 4x wider than player |
 | Pain chance (basic trooper) | 200/256 (~78%) | High stagger rate |
 | Pain chance (ranged-melee hybrid) | 200/256 (~78%) | High stagger rate |

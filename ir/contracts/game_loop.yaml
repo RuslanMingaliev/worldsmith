@@ -13,6 +13,8 @@ depends_on:
 public_types:
   - name: ArmorTier
     note: "Consumed; see shared_types.ArmorTier. game_loop's per-frame pickup-check step translates PickupKind::ArmorGreen/ArmorBlue to ArmorTier::Green/Blue at the call site to player_state::take_armor_pickup (frame_update_order)."
+  - name: AmmoCategory
+    note: "Consumed; see shared_types.AmmoCategory. game_loop's per-frame pickup-check step translates PickupKind::AmmoBullets to AmmoCategory::Bullets (with amount = PICKUP_BULLETS_AMOUNT) and PickupKind::AmmoShells to AmmoCategory::Shells (with amount = PICKUP_SHELLS_AMOUNT) at the call site to player_state::take_ammo_pickup (frame_update_order in _shared.yaml). New in the 2026-05-18 ammo-split slice."
 
   - name: GameState
     definition: |

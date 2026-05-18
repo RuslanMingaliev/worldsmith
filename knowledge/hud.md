@@ -20,6 +20,7 @@ The reference engine renders a persistent status bar as a fixed-height strip occ
   - Bar Y origin = framebuffer height minus bar height.
   - Per-widget anchor (x, y) in framebuffer coordinates.
   - Per-widget max width in glyphs (for numeric widgets).
+- **Widget inventory (ammo-related)**: The bar declares exactly one *primary* ammo readout (3-digit tall numeric, anchored to the leftmost well) bound to the currently equipped weapon's category, plus one *secondary* readout per ammo category (2-digit short numerics, stacked in a small panel to the right). The primary readout is the one the player reads during combat; the secondary readouts let the player see the full inventory at a glance. The primary's source pointer is rebound per frame to follow the active weapon (see Numeric Widget § Weapon-aware source rebinding); the secondaries are bound once at init.
 - **Feel**: A solid, always-present "dashboard" framing the play view. Because the chrome is a real bitmap with embossed wells around each readout, the readouts feel like physical instruments rather than floating text.
 
 ### Numeric Widget
@@ -34,6 +35,7 @@ The reference engine renders a persistent status bar as a fixed-height strip occ
   - **Negative numbers**: clamped to fit (e.g. a 2-digit slot clamps to -9, a 3-digit slot to -99), absolute value rendered as digits, then a separate minus-sign glyph drawn one glyph-width to the left of the leftmost digit.
   - **N/A sentinel**: an out-of-band integer value chosen never to collide with realistic in-game numbers is interpreted as "draw nothing." This lets weapons that don't consume ammo (melee/etc.) show a blank ammo well without a special widget type.
   - **Erase-then-draw**: every redraw first restores the widget's full rectangle (`max_digit_count * glyph_width` by `glyph_height`) from the background buffer, so shrinking from 3 digits to 1 digit doesn't leave stale digits on screen.
+  - **Weapon-aware source rebinding (primary ammo widget only)**: the status bar declares a dedicated "current weapon's ammo" numeric widget whose source pointer is *redirected each frame* before the redraw step. The redirect rule reads the active weapon's ammo-category field from the weapon definition table, then writes the corresponding `&player.ammo[category]` into the widget's source pointer. If the active weapon's ammo category is the "no ammo" sentinel (melee), the source pointer is redirected to a static integer holding the N/A sentinel value, which makes the widget render as blank. This is what lets one widget slot display "bullets count when the pistol is up, shells count when the shotgun is up, blank when a melee weapon is up" without per-weapon HUD code. The four per-category secondary widgets (one per ammo type) bind their sources once at init and never rebind — they read `&player.ammo[category]` for each fixed category slot directly.
   - The widget owns no game state — it only reads through its pointer.
 - **Constants**:
   - `width` (max digit slots): 2 for compact summary readouts, 3 for primary readouts (current ammo, current health %, current armor %).

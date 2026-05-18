@@ -302,20 +302,28 @@ public_methods:
                regular distance-attenuated path in step (d) below.
              - Active pickups: iterate `level.pickups`; include where
                `pickup.active`. Per kind:
-                 Health:     world_half_* = PICKUP_HEALTH_SIZE_PX as f32 / 2.0
-                                             / TILE_SIZE;
-                             color = PICKUP_HEALTH_OUTER_COLOR.
-                 Ammo:       world_half_* = PICKUP_AMMO_SIZE_PX as f32 / 2.0
-                                             / TILE_SIZE;
-                             color = PICKUP_AMMO_COLOR.
-                 ArmorGreen: world_half_* = PICKUP_ARMOR_SIZE_PX as f32 / 2.0
-                                             / TILE_SIZE;
-                             color = PICKUP_ARMOR_GREEN_COLOR.
-                             (Added 2026-05-14 armor slice.)
-                 ArmorBlue:  world_half_* = PICKUP_ARMOR_SIZE_PX as f32 / 2.0
-                                             / TILE_SIZE;
-                             color = PICKUP_ARMOR_BLUE_COLOR.
-                             (Added 2026-05-14 armor slice.)
+                 Health:      world_half_* = PICKUP_HEALTH_SIZE_PX as f32 / 2.0
+                                              / TILE_SIZE;
+                              color = PICKUP_HEALTH_OUTER_COLOR.
+                 AmmoBullets: world_half_* = PICKUP_AMMO_SIZE_PX as f32 / 2.0
+                                              / TILE_SIZE;
+                              color = PICKUP_AMMO_COLOR.
+                              (Variant renamed from `Ammo` in the
+                              2026-05-18 ammo-split slice; sprite
+                              size/color constants keep historical
+                              PICKUP_AMMO_* naming.)
+                 AmmoShells:  world_half_* = PICKUP_SHELL_SIZE_PX as f32 / 2.0
+                                              / TILE_SIZE;
+                              color = PICKUP_SHELL_COLOR.
+                              (Added 2026-05-18 ammo-split slice.)
+                 ArmorGreen:  world_half_* = PICKUP_ARMOR_SIZE_PX as f32 / 2.0
+                                              / TILE_SIZE;
+                              color = PICKUP_ARMOR_GREEN_COLOR.
+                              (Added 2026-05-14 armor slice.)
+                 ArmorBlue:   world_half_* = PICKUP_ARMOR_SIZE_PX as f32 / 2.0
+                                              / TILE_SIZE;
+                              color = PICKUP_ARMOR_BLUE_COLOR.
+                              (Added 2026-05-14 armor slice.)
                  full_bright = false (pickups distance-attenuate
                  like enemies/corpses/blood).
              Skip: MuzzleFlash and Tracer effect kinds. MuzzleFlash
@@ -572,9 +580,12 @@ public_methods:
            / MuzzleFlash / Tracer);
         fx.pickup_tint_count (slice 3 -- pickup tint overlay).
       Does NOT read the per-frame frames counter, player.health,
-      player.ammo, player.alive, enemy.health, enemy.state, or any
-      other gameplay state. Writes the framebuffer; no other side
-      effects.
+      player.bullets, player.shells, player.alive, enemy.health,
+      enemy.state, or any other gameplay state. The renderer's HUD
+      path (renderer::draw_hud_fps, called by main.rs after
+      raycaster::draw returns) reads those fields for the HUD panes
+      — the raycaster itself does not. Writes the framebuffer; no
+      other side effects.
 
       Module-private state:
         - column_angle_offset: [f32; WINDOW_WIDTH] -- precomputed
@@ -651,6 +662,7 @@ notes: |
                           PICKUP_HEALTH_OUTER_COLOR,
                           PICKUP_AMMO_COLOR, PICKUP_HEALTH_SIZE_PX,
                           PICKUP_AMMO_SIZE_PX,
+                          PICKUP_SHELL_COLOR, PICKUP_SHELL_SIZE_PX,
                           PICKUP_ARMOR_GREEN_COLOR,
                           PICKUP_ARMOR_BLUE_COLOR,
                           PICKUP_ARMOR_SIZE_PX,
