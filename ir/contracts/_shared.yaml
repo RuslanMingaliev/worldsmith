@@ -46,6 +46,65 @@ shared_types:
       are NOT modeled as tiles; they live as Pickup entities in
       Level::pickups (see PickupKind / Pickup below).
 
+  - name: AmmoCategory
+    home_module: player_state
+    definition: |
+      #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+      pub enum AmmoCategory {
+          Bullets,
+          Shells,
+      }
+    notes: |
+      Discriminator for the per-category ammo pools on Player.
+      Knowledge basis: knowledge/combat_balance.md § Ammo Economy —
+      "Each weapon definition carries an `ammo_category` field
+      (bullets, shells, energy cells, explosive missiles, or a 'no
+      ammo' sentinel for melee). The firing pipeline reads this
+      field, decrements `player.ammo[category]`, and refuses to
+      fire when the pool is empty." This slice (2026-05-18 ammo
+      split) ships two of the four reference categories — bullets
+      (consumed by the pistol) and shells (deferred shotgun
+      consumer, pool exists with no consumer this slice). Energy
+      cells and explosive missiles are deferred until the weapons
+      that consume them ship (specs/25 § Deferred Combat Features).
+
+      Homed in player_state (NOT level_data) because the pool
+      storage lives on Player (mirroring ArmorTier's placement
+      logic — "homed in player_state because the type lives on
+      Player and mutates via take_damage / take_armor_pickup"
+      above). Consumed by:
+        - player_state (home): take_ammo_pickup's per-category
+          dispatch (Bullets → player.bullets, Shells →
+          player.shells; clamps to PLAYER_BULLETS_MAX /
+          PLAYER_SHELLS_MAX respectively).
+        - weapon_system: the PISTOL_AMMO_CATEGORY constant binds
+          the pistol to AmmoCategory::Bullets; fire() reads this
+          constant to gate (player.bullets > 0) and decrement
+          (player.bullets -= 1). When the shotgun ships, it adds
+          SHOTGUN_AMMO_CATEGORY = AmmoCategory::Shells and the
+          symmetric gate/decrement on player.shells.
+        - game_loop: per-frame pickup-check dispatch — translates
+          PickupKind::AmmoBullets / AmmoShells into the matching
+          AmmoCategory::Bullets / Shells when calling
+          take_ammo_pickup (specs/60 § Bullet/Shell Pickup
+          Consumption; frame_update_order below).
+        - renderer: draw_hud's topdown ammo pane and
+          draw_hud_fps's raycaster ammo pane both dispatch on
+          PISTOL_AMMO_CATEGORY to pick which pool to display
+          (specs/50 § Ammo Pane, specs/45 § Ammo Pane). With
+          pistol as the only weapon the dispatch is constant —
+          the dispatch machinery is what the slice ships; the
+          one-entry table is what the slice's runtime
+          materialises.
+
+      AmmoCategory is a SEPARATE type from PickupKind. The two do
+      not unify because PickupKind also covers Health and the two
+      Armor tiers (which have no ammo-category meaning), and
+      AmmoCategory covers the player-side bullets/shells discriminator
+      (which has no health/armor variant). game_loop's pickup-check
+      step performs the mapping (AmmoBullets → Bullets, AmmoShells
+      → Shells) at the call site.
+
   - name: ArmorTier
     home_module: player_state
     definition: |
@@ -92,14 +151,16 @@ shared_types:
       #[derive(Clone, Copy, Debug, PartialEq, Eq)]
       pub enum PickupKind {
           Health,
-          Ammo,
+          AmmoBullets,
+          AmmoShells,
           ArmorGreen,
           ArmorBlue,
       }
     notes: |
       Discriminator for Pickup. Source: specs/60_pickups.md,
-      knowledge/pickups.md. Renderer dispatches sprite drawing on
-      this; game_loop dispatches pickup application on this.
+      knowledge/pickups.md, knowledge/combat_balance.md § Ammo
+      Economy. Renderer dispatches sprite drawing on this;
+      game_loop dispatches pickup application on this.
 
       ArmorGreen and ArmorBlue variants added in the 2026-05-14
       armor slice. The tier choice is encoded in the variant
@@ -112,13 +173,43 @@ shared_types:
       pickup sprite pass dispatches on the same variant to pick
       between PICKUP_ARMOR_GREEN_COLOR and PICKUP_ARMOR_BLUE_COLOR.
 
+      AmmoBullets and AmmoShells: the 2026-05-18 ammo-split slice
+      renamed the prior `Ammo` variant to `AmmoBullets` and added
+      `AmmoShells` for the deferred shotgun's pool. The category
+      choice is encoded in the variant name (per
+      knowledge/pickups.md § Ammo Pickup Tiers — "Pickup-to-category
+      binding is one-to-one and fixed by pickup kind. Each pickup
+      sprite/entity kind hard-codes which ammo category it grants").
+      game_loop's per-frame pickup check matches on PickupKind and
+      forwards the category to
+      player_state::take_ammo_pickup(player, AmmoCategory::Bullets
+      | Shells, amount) via the obvious mapping (AmmoBullets →
+      Bullets with amount = PICKUP_BULLETS_AMOUNT, AmmoShells →
+      Shells with amount = PICKUP_SHELLS_AMOUNT). The renderer's
+      pickup sprite pass dispatches on the same variant to pick
+      between PICKUP_AMMO_COLOR (bullets, yellow) and
+      PICKUP_SHELL_COLOR (shells, warm orange) and between
+      PICKUP_AMMO_SIZE_PX and PICKUP_SHELL_SIZE_PX. game_loop's
+      enemy-drop scan (specs/60 § Enemy Ammo Drops) pushes
+      Pickup { kind: PickupKind::AmmoBullets, ... } because the
+      basic trooper drops a bullet clip
+      (knowledge/enemy_types.md § Death and Item Drops).
+
       ArmorTier (the player-side enum) is homed in player_state
       and is a SEPARATE type from PickupKind — see
-      ir/contracts/player_state.yaml § ArmorTier. The two enums
-      do not unify because PickupKind also covers Health and Ammo
-      while ArmorTier covers the player-state-only None / Green /
-      Blue triple including the absent-armor state that has no
-      corresponding pickup.
+      ir/contracts/player_state.yaml § ArmorTier. AmmoCategory
+      (also player-side, homed in player_state — see § shared
+      type above) is ALSO a SEPARATE type from PickupKind. The
+      three enums (PickupKind, ArmorTier, AmmoCategory) do not
+      unify because PickupKind covers all five pickup variants
+      (Health, AmmoBullets, AmmoShells, ArmorGreen, ArmorBlue)
+      while ArmorTier covers the player-state-only None/Green/Blue
+      triple (no Health, no Ammo categories) and AmmoCategory
+      covers the player-state-only Bullets/Shells discriminator
+      (no Health, no Armor variants). game_loop's pickup-check
+      step performs the mappings (AmmoBullets → AmmoCategory::Bullets,
+      AmmoShells → AmmoCategory::Shells; ArmorGreen → ArmorTier::Green,
+      ArmorBlue → ArmorTier::Blue) at the call site.
 
   - name: Pickup
     home_module: level_data
@@ -402,10 +493,10 @@ frame_update_order:
   - "if input.quit { state.running = false; return; }"
   - "state.elapsed += dt  // tick the per-frame clock BEFORE any decision step reads it. Required for the game-over hold-then-exit logic below: `state.elapsed - t0 >= GAME_OVER_HOLD_SEC` only works if elapsed advances each frame. Captured during the 2026-05-14 armor-slice release reconcile after the prior contract omitted this step (the GameState struct doc-comment on `elapsed` mentioned `+= dt in update` but frame_update_order did not list it as a step)."
   - "player_state::apply_input(&mut state.player, input, &state.level, dt)"
-  - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds — Health: state.player.health < PLAYER_MAX_HEALTH; Ammo: state.player.ammo < PLAYER_AMMO_MAX; ArmorGreen: state.player.armor < PICKUP_ARMOR_GREEN_TARGET_POINTS; ArmorBlue: state.player.armor < PICKUP_ARMOR_BLUE_TARGET_POINTS — set pickup.active=false, dispatch on pickup.kind to call the matching player_state method (take_health_pickup / take_ammo_pickup / take_armor_pickup(player, ArmorTier::Green) / take_armor_pickup(player, ArmorTier::Blue)), and call visual_effects::increment_pickup_tint(&mut state.fx) (specs/40 § Pickup Tint Screen Flash). All four pickup kinds use the SAME pickup tint — knowledge/pickups.md § Single-use Consumption confirms every pickup contributes the same flash amount."
+  - "// pickup-collision check (specs/60 § Per-Frame Pickup Check, knowledge/pickups.md § Pickup Touch Detection + § Cap Behavior, knowledge/combat_balance.md § Ammo Economy). Iterate state.level.pickups; for the first active pickup with pos.distance_to(state.player.pos) < PICKUP_RADIUS_TILES whose acceptance condition holds — Health: state.player.health < PLAYER_MAX_HEALTH; AmmoBullets: state.player.bullets < PLAYER_BULLETS_MAX; AmmoShells: state.player.shells < PLAYER_SHELLS_MAX; ArmorGreen: state.player.armor < PICKUP_ARMOR_GREEN_TARGET_POINTS; ArmorBlue: state.player.armor < PICKUP_ARMOR_BLUE_TARGET_POINTS — set pickup.active=false, dispatch on pickup.kind to call the matching player_state method (take_health_pickup / take_ammo_pickup(player, AmmoCategory::Bullets, PICKUP_BULLETS_AMOUNT) / take_ammo_pickup(player, AmmoCategory::Shells, PICKUP_SHELLS_AMOUNT) / take_armor_pickup(player, ArmorTier::Green) / take_armor_pickup(player, ArmorTier::Blue)), and call visual_effects::increment_pickup_tint(&mut state.fx) (specs/40 § Pickup Tint Screen Flash). All five pickup kinds use the SAME pickup tint — knowledge/pickups.md § Single-use Consumption confirms every pickup contributes the same flash amount. The two AmmoCategory arms preserve pool independence: AmmoBullets writes only player.bullets, AmmoShells writes only player.shells (knowledge/combat_balance.md § Ammo Economy — 'picking up shells never changes the bullets count, and vice versa')."
   - "for enemy in &mut state.enemies: enemy_logic::update(enemy, &mut state.player, &state.level, &mut state.fx, dt)  // enemy.archetype is consulted internally via archetype_stats() for max_health / pain_chance / pellet_count / attack_sequence_sec"
-  - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire. Ammo gate is also inside fire(): if player.ammo == 0, fire() returns without side effects after the cooldown gate."
-  - "// specs/25 § Enemy drop on death + specs/60 § Enemy Ammo Drops: scan state.enemies AFTER the enemy update loop AND after weapon_system::fire (so a same-frame kill drops the pickup that frame, not next frame). For each enemy where !enemy.alive AND !enemy.ammo_drop_spawned, push Pickup { kind: PickupKind::Ammo, pos: enemy.pos, active: true } onto state.level.pickups and set enemy.ammo_drop_spawned = true. Coder may use a two-pass shape (collect dropped positions, then push) to side-step split-borrow ergonomics; both shapes meet the contract. The behavior is `exactly one Pickup pushed per dead trooper, at the trooper's death position, in the same frame death is detected`. Re-running this scan on subsequent frames is a no-op because ammo_drop_spawned remains true. The drop is collectible by the existing per-frame pickup check on the next frame (the pickup check ran earlier this frame, before enemy update + weapon_system::fire, so the new Pickup is not seen until the next frame's pickup-check step)."
+  - "if input.fire && state.player.alive: weapon_system::fire(&mut state.player, &mut state.enemies, &state.level, &mut state.fx) -- the per-shot cooldown gate is INSIDE fire(), keyed off player.time_since_fire. Ammo gate is also inside fire(): for the pistol (PISTOL_AMMO_CATEGORY = AmmoCategory::Bullets), if player.bullets == 0, fire() returns without side effects after the cooldown gate. After all fire-side effects complete, fire() decrements the equipped weapon's pool (player.bullets -= 1 for the pistol; knowledge/combat_balance.md § Ammo Economy 'Pistol: 1 bullet per shot')."
+  - "// specs/25 § Enemy drop on death + specs/60 § Enemy Ammo Drops: scan state.enemies AFTER the enemy update loop AND after weapon_system::fire (so a same-frame kill drops the pickup that frame, not next frame). For each enemy where !enemy.alive AND !enemy.ammo_drop_spawned, push Pickup { kind: PickupKind::AmmoBullets, pos: enemy.pos, active: true } onto state.level.pickups and set enemy.ammo_drop_spawned = true. The variant is AmmoBullets (was `Ammo` pre-2026-05-18 ammo-split slice) because the basic trooper drops a bullet clip — knowledge/enemy_types.md § Death and Item Drops 'The basic hitscan trooper drops a clip (bullet ammo) on death'. Coder may use a two-pass shape (collect dropped positions, then push) to side-step split-borrow ergonomics; both shapes meet the contract. The behavior is `exactly one Pickup pushed per dead trooper, at the trooper's death position, in the same frame death is detected`. Re-running this scan on subsequent frames is a no-op because ammo_drop_spawned remains true. The drop is collectible by the existing per-frame pickup check on the next frame (the pickup check ran earlier this frame, before enemy update + weapon_system::fire, so the new Pickup is not seen until the next frame's pickup-check step)."
   - "player_state::decay_damage_tint(&mut state.player, dt)"
   - "visual_effects::tick(&mut state.fx, dt)"
   - "// specs/20 § Game Over Flow: the game-over DECISION (player alive becomes false; or pos.distance_to(level.exit) < EXIT_RADIUS) and the loop-EXIT ACTION (running = false) MUST be in separate iterations of the main loop. Implementation pattern: the decision sets `state.game_over_at = Some(elapsed_seconds)`. The exit action runs only when `now - game_over_at >= GAME_OVER_HOLD_SEC` from specs/25 § Visual. Until then, the loop continues to call update + draw with `game_over` set so the colored border keeps rendering. Without this separation, the implementation flips running=false on the same tick the win/lose state is detected and the colored border renders for zero frames."

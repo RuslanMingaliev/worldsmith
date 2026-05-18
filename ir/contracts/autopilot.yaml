@@ -35,15 +35,19 @@ public_types:
       uses level_data::build_default(). Present => caller calls
       level_generator::build(kind). The serde rename_all attribute
       on DemoLevelKind handles snake_case YAML names
-      (e.g. `local_chase_obstacle`, `shotgun_standoff`). Unknown
-      names yield a serde_yaml deserialization error which
-      `parse_scenario`'s `.expect("valid scenario YAML")` propagates
-      as a panic with a clear message — matching the existing parse
-      error handling rule in specs/30 § Execution Rules. The
-      shotgun_standoff variant was added in the 2026-05-13 combat
-      slice 2 alongside the ShotgunTrooper archetype; no signature
-      or struct shape change is required here since the field type
-      is already `Option<DemoLevelKind>`.
+      (e.g. `local_chase_obstacle`, `shotgun_standoff`,
+      `armor_absorption`, `shell_pickup`). Unknown names yield a
+      serde_yaml deserialization error which `parse_scenario`'s
+      `.expect("valid scenario YAML")` propagates as a panic with
+      a clear message — matching the existing parse error handling
+      rule in specs/30 § Execution Rules. The shotgun_standoff
+      variant was added in the 2026-05-13 combat slice 2 alongside
+      the ShotgunTrooper archetype; the armor_absorption variant
+      was added in the 2026-05-14 armor slice; the shell_pickup
+      variant was added in the 2026-05-18 ammo-split slice. No
+      signature or struct shape change is required for variant
+      additions since the field type is already
+      `Option<DemoLevelKind>`.
 
       `scenario` (the test-name string) and `assertions` are
       #[cfg(test)]-gated because the only consumers are the test
@@ -266,9 +270,9 @@ public_methods:
               satisfies the trigger) routes to the original objective
               target.
             - Ammo opportunism: when HP-threshold did NOT activate AND
-                player.ammo == 0
-              AND any Pickup with kind == Ammo, active == true exists,
-              the modifier inspects the nearest active ammo pickup
+                player.bullets == 0
+              AND any Pickup with kind == AmmoBullets, active == true exists,
+              the modifier inspects the nearest active bullet pickup
               (`Iterator::min_by` over Euclidean
               `player.pos.distance_to(pickup.pos)`; ties broken by
               iteration order in `level.pickups`) and accepts it iff
@@ -279,11 +283,21 @@ public_methods:
               that pickup. The bot consumes the path-to-pickup segment;
               on arrival game_loop flips the pickup's active flag, and
               the next replan retargets the original objective. The
-              ammo-trigger threshold is `ammo == 0` (deferred from the
-              earlier `< PLAYER_AMMO_MAX` rule because at the prototype's
-              level scale the latter fires unconditionally on round 1
-              and the demo always detours; the stricter "out of ammo"
-              keeps the modifier discriminating). The Euclidean budget
+              bullets-trigger threshold is `player.bullets == 0`
+              (deferred from the earlier `< PLAYER_AMMO_MAX` rule
+              because at the prototype's level scale the latter fires
+              unconditionally on round 1 and the demo always detours;
+              the stricter "out of bullets" keeps the modifier
+              discriminating). The 2026-05-18 ammo-split slice
+              renamed `player.ammo == 0` to `player.bullets == 0` and
+              narrowed the pickup-kind filter from any ammo pickup
+              to `AmmoBullets` specifically — the bot does not detour
+              for shells because the pistol does not consume them.
+              When the deferred shotgun ships, the gate either widens
+              to "the equipped weapon's pool is zero AND a matching-
+              category pickup exists" or grows a parallel
+              `player.shells == 0 + AmmoShells filter` arm; the choice
+              is deferred to the shotgun-shipping slice. The Euclidean budget
               check is an approximation of the BFS-path-length detour
               (`via_pickup_len - direct_len <= budget`) — the precise
               form is tracked as a deferred refinement; the two metrics
@@ -379,12 +393,14 @@ public_methods:
       against the literal string and returns Option<AssertValue>; an
       unrecognized field becomes `"unknown field: <name>"` in
       ScenarioResult.failures (see the run_scenario loop body above).
-      Pinned field set as of the 2026-05-14 armor slice (the six fields
-      listed in specs/30 § Implementation Status as "implemented"):
+      Pinned field set as of the 2026-05-18 ammo-split slice (the eight
+      fields listed in specs/30 § Implementation Status as "implemented"):
         "player.alive"   -> AssertValue::Bool(state.player.alive)
         "player.health"  -> AssertValue::Number(state.player.health as f32)
-        "player.ammo"    -> AssertValue::Number(state.player.ammo as f32)
-        "player.armor"   -> AssertValue::Number(state.player.armor as f32)  [armor slice]
+        "player.ammo"    -> AssertValue::Number(state.player.bullets as f32)   [ammo-split: equipped-weapon alias — pistol's category is Bullets, so this aliases to player.bullets]
+        "player.bullets" -> AssertValue::Number(state.player.bullets as f32)   [ammo-split slice]
+        "player.shells"  -> AssertValue::Number(state.player.shells as f32)    [ammo-split slice]
+        "player.armor"   -> AssertValue::Number(state.player.armor as f32)     [armor slice]
         "enemy.alive"    -> AssertValue::Bool(state.enemies.iter().any(|e| e.alive))
         "game.won"       -> AssertValue::Bool(state.won)
       Any field listed in specs/30 § Available Fields as "implemented"
@@ -393,11 +409,26 @@ public_methods:
       `enemy.health`, `game.running`, `game.frames`) MUST NOT appear —
       the resolver falls through to the `_ => None` arm so the
       run_scenario loop surfaces `"unknown field: <name>"` failures
-      that mark the field as not-yet-available. Captured during the
-      2026-05-14 armor release reconcile after the prior contract
-      listed a stray `"game.frames" -> ... [counter-test field]` example
-      that contradicted specs/30 — removed to keep the contract aligned
-      with the spec's implemented/deferred split.
+      that mark the field as not-yet-available.
+
+      `player.ammo` is preserved as a convenience alias for the
+      equipped weapon's pool (currently always `player.bullets`
+      because the pistol's category is `AmmoCategory::Bullets` —
+      weapon_system::PISTOL_AMMO_CATEGORY). Tests that require a
+      per-category guarantee should use `player.bullets` /
+      `player.shells` directly; `player.ammo` is intended for
+      backwards-compat with pre-ammo-split fixtures and for tests
+      that want to assert against "what the HUD displays" without
+      caring about the underlying category. When the deferred
+      shotgun ships, the alias dispatch grows the second arm
+      (Shells → player.shells); the alias itself remains.
+
+      Captured during the 2026-05-14 armor release reconcile after
+      the prior contract listed a stray `"game.frames" -> ... [counter-test field]`
+      example that contradicted specs/30 — removed to keep the
+      contract aligned with the spec's implemented/deferred split.
+      Expanded in the 2026-05-18 ammo-split slice for the bullets/
+      shells per-category fields.
     cfg_test_only: true
   - signature: |
       #[test]

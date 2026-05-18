@@ -15,6 +15,7 @@ public_types:
           RangedStandoff,
           ShotgunStandoff,
           ArmorAbsorption,
+          ShellPickup,
       }
     notes: |
       Public because autopilot::Scenario.level holds
@@ -23,8 +24,9 @@ public_types:
       enum. `rename_all = "snake_case"` maps `LocalChaseObstacle`
       -> `local_chase_obstacle`, `KiteMelee` -> `kite_melee`,
       `RangedStandoff` -> `ranged_standoff`, `ShotgunStandoff`
-      -> `shotgun_standoff`, and `ArmorAbsorption` ->
-      `armor_absorption` for YAML readability.
+      -> `shotgun_standoff`, `ArmorAbsorption` ->
+      `armor_absorption`, and `ShellPickup` -> `shell_pickup`
+      for YAML readability.
       Adding a new demo level: add one variant here and one match arm
       in build() below; nothing else changes.
 
@@ -38,6 +40,12 @@ public_types:
       (specs/25 § Armor / § Armor Damage Routing) to exercise the
       armor system end-to-end via tests/combat/armor_absorbs_damage.yaml.
       See specs/15 § ArmorAbsorption for the layout and rationale.
+
+      `ShellPickup` was added in the 2026-05-18 ammo-split slice
+      (specs/25 § Pickups § Player Ammo Pools; specs/60 § Shell
+      Pickup Consumption) to exercise the bullets/shells pool
+      independence end-to-end via tests/combat/shell_pickup.yaml.
+      See specs/15 § ShellPickup for the layout and rationale.
 public_constants: []
 public_methods:
   - signature: "pub fn build(kind: DemoLevelKind) -> Level"
@@ -54,6 +62,7 @@ public_methods:
             DemoLevelKind::RangedStandoff     => build_ranged_standoff(),
             DemoLevelKind::ShotgunStandoff    => build_shotgun_standoff(),
             DemoLevelKind::ArmorAbsorption    => build_armor_absorption(),
+            DemoLevelKind::ShellPickup        => build_shell_pickup(),
         }
       where each helper is a private function returning the Level
       layout pinned in specs/15 § <variant>.
@@ -188,6 +197,34 @@ public_methods:
       Added in the 2026-05-14 armor slice to exercise armor's
       damage absorption end-to-end via
       tests/combat/armor_absorbs_damage.yaml.
+  - signature: "fn build_shell_pickup() -> Level"
+    notes: |
+      Module-private. Builds the ShellPickup layout from
+      specs/15 § ShellPickup. Concretely:
+        width = GRID_WIDTH (20); height = GRID_HEIGHT (15);
+        tiles[y][x] = Wall iff (x == 0 || x == 19 || y == 0 || y == 14)
+                      else Floor;
+        player_spawn = Vec2::new(4.5, 7.5);
+        enemy_spawns = vec![];   // no enemies
+        exit         = Vec2::new(1.5, 1.5);
+        pickups      = vec![
+          Pickup { kind: PickupKind::AmmoShells,
+                   pos: Vec2::new(4.5, 7.5),
+                   active: true },
+        ];
+      No interior walls. No enemies — the scenario is enemy-free
+      so the bot does not fire and the only state change during
+      the `wait:` window is frame 1's pickup-check consuming the
+      shell pickup. Player spawns ON the shell pickup so frame 1's
+      pickup-check (specs/60 § Per-Frame Pickup Check) sees
+      distance == 0 < PICKUP_RADIUS_TILES (1.0) and the acceptance
+      condition shells (0) < PLAYER_SHELLS_MAX (50) holds; the
+      pickup is consumed: `player.shells = 0 + PICKUP_SHELLS_AMOUNT
+      (4) = 4`. `player.bullets` is untouched (stays at
+      PLAYER_BULLETS_INITIAL = 50) — the pool-independence
+      invariant the scenario asserts. Added in the 2026-05-18
+      ammo-split slice to exercise the bullets/shells split
+      end-to-end via tests/combat/shell_pickup.yaml.
 cross_module_borrows: []
 notes: |
   Consumed by main.rs at startup (one call per --autopilot launch

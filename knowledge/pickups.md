@@ -61,12 +61,13 @@ Four ammo categories (call them A, B, C, D). For each category there is a "small
 - **Behavior**: Ammo pickups grant a fixed number of clip-loads to a specific category, then the helper multiplies clip-loads to actual round counts and clamps to the per-category cap.
 - **Rules**:
   - Each category has two constants: `clip_size` (rounds per clip-load) and `cap` (max rounds).
+  - **Pickup-to-category binding is one-to-one and fixed by pickup kind.** Each pickup sprite/entity kind hard-codes which ammo category it grants — a small bullet pickup grants only the bullets category, a small shell pickup grants only the shells category, etc. The pickup helper takes the category as a parameter; no pickup ever spills into a sibling pool. This is the rule that makes per-category accounting tractable: the level designer can place a shell pickup in a corridor and know it will not be silently consumed if the player happens to be holding the pistol.
   - Small pickup: 1 clip-load granted.
   - Large pickup ("box"): 5 clip-loads granted.
   - Dropped variant (small pickup that fell from a defeated enemy, marked with a "dropped" flag): grants 0.5 clip-loads (i.e. half the small pickup's amount). This is the only pickup where the source of the entity matters.
   - Inventory-expander pickup: doubles the cap on every category (one-shot — the player has a "owns expander" flag so picking up a second expander does not double again), and additionally grants 1 clip-load to every category.
-  - If the player is already at the cap for that category, the helper returns "no benefit" and the pickup is refused (left in the world).
-  - When the player picks up ammo *and was previously at zero* for that category, the helper also auto-switches the player to the best owned weapon that uses that ammo (so the player isn't left punching when bullets arrive). This is a quality-of-life hook that runs only on the zero→nonzero transition.
+  - If the player is already at the cap for that category, the helper returns "no benefit" and the pickup is refused (left in the world). The cap check reads only that category's count — a player at the bullets cap can still pick up a shell pickup if shells are below the shells cap, and vice versa.
+  - When the player picks up ammo *and was previously at zero* for that category, the helper also auto-switches the player to the best owned weapon that uses that ammo (so the player isn't left punching when bullets arrive). This is a quality-of-life hook that runs only on the zero→nonzero transition. Crucially, the trigger is the category's prior state being zero — so the first shell pickup the player ever finds auto-equips the shotgun (if owned), but a second shell pickup taken on top of a partially-full shells pool does not re-trigger the swap.
 - **Constants** (role → value):
   - Category A (primary clip ammo) → clip_size 10, cap 200, expander cap 400
   - Category B (secondary shell ammo) → clip_size 4, cap 50, expander cap 100
@@ -115,10 +116,10 @@ A pickup writes to a small set of fields on the player struct. This is the compl
   - `player.health` — primary integer.
   - `player.body_entity.health` — mirror field on the underlying actor entity. This must be kept in sync because some other systems read from the body-entity copy.
 - **Ammo pickup writes**:
-  - `player.ammo[category]` — current rounds in that category.
-  - `player.maxammo[category]` — cap for that category. Only the inventory-expander pickup writes this.
+  - `player.ammo[category]` — current rounds in that category. The field is array-indexed by the ammo-category enum; each category is an independent integer, so writes to one slot never read or modify another slot. A small bullet pickup writes `player.ammo[bullets]` and touches nothing else; a small shell pickup writes `player.ammo[shells]` and touches nothing else.
+  - `player.maxammo[category]` — cap for that category, array-indexed identically. Only the inventory-expander pickup writes this (and it writes every slot via a loop).
   - `player.owns_expander` — one-bit flag, only the expander pickup writes this.
-  - `player.pending_weapon` — only on the zero→nonzero ammo transition, set to the best owned weapon for that category. The actual weapon swap happens later when the current weapon's lower-animation finishes.
+  - `player.pending_weapon` — only on the zero→nonzero ammo transition for the category that was just topped up, set to the best owned weapon for that category. The actual weapon swap happens later when the current weapon's lower-animation finishes.
 - **Armor pickup writes**:
   - `player.armor_points` — current absorption-point pool (0..200).
   - `player.armor_type` — tier identifier (0 = none, 1 = small, 2 = large). The two tiered pickups overwrite both fields; the tiny bonus pickup writes only `armor_points` and only sets `armor_type` to 1 if it was 0.

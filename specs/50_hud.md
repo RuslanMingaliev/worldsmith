@@ -56,19 +56,22 @@ Source: [`knowledge/hud.md`](../knowledge/hud.md). Spec values that are NOT dire
 
 ### Ammo Pane
 
-**Trigger:** Every frame, in the same `draw_hud` call that draws the health pane. Shipped together with the pickup system (see [`60_pickups.md`](60_pickups.md)).
+**Trigger:** Every frame, in the same `draw_hud` call that draws the health pane. Shipped together with the pickup system (see [`60_pickups.md`](60_pickups.md)). As of the 2026-05-18 ammo-split slice, the pane is **weapon-aware** — it displays the count for the equipped weapon's ammo category (knowledge `hud.md § Numeric Widget § Weapon-aware source rebinding (primary ammo widget only)`).
 
-**Effect:** A second pane is drawn directly below the health pane:
-1. A small filled **ammo icon** of size `HUD_AMMO_ICON_PX × HUD_AMMO_ICON_PX` in `HUD_AMMO_COLOR` (mirrors the on-map ammo pickup color).
-2. The player's `ammo` value drawn to the right of the icon using the same bitmap digit font, color `HUD_AMMO_COLOR`. Vertically centered against the icon.
+**Effect:** A second pane is drawn directly below the health pane. The pane's dispatch reads the equipped weapon's `AmmoCategory` (currently `weapon_system::PISTOL_AMMO_CATEGORY = AmmoCategory::Bullets` since the pistol is the only weapon) and renders:
+1. A small filled **ammo icon** of size `HUD_AMMO_ICON_PX × HUD_AMMO_ICON_PX` in the matching color — `HUD_AMMO_COLOR` (yellow) for bullets. (A future `HUD_SHELL_COLOR` for shells lands when the shotgun ships; not in this slice.)
+2. The matching pool value (`player.bullets` for `Bullets`, `player.shells` for `Shells`) drawn to the right of the icon using the same bitmap digit font, in the matching color. Vertically centered against the icon.
+
+With pistol as the only weapon, the dispatch is constant (`Bullets → player.bullets → HUD_AMMO_COLOR`), so the visual output is byte-identical to the pre-slice HUD ammo pane.
 
 **Rules:**
 - Pane origin: `(HUD_MARGIN, HUD_MARGIN + HUD_HEALTH_BAR_HEIGHT_PX + HUD_PANE_GAP_PX)` (note: code constant is `HUD_MARGIN`, not `HUD_MARGIN_PX`).
 - Icon-to-digits gap is `HUD_PANE_GAP_PX` (same constant as the inter-pane vertical gap; no separate `HUD_DIGIT_GAP_PX` constant exists in code — the health pane bar→digits gap also uses `HUD_PANE_GAP_PX`).
 - No background bar; the pane is `[icon] [digits]`.
-- Ammo digits use the same right-justified, no-leading-zeros, zero-special-cased rules as health digits (knowledge § Numeric Widget — same pattern, applied to a single color instead of a band).
-- Ammo digits are single-color (`HUD_AMMO_COLOR`). No band thresholds. Low-ammo warning color is **deferred**.
-- Always drawn — including when `ammo == 0` (renders the digit `0`).
+- Ammo digits use the same left-aligned, no-leading-zeros, zero-special-cased rules as health digits (knowledge § Numeric Widget — same pattern, applied to a single color instead of a band).
+- Ammo digits are single-color per frame, dispatched from the equipped weapon's category. Currently always `HUD_AMMO_COLOR` (yellow). No band thresholds. Low-ammo warning color is **deferred**.
+- Always drawn — including when the dispatched pool reads `0` (renders the digit `0`).
+- Shell-pool changes are **invisible to this pane while the pistol is equipped** — the pane keeps showing `player.bullets`. A secondary per-category readout is **deferred** (knowledge `hud.md § Status Bar Layout` — "one *secondary* readout per ammo category"); see specs/60 § HUD Ammo Pane Deferred bullet.
 
 ### Armor Pane
 
@@ -126,7 +129,7 @@ The bitmap font is a compile-time constant table (`HUD_DIGIT_GLYPHS`) of ten ent
 - HUD reads no other module's state besides `Player` and the tuning constants already imported by the renderer.
 
 ### With Player State
-- Read-only. HUD reads `player.health`, `player.ammo`, `player.armor`, and `player.armor_type`. It must not mutate the player. *(Knowledge: § Read-only Contract.)*
+- Read-only. HUD reads `player.health`, `player.bullets`, `player.shells`, `player.armor`, and `player.armor_type`. The ammo pane's dispatch picks one of `bullets` or `shells` per frame based on the equipped weapon's `AmmoCategory`. It must not mutate the player. *(Knowledge: § Read-only Contract.)*
 
 ### With Visual Effects
 - None. HUD is drawn *on top of* the damage tint overlay produced by `visual_effects`, but does not interact with the effects list. *(In the reference, the equivalent damage feedback is a global palette tint that the digits inherit passively; we instead overlay digits *above* the tint so they remain readable.)*
@@ -195,7 +198,7 @@ The following are intentionally out of scope for this prototype HUD (or not yet 
 - Numeric health display next to the bar using a bitmap digit font (no leading zeros, `0` special-cased per knowledge § Numeric Widget). Right-justification is **not yet implemented** — digits are left-aligned from a fixed x offset (`digits_x = HUD_MARGIN + HUD_BAR_WIDTH + HUD_PANE_GAP_PX`); tracked as deferred below.
 - Color-coded health bands (HIGH / MID / LOW thresholds).
 - HUD layered above damage tint, below game-over border.
-- Ammo pane below health pane (yellow icon + yellow digits, single color).
+- Ammo pane below health pane (yellow icon + yellow digits, single color). **Weapon-aware** as of the 2026-05-18 ammo-split slice: dispatched from `weapon_system::PISTOL_AMMO_CATEGORY` to `player.bullets` (the pistol's pool). Visually identical to the pre-slice ammo pane because pistol is the only weapon.
 - Armor pane below ammo pane (tri-state color per `armor_type`: gray / green / blue; icon + digits).
 
 **Deferred** (also listed in the Deferred section above):

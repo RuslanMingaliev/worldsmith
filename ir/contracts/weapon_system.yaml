@@ -4,13 +4,16 @@
 name: weapon_system
 file: src/weapon_system.rs
 depends_on: [player_state, visual_effects]
-public_types: []
+public_types:
+  - name: AmmoCategory
+    note: "Consumed (read-only); see shared_types.AmmoCategory. PISTOL_AMMO_CATEGORY below pins the pistol's category as Bullets; fire() reads this constant to gate and decrement the matching pool on Player. Also re-exported via the constant for renderer's HUD ammo pane dispatch (specs/50 § Ammo Pane, specs/45 § Ammo Pane)."
 public_constants:
   - { name: PISTOL_FIRE_CYCLE,    type: f32, value: "0.54", source: "specs/25 § Weapon (Pistol)" }
   - { name: PISTOL_RANGE_TILES,   type: f32, value: "64.0", source: "specs/25 § Weapon (range 2048 map units / 32 px per tile = 64 tiles)" }
   - { name: PISTOL_REFIRE_SPREAD_RAD, type: f32, value: "0.0977", source: "specs/25 § Weapon (5.6 deg in radians)" }
   - { name: IDLE_THRESHOLD_SEC,   type: f32, value: "1.0",  source: "specs/25 § Weapon (Pistol) IDLE_THRESHOLD_SEC" }
   - { name: TRACE_STEP,           type: f32, value: "0.1",  source: "specs/25 § Wall Hit Trace" }
+  - { name: PISTOL_AMMO_CATEGORY, type: "AmmoCategory", value: "AmmoCategory::Bullets", source: "specs/25 § Pickups § Player Ammo Pools, knowledge/combat_balance.md § Ammo Economy ('Pistol: 1 bullet per shot'; 'Each weapon definition carries an `ammo_category` field'). Pins the pistol's ammo category for the gate + decrement in fire() and for the renderer's HUD ammo pane dispatch. New in the 2026-05-18 ammo-split slice. Public so renderer (HUD ammo pane) and autopilot (potentially future) can import — both are spec/80-acceptable constant imports (symbol-level, no behavioral dep)." }
 public_methods:
   - signature: |
       pub fn fire(
@@ -53,10 +56,37 @@ public_methods:
       permits direct &mut VisualEffects here (resolution A).
 
       Ammo gate (specs/60 § Ammo-Gated Firing, knowledge/pickups.md §
-      Ammo Gating of Firing): order is (1) cooldown gate, (2) ammo
-      gate `if player.ammo == 0 { return; }` -- no side effects, no
-      time_since_fire reset, (3) reset time_since_fire and aim, (4)
-      all spawn/march/damage steps, (5) ammo -= 1.
+      Ammo Gating of Firing, knowledge/combat_balance.md § Ammo
+      Economy): the pistol's category is PISTOL_AMMO_CATEGORY =
+      AmmoCategory::Bullets (see public_constants above), so the
+      gate reads player.bullets and the decrement writes
+      player.bullets. Order is:
+        (1) cooldown gate (time_since_fire >= PISTOL_FIRE_CYCLE);
+        (2) ammo gate: `if player.bullets == 0 { return; }` -- no
+            side effects, no time_since_fire reset;
+        (3) reset time_since_fire and compute aim;
+        (4) all spawn/march/damage steps;
+        (5) player.bullets -= 1 (the pistol's per-shot cost is 1
+            bullet per knowledge/combat_balance.md § Ammo Economy
+            'Pistol: 1 bullet per shot').
+      Pool independence: fire() reads and writes ONLY
+      player.bullets; player.shells is not touched
+      (knowledge/combat_balance.md § Ammo Economy — "picking up
+      shells never changes the bullets count, and vice versa";
+      the symmetric statement holds for firing).
+
+      Renamed from the pre-2026-05-18 single-pool form
+      (`player.ammo > 0` gate + `player.ammo -= 1` decrement) when
+      the per-category split landed. The Coder MAY either:
+        (a) hard-code the pistol's binding by reading player.bullets
+            directly (simplest — works because the pistol is the
+            only weapon this slice), OR
+        (b) dispatch via match on PISTOL_AMMO_CATEGORY (more
+            future-proof — when the shotgun ships a second weapon
+            fire() the dispatch table grows symmetrically).
+      Both shapes meet the contract. The constant
+      PISTOL_AMMO_CATEGORY = Bullets is the pin; the Coder's
+      dispatch shape is the degree of freedom.
   # pistol_damage_roll: NO public free-function form.
   # The damage roll is module-private. Coder MUST implement as a
   # private helper that takes `&mut player.weapon_rng` (or whichever
@@ -78,7 +108,7 @@ public_methods:
   # outside the module materialises AND that caller passes its own
   # RNG state in via &mut (preserving the no-global-state property).
 cross_module_borrows:
-  - "&mut Player (write health via take_damage path; reset time_since_fire)"
+  - "&mut Player (write player.bullets on per-shot decrement; reset time_since_fire; advance weapon_rng for spread + damage roll)"
   - "&mut [Enemy] (apply damage)"
   - "&Level (immutable read for is_wall during ray-march)"
   - "&mut VisualEffects (spawn flash/tracer/puff/blood) -- spec/80 exception A"
