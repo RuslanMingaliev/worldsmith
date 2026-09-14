@@ -39,6 +39,9 @@ jobs:
       - name: Validate specs / IR / knowledge
         run: python tooling/validate_specs.py --verbose
 
+      - name: Test generation tooling
+        run: python -m unittest discover -s tooling/tests -v
+
       - name: Ensure generated/ has no manual edits
         run: python tooling/check_generated_clean.py
 
@@ -84,7 +87,8 @@ jobs:
       pull-requests: write
     env:
       WORLDSMITH_MAX_TOKENS_PER_RUN: ${{ vars.WORLDSMITH_MAX_TOKENS_PER_RUN }}
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      WORLDSMITH_AGENT_PROVIDER: ${{ vars.WORLDSMITH_AGENT_PROVIDER || 'claude' }}
+      WORLDSMITH_CODEX_MODEL: ${{ vars.WORLDSMITH_CODEX_MODEL }}
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -126,23 +130,8 @@ jobs:
             fi
           fi
 
-      - name: Install Claude CLI
-        run: |
-          set -e
-          # `claude.ai/install.sh` (native installer) regressed: it downloads
-          # the binary, runs its `install` subcommand which silently fails to
-          # place the launcher anywhere, and then `rm -f`s the download — so
-          # nothing ends up on disk. npm install lands the same CLI via the
-          # standard package mechanism, bypassing the broken native flow.
-          sudo npm install -g @anthropic-ai/claude-code
-          claude --version
-
-      - name: Assert OAUTH secret is present
-        run: |
-          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-            echo "::error::CLAUDE_CODE_OAUTH_TOKEN repo secret is empty."
-            exit 1
-          fi
+      - name: Install selected agent CLI
+        run: bash tooling/install_agent_cli.sh
 
       - name: Fetch baseline (generated-snapshot branch, fallback to last release)
         id: baseline
@@ -196,6 +185,8 @@ jobs:
       - name: Run Coder / Reconciler / PostMortem on affected modules
         if: steps.scope.outputs.module_count != '0'
         env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && secrets.OPENAI_API_KEY || '' }}
           TARGETS: ${{ steps.scope.outputs.targets }}
         run: |
           set -e

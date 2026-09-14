@@ -1,7 +1,7 @@
 name: Snapshot regenerated source after merge
 
 # Triggered on every push to main. If the push touches source-of-truth
-# paths (specs/, knowledge/, ir/, tooling/agents/), download the
+# paths (specs/, knowledge/, ir/, tests/, tooling/agents/), download the
 # `generated-src` artifact from the merged PR's pr.yml run and force-push
 # its contents to the long-lived `generated-snapshot` branch. The next PR's
 # regenerate-and-build job baselines from this branch.

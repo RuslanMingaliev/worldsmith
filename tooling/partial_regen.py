@@ -15,7 +15,9 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Set
+from typing import Iterable, List, Sequence, Set
+
+from source_of_truth_paths import is_source_of_truth
 
 try:
     import yaml  # type: ignore
@@ -36,18 +38,8 @@ TRIGGER_CONFIG = {
         "ir/game_ir.yaml",
         "ir/module_plan.yaml",
     ],
-    # Initial heuristics mapping files/globs to logical triggers.
-    #
-    # NOTE: `specs/20_gameplay_model.md` was previously listed under FOUR
-    # modules (level_data, weapon_system, enemy_logic, presentation),
-    # causing the heuristic to over-fire on every edit to that file.
-    # Dependency expansion then sucked in everything downstream. The file
-    # is too cross-cutting for module-level triggers — it is the
-    # gameplay-model umbrella spec, not a per-module spec. It now lives in
-    # `manual_scope` below, which prints the candidate-module list as INFO
-    # but does NOT add anything to the affected set unless the human
-    # passes `--target` explicitly. The Orchestrator's scope override
-    # remains the workflow.
+    # Known per-module inputs. Other source-of-truth paths fall back to
+    # all modules so newly added sources cannot silently skip generation.
     "file_triggers": {
         "player_state": [
             "specs/21_player_movement.md",
@@ -114,19 +106,6 @@ TRIGGER_CONFIG = {
             # fisheye-correction fix-up PR (#40).
             "specs/45_raycaster_renderer.md",
             "knowledge/raycaster_renderer.md",
-            "ir/contracts/raycaster.yaml",
-        ],
-    },
-    # Files that are too cross-cutting for the per-module heuristic. When one
-    # of these changes, partial_regen.py prints the candidate-module list
-    # (gathered from human-curated comments below) but does NOT add to the
-    # affected set automatically. Forces a human-or-Orchestrator scope
-    # decision via `--target`.
-    "manual_scope": {
-        "specs/20_gameplay_model.md": [
-            "level_data", "weapon_system", "enemy_logic", "presentation", "renderer", "game_loop",
-            "# Cross-cutting umbrella spec; touches anything player-vs-world.",
-            "# An edit may touch all of these or none. Use --target.",
         ],
     },
 }
@@ -192,37 +171,31 @@ def determine_modules(
 ) -> Set[str]:
     affected: Set[str] = set()
     known_modules = {entry.name for entry in modules}
-    manual_scope_files: List[str] = []
+    contract_owners = {f"ir/contracts/{name}.yaml": name for name in known_modules}
 
     for path in changed_files:
         normalized = path.replace("\\", "/")
         if match_any(TRIGGER_CONFIG["global"], normalized):
             return set(known_modules)
 
-        if normalized in TRIGGER_CONFIG.get("manual_scope", {}):
-            manual_scope_files.append(normalized)
-            continue
+        path_modules: Set[str] = set()
+        if normalized in contract_owners:
+            path_modules.add(contract_owners[normalized])
 
         for module, patterns in TRIGGER_CONFIG["file_triggers"].items():
-            if module not in known_modules:
-                continue
-            if match_any(patterns, normalized):
-                affected.add(module)
+            if module in known_modules and match_any(patterns, normalized):
+                path_modules.add(module)
 
-    # Print INFO for cross-cutting files that need a manual scope decision.
-    # Goes to stderr so --json callers get clean JSON on stdout.
-    for path in manual_scope_files:
-        candidates = [
-            x for x in TRIGGER_CONFIG["manual_scope"][path] if not x.startswith("#")
-        ]
-        notes = [
-            x for x in TRIGGER_CONFIG["manual_scope"][path] if x.startswith("#")
-        ]
-        print(f"\nINFO: {path} is cross-cutting (manual scope required).", file=sys.stderr)
-        print(f"  Candidate modules: {', '.join(candidates) or '(none listed)'}", file=sys.stderr)
-        for note in notes:
-            print(f"  {note}", file=sys.stderr)
-        print("  Use --target to choose; the per-module heuristic does not auto-add any module.", file=sys.stderr)
+        # Check each path independently: a known change must not hide an
+        # unmapped source in the same diff. Keep stdout clean for --json.
+        if not path_modules and is_source_of_truth(normalized):
+            print(
+                f"WARNING: {normalized} has no module-specific mapping; "
+                "regenerating all modules.",
+                file=sys.stderr,
+            )
+            return set(known_modules)
+        affected.update(path_modules)
 
     # Expand using IR dependencies
     dependency_map = {
@@ -281,7 +254,7 @@ def main() -> None:
     args = parse_arguments()
     module_plan = load_module_plan(MODULE_PLAN)
 
-    if args.changed:
+    if args.changed is not None:
         changed_files = [path.strip() for path in args.changed if path.strip()]
     else:
         changed_files = git_changed_files(args.base)

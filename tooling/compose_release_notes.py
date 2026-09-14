@@ -56,6 +56,7 @@ class PhaseUsage:
     output_tokens: int
     cache_read: int
     cache_creation: int
+    provider: str = "claude"
 
     @property
     def total(self) -> int:
@@ -64,6 +65,7 @@ class PhaseUsage:
     @classmethod
     def from_record(cls, raw: Dict) -> "PhaseUsage":
         return cls(
+            provider=str(raw.get("provider", "claude")),
             phase=str(raw.get("phase", "(unknown)")),
             model=str(raw.get("model", "(unknown)")),
             input_tokens=int(raw.get("input_tokens", 0) or 0),
@@ -102,8 +104,8 @@ def render_tokens_table(rows: List[PhaseUsage]) -> str:
         return "_Token usage was not captured for this run._"
 
     header = (
-        "| Phase | Model | Input | Output | Cache read | Cache creation | Total |\n"
-        "|---|---|---:|---:|---:|---:|---:|"
+        "| Phase | Provider | Model | Input | Output | Cache read | Cache creation | Total |\n"
+        "|---|---|---|---:|---:|---:|---:|---:|"
     )
     body_lines: List[str] = []
     totals = PhaseUsage(
@@ -116,7 +118,7 @@ def render_tokens_table(rows: List[PhaseUsage]) -> str:
     )
     for row in rows:
         body_lines.append(
-            f"| {row.phase} | `{row.model}` | {row.input_tokens:,} | "
+            f"| {row.phase} | {row.provider} | `{row.model}` | {row.input_tokens:,} | "
             f"{row.output_tokens:,} | {row.cache_read:,} | "
             f"{row.cache_creation:,} | {row.total:,} |"
         )
@@ -126,7 +128,7 @@ def render_tokens_table(rows: List[PhaseUsage]) -> str:
         totals.cache_creation += row.cache_creation
 
     body_lines.append(
-        f"| {totals.phase} | {totals.model} | {totals.input_tokens:,} | "
+        f"| {totals.phase} | — | {totals.model} | {totals.input_tokens:,} | "
         f"{totals.output_tokens:,} | {totals.cache_read:,} | "
         f"{totals.cache_creation:,} | {totals.total:,} |"
     )
