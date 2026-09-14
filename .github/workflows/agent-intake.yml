@@ -10,19 +10,22 @@ permissions:
   issues: write
 
 concurrency:
-  group: agent-intake-${{ github.event.issue.number }}
-  cancel-in-progress: true
+  group: ${{ (vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && vars.WORLDSMITH_CODEX_AUTH == 'chatgpt' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event.label.name == 'agent:run' && github.event.issue.user.login == github.repository_owner) && 'codex-managed-session' || format('agent-intake-{0}', github.event.issue.number) }}
+  cancel-in-progress: ${{ !(vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && vars.WORLDSMITH_CODEX_AUTH == 'chatgpt' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event.label.name == 'agent:run' && github.event.issue.user.login == github.repository_owner) }}
 
 jobs:
   run:
-    if: github.event.label.name == 'agent:run'
+    environment: agent-ci
+    if: github.event.label.name == 'agent:run' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event.issue.user.login == github.repository_owner
     name: agent-intake
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 350
 
     env:
+      WORLDSMITH_CODEX_AUTH: ${{ vars.WORLDSMITH_CODEX_AUTH || 'api' }}
+      WORLDSMITH_AGENT_PROVIDER: ${{ vars.WORLDSMITH_AGENT_PROVIDER || 'claude' }}
+      WORLDSMITH_CODEX_MODEL: ${{ vars.WORLDSMITH_CODEX_MODEL }}
       WORLDSMITH_MAX_TOKENS_PER_RUN: ${{ vars.WORLDSMITH_MAX_TOKENS_PER_RUN }}
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GH_TOKEN: ${{ github.token }}
       ISSUE_NUMBER: ${{ github.event.issue.number }}
       ACTOR: ${{ github.event.sender.login }}
@@ -61,23 +64,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Install Claude CLI
-        run: |
-          set -e
-          # `claude.ai/install.sh` (native installer) regressed: it downloads
-          # the binary, runs its `install` subcommand which silently fails to
-          # place the launcher anywhere, and then `rm -f`s the download — so
-          # nothing ends up on disk. npm install lands the same CLI via the
-          # standard package mechanism, bypassing the broken native flow.
-          sudo npm install -g @anthropic-ai/claude-code
-          claude --version
-
-      - name: Assert OAUTH secret is present
-        run: |
-          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-            echo "::error::CLAUDE_CODE_OAUTH_TOKEN repo secret is empty."
-            exit 1
-          fi
+      - name: Install agent CLIs (Extractor always uses Claude)
+        run: bash tooling/install_agent_cli.sh --include-extractor
 
       - name: Clone reference corpus
         run: |
@@ -111,7 +99,7 @@ jobs:
         # body to 4096 bytes and replaces ` and ~~~ with safe surrogates.
         # NOT a security boundary; the actual injection mitigation is the
         # Bash removal from Extractor's PHASE_TOOLS in
-        # tooling/orchestrator_run.py. See tooling/sanitize_scope.py.
+        # tooling/agent_providers.py. See tooling/sanitize_scope.py.
         run: python tooling/sanitize_scope.py artifacts/issue_scope.md
 
       - name: Export scope to job output
@@ -130,12 +118,13 @@ jobs:
       - name: Extractor phase
         id: extractor
         env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           SCOPE: ${{ steps.scope.outputs.scope }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
           python tooling/orchestrator_run.py \
-            --phase extractor --mode release \
+            --phase extractor --mode release --provider claude \
             --scope "$SCOPE" \
             --usage-jsonl artifacts/usage.jsonl \
             --transcript artifacts/extractor.transcript.json
@@ -160,8 +149,21 @@ jobs:
       - name: Validate specs (post-extractor)
         run: python tooling/validate_specs.py --verbose
 
+      - name: Restore dedicated Codex session
+        id: codex_session
+        if: env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH == 'chatgpt'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          cp tooling/codex_session.py "$RUNNER_TEMP/worldsmith-codex-session-helper.py"
+          python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" restore
+
       - name: Architect phase
         env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH != 'chatgpt' && secrets.OPENAI_API_KEY || '' }}
           SCOPE: ${{ steps.scope.outputs.scope }}
         run: |
           set -euo pipefail
@@ -170,6 +172,13 @@ jobs:
             --scope "$SCOPE" \
             --usage-jsonl artifacts/usage.jsonl \
             --transcript artifacts/architect.transcript.json
+
+      - name: Save refreshed Codex session and remove credentials
+        id: codex_session_save
+        if: always() && steps.codex_session.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+        run: python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" save
 
       - name: Validate specs (post-architect)
         run: python tooling/validate_specs.py --verbose
@@ -195,10 +204,9 @@ jobs:
             echo "::error::WORLDSMITH_AGENT_PAT repo secret is empty — agent-intake cannot create a PR that triggers pr.yml. Add the secret and re-apply agent:run."
             exit 1
           fi
-          # Author identity is Claude — the actual code-producing entity (Extractor
-          # + Architect phases). Push identity comes from the PAT in the remote URL.
-          git config user.name "Claude"
-          git config user.email "noreply@anthropic.com"
+          # Extractor is Claude; Architect uses the selected provider.
+          git config user.name "Worldsmith Agents"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           BRANCH="agent/issue-${ISSUE_NUMBER}"
           git checkout -B "$BRANCH"
           # Add only paths the agents are supposed to influence.
@@ -273,7 +281,7 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" --remove-label "agent:run" --add-label "agent:failed" || true
 
       - name: Upload artifacts
-        if: always()
+        if: always() && (env.WORLDSMITH_AGENT_PROVIDER != 'codex' || env.WORLDSMITH_CODEX_AUTH != 'chatgpt' || steps.codex_session_save.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: agent-intake-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}

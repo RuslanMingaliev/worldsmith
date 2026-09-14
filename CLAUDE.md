@@ -116,10 +116,10 @@ Workflow: `Reference → Extractor → knowledge/ → Architect → specs/ + ir/
 
 `.github/workflows/pr.yml` runs on every pull request. Two jobs:
 
-- **`validate`** — always runs. Validates specs/IR/knowledge integrity, checks `generated/` for manual edits, and computes whether the PR touches `specs/**`, `knowledge/**`, `ir/**`, or `tooling/agents/**` (the source-of-truth paths).
+- **`validate`** — always runs. Validates specs/IR/knowledge integrity, runs Python tooling regression tests, checks `generated/` for manual edits, and computes whether the PR touches `specs/**`, `knowledge/**`, `ir/**`, `tests/**`, or `tooling/agents/**` (the source-of-truth paths).
 - **`regenerate-and-build`** — runs only when (a) source-of-truth paths changed AND (b) the PR head is from this repo (fork PRs are skipped because the OAUTH secret is unavailable to forked workflows). Steps:
   1. Fetch baseline from the long-lived `generated-snapshot` branch (force-pushed by `post-merge-snapshot.yml` after every regen-bearing merge). On first run before that branch exists, fall back to the last GitHub Release's `worldsmith-game-X-src.zip`.
-  2. `tooling/partial_regen.py --json` — determine which modules need regeneration.
+  2. `tooling/partial_regen.py --json` — determine which modules need regeneration. Contract shards select their module and transitive consumers. Unmapped source-of-truth paths select all modules with a warning; shared contracts and cross-cutting specs cannot silently skip generation. See `tooling/README.md` for the scope policy and local checks.
   3. Coder / Reconciler / PostMortem phases via `tooling/orchestrator_run.py --target-modules ...`. The harness snapshots `generated/game/src/` and reverts any file touched outside the listed modules — so Coder can't silently scope-creep.
   4. `cargo build/test --release` (under `xvfb-run` because autopilot tests need a display).
   5. Package the regenerated `generated/game/` into `generated-src.tar.gz` and upload it as a workflow artifact (90-day retention). `post-merge-snapshot.yml` consumes this after merge.
@@ -153,10 +153,18 @@ The `pr-assets-cleanup.yml` workflow is `schedule`-triggered (daily cron), not `
 ### Cost control
 
 - `concurrency: cancel-in-progress: true` per PR — re-pushes cancel the prior run, but tokens already spent are not refunded.
-- `WORLDSMITH_MAX_TOKENS_PER_RUN` repo variable caps per-run spend (enforced in `orchestrator_run.py`).
+- `WORLDSMITH_MAX_TOKENS_PER_RUN` checks cumulative noncached input + output after each completed phase; it can overshoot and is not a monetary spending limit (see `tooling/README.md`).
 - A PR that touches `specs/00_project_goal.md` (or another global-trigger file in `partial_regen.py`) regenerates ALL modules — effectively a full release run. This is intentional: such PRs are rare, and the alternative (forcing them through `release.yml`) blocks otherwise valid edits.
 
 ## Issue-driven agent flow
+
+The local runner and CI support `--provider claude|codex` (default Claude).
+Set repository variable `WORLDSMITH_AGENT_PROVIDER=codex` and secret
+`OPENAI_API_KEY` to select Codex in CI, or use the release dispatch `provider`
+input for a single run. Optional `WORLDSMITH_CODEX_MODEL` selects its model.
+Extractor stays Claude-only; intake still needs `CLAUDE_CODE_OAUTH_TOKEN`.
+See [tooling/README.md](tooling/README.md) for local commands, sandbox behavior,
+authentication, and usage-accounting limitations.
 
 `.github/workflows/agent-intake.yml` lets a maintainer launch the Extractor + Architect pipeline from a GitHub Issue. End-to-end:
 
@@ -190,7 +198,7 @@ Local helper: the project-level skill `/create-agent-task` (`.claude/skills/crea
 
 The issue body is attacker-controlled (only the maintainer who applies `agent:run` is permission-gated; issue authors are not). Two layers shrink the resulting prompt-injection surface:
 
-1. **Extractor has no shell access.** `tooling/orchestrator_run.py`'s `PHASE_TOOLS` deliberately omits `Bash` from Extractor's allowlist, so issue-derived prose entering the prompt cannot reach a shell from inside that phase. Sanitization gates (`check_sanitization.py`, `validate_specs.py`) are run by the workflow post-phase, not by the agent.
+1. **Extractor has no shell access.** `tooling/agent_providers.py`'s Claude `PHASE_TOOLS` deliberately omits `Bash` from Extractor's allowlist. Extractor explicitly uses Claude even when other phases use Codex. Sanitization gates (`check_sanitization.py`, `validate_specs.py`) are run by the workflow post-phase, not by the agent.
 2. **Issue scope is sanitized before forwarding.** `tooling/sanitize_scope.py` runs on `artifacts/issue_scope.md` between the `gh issue view` step and either LLM phase — caps to 4096 bytes and replaces ` and `~~~` with safe surrogates. Hygiene only.
 
 Architect's `PHASE_TOOLS` entry still includes `Bash`; auditing/shrinking it and adding a maintainer re-confirmation step are deferred.

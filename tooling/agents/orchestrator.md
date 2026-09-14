@@ -153,6 +153,9 @@ Re-generate one or more modules after spec change.
 Step 1: Identify scope
   RUN:   python tooling/partial_regen.py --changed [files]
   OUTPUT: list of affected modules
+  CHECK: contract changes include their module and transitive consumers;
+         unmapped source-of-truth inputs select all modules with a warning.
+         Preserve that scope; add a reviewed mapping to narrow future runs.
 
 Step 2: Coder
   INPUT:  specs/, ir/, affected modules
@@ -269,6 +272,12 @@ enforces this). Phase order:
    output target).
 
 The Extractor phase is skipped because reference is empty.
+
+The wrapper selects Claude or Codex via `--provider` or
+`WORLDSMITH_AGENT_PROVIDER` (default Claude); see `tooling/README.md`.
+The model-selection table above applies to manual Claude delegation. A Codex
+phase uses its configured model and native tools, without Claude delegation or
+automatic cross-provider retries. Extractor in issue intake stays Claude-only.
 
 ### Output requirements
 

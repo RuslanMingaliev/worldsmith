@@ -39,7 +39,9 @@ The same phase prompts are used in two modes:
 - **PR mode:** `pr.yml` fetches the latest `generated-snapshot`, runs partial regeneration for impacted modules, builds/tests the generated game, records a demo GIF, and exposes Reconciler/PostMortem edits for maintainer review.
 - **Release mode:** `release.yml` deletes `generated/`, regenerates the full game from the source-of-truth pack, packages binaries/source, records the canonical gameplay GIF, and asks Release Editor to produce the release narrative.
 
-Manual Claude Code sessions can still invoke the prompts directly, but they are now the exploration path, not the canonical release path.
+Manual Claude Code and Codex sessions can invoke the prompts directly. The phase
+runner also supports both providers locally and in CI; see
+[provider setup and limitations](../README.md#running-a-phase-locally).
 
 ## Shared State (Filesystem)
 
@@ -62,7 +64,10 @@ tooling/agents/     # Agent prompts; Reconciler/PostMortem may propose surgical 
 
 ## Usage
 
-Each agent prompt is a system instruction. In CI, `tooling/orchestrator_run.py` loads the phase prompt and constrains the allowed tools per phase. In a manual session, load the prompt and give the agent a specific task.
+In CI, `tooling/orchestrator_run.py` loads the phase prompt and selects the provider.
+Claude uses per-phase tool allowlists; Codex uses its workspace sandbox and native
+tools. Extractor is explicitly Claude-only to preserve its no-shell restriction.
+In a manual session, load the prompt and give the agent a specific task.
 
 Example:
 ```

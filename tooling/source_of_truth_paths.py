@@ -25,6 +25,7 @@ SOURCE_OF_TRUTH_PREFIXES: tuple[str, ...] = (
     "knowledge/",
     "ir/",
     "tooling/agents/",
+    "tests/",
 )
 
 

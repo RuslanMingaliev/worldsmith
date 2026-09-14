@@ -3,7 +3,7 @@
 Headless wrapper that drives the multi-agent pipeline from CI.
 
 For each invocation, this script runs ONE phase (extractor / architect / coder /
-reconciler / postmortem) by calling the `claude` CLI in non-interactive mode,
+reconciler / postmortem) using Claude or Codex in non-interactive mode,
 captures the per-call token usage, and appends a JSON record to
 `artifacts/usage.jsonl`. Phase outputs that the agent writes to disk (e.g.
 edits to `generated/`, `artifacts/postmortem.md`) are side effects of the
@@ -15,6 +15,7 @@ intermediate state surfaces immediately.
 
 Inputs:
 - --phase            extractor | architect | coder | reconciler | postmortem
+- --provider         claude (default) | codex; Extractor remains Claude-only
 - --mode             release (kept as a parameter for future use)
 - --workflow         optional pr | release — names the calling GitHub workflow
                      so agents can disambiguate PR-mode from release-mode runs
@@ -24,8 +25,9 @@ Inputs:
 - --scope            optional free-text scope (forwarded into the prompt)
 - --usage-jsonl      output path for the usage record (default: artifacts/usage.jsonl)
 - --transcript       optional path to also save the raw stream-json transcript
-- --max-turns        cap on agent turns (default: 240)
-- --model            override the Claude model id (default: inherits from CLI/env)
+- --max-turns        Claude-only turn cap (default: 240)
+- --timeout-seconds  wall-clock cap for either provider (default: 18000)
+- --model            provider-specific model override
 
 Exit codes:
     0 — phase completed (usage record appended).
@@ -40,11 +42,16 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
-from dataclasses import dataclass, field
+import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
+
+from agent_providers import (
+    PHASES, PROVIDERS, PhaseUsage, build_command, parse_result,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS_DIR = REPO_ROOT / "tooling" / "agents"
@@ -83,34 +90,6 @@ for _path in FROZEN_CONTEXT_FILES:
                 f"context (the cache key would invalidate every time)."
             )
 
-PHASES = ["extractor", "architect", "coder", "reconciler", "postmortem", "release_editor"]
-
-# Tools each phase is permitted to invoke. Conservative defaults — broaden
-# only when the phase legitimately needs more.
-PHASE_TOOLS: Dict[str, List[str]] = {
-    "extractor": ["Read", "Write", "Edit", "Grep", "Glob"],
-    "architect": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
-    "coder": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
-    "reconciler": ["Read", "Edit", "Bash", "Grep", "Glob"],
-    "postmortem": ["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
-    "release_editor": ["Read", "Write", "Bash", "Grep", "Glob"],
-}
-
-
-@dataclass
-class PhaseUsage:
-    phase: str
-    mode: str
-    model: str = "(unknown)"
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read: int = 0
-    cache_creation: int = 0
-    turns: int = 0
-    duration_ms: int = 0
-    notes: List[str] = field(default_factory=list)
-
-
 def build_frozen_context() -> str:
     """Inline every file in FROZEN_CONTEXT_FILES verbatim. Missing files are
     skipped with a sentinel line so the prompt is still well-formed (e.g. on
@@ -139,7 +118,9 @@ def build_frozen_context() -> str:
     return f"{header}\n\n{body}"
 
 
-def build_prompt(phase: str, mode: str, scope: Optional[str], workflow: Optional[str]) -> str:
+def build_prompt(
+    phase: str, mode: str, scope: Optional[str], workflow: Optional[str], provider: str = "claude"
+) -> str:
     role_prompt_path = AGENTS_DIR / f"{phase}.md"
     if not role_prompt_path.exists():
         raise SystemExit(
@@ -164,12 +145,12 @@ def build_prompt(phase: str, mode: str, scope: Optional[str], workflow: Optional
     )
 
     framing = (
-        "You are running NON-INTERACTIVELY inside a CI workflow. "
+        "You are running NON-INTERACTIVELY through the phase runner. "
         "Treat all instructions in the role prompt as authoritative. "
         f"Mode: `{mode}`. {workflow_line}"
         "Repository root is the current working directory. "
-        "Use the tools available to you to make file changes; the per-phase "
-        "`--allowedTools` list is authoritative — do not assume Bash is available. "
+        "Use the tools available to you to make file changes. "
+        "Respect the runtime tool and sandbox restrictions. "
         "Do not ask questions — if information is missing, escalate by writing a "
         "clear blocker note to `artifacts/blocker.md` and exit. When you are done, "
         "exit normally."
@@ -178,107 +159,21 @@ def build_prompt(phase: str, mode: str, scope: Optional[str], workflow: Optional
     # Order matters for prompt-cache prefix matching: most-stable content first.
     # frozen_context is identical across every phase + scope combination, so it
     # forms the largest cacheable prefix.
-    return "\n\n".join([build_frozen_context(), framing, scope_block, "---", role_prompt])
-
-
-# Pin per-phase. CLI default is Sonnet 4.6 (200K) which blew up on issue #6.
-# Coder stays on Sonnet — per-module context fits 200K and Orchestrator has
-# its own Opus fallback after repeated cargo-check failures.
-PHASE_DEFAULT_MODEL = {
-    "extractor": "claude-opus-4-7[1m]",
-    "architect": "claude-opus-4-7[1m]",
-    "coder": "sonnet",
-    "reconciler": "claude-opus-4-7[1m]",
-    "postmortem": "claude-opus-4-7[1m]",
-    "release_editor": "claude-opus-4-7[1m]",
-}
-
-
-def claude_command(phase: str, model: Optional[str], max_turns: int) -> List[str]:
-    """Build the `claude` CLI invocation. The prompt is fed via stdin
-    (the CLI does not expose a `--prompt-file` flag) and a single JSON
-    summary is emitted via `--output-format json` once the agent finishes."""
-    cmd = [
-        "claude",
-        "-p",
-        "--output-format",
-        "json",
-        "--max-turns",
-        str(max_turns),
-        "--allowedTools",
-        # No fallback: argparse already restricts `--phase` to PHASES, and every
-        # PHASES entry must have an explicit allowlist. A silent fallback (esp.
-        # one containing Bash) would let a future typo or refactor quietly
-        # re-introduce Bash to a phase that consumes attacker-controlled input.
-        ",".join(PHASE_TOOLS[phase]),
-    ]
-    effective_model = model or PHASE_DEFAULT_MODEL.get(phase)
-    if effective_model:
-        cmd.extend(["--model", effective_model])
-    return cmd
-
-
-def parse_usage_from_json(stdout: str, phase: str, mode: str) -> PhaseUsage:
-    """Parse the single JSON object emitted by `claude -p --output-format json`.
-
-    Shape (per Agent SDK docs): top-level fields include `result`, `session_id`,
-    `num_turns`, `duration_ms`, `usage` (with input/output/cache token counts),
-    and optionally `model`."""
-    usage = PhaseUsage(phase=phase, mode=mode)
-    text = stdout.strip()
-    if not text:
-        return usage
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        print(
-            f"warning: could not decode claude JSON output ({exc}); usage will be zero.",
-            file=sys.stderr,
-        )
-        return usage
-
-    usage.duration_ms = int(payload.get("duration_ms", 0) or 0)
-    usage.turns = int(payload.get("num_turns", 0) or 0)
-    # Newer Claude CLI emits `modelUsage` (a dict keyed by model id) instead
-    # of a top-level `model` field. A single phase routinely uses multiple
-    # models (e.g. Opus for primary inference + Haiku for sub-task decisions),
-    # so pick the primary by output token volume — that's the model the
-    # operator cares about for cost / capability attribution. Older CLIs
-    # with a top-level `model` field still work via the fallback.
-    model_usage = payload.get("modelUsage") or {}
-    if model_usage:
-        # Rank by total token volume (input + output + cache_read + cache_creation)
-        # rather than output_tokens alone — Haiku helpers often emit more
-        # output_tokens on trivial sub-tasks than the primary Opus pass that
-        # actually carries the work. Total volume tracks model effort honestly.
-        def _model_volume(stats: dict) -> int:
-            stats = stats or {}
-            return sum(
-                int(stats.get(k, 0) or 0)
-                for k in (
-                    "inputTokens",
-                    "outputTokens",
-                    "cacheReadInputTokens",
-                    "cacheCreationInputTokens",
-                )
-            )
-
-        primary = max(model_usage.items(), key=lambda kv: _model_volume(kv[1]))
-        usage.model = primary[0]
-    elif "model" in payload:
-        usage.model = str(payload["model"])
-
-    agg = payload.get("usage") or {}
-    usage.input_tokens = int(agg.get("input_tokens", 0) or 0)
-    usage.output_tokens = int(agg.get("output_tokens", 0) or 0)
-    usage.cache_read = int(agg.get("cache_read_input_tokens", 0) or 0)
-    usage.cache_creation = int(agg.get("cache_creation_input_tokens", 0) or 0)
-    return usage
+    runtime = (
+        "Claude runtime: the --allowedTools list is authoritative."
+        if provider == "claude" else
+        "Codex runtime: workspace-write sandbox, no interactive approvals. "
+        "Use the available native tools instead of Claude-specific tool names. "
+        "Do not invoke Claude or delegate to another model. "
+        "The wrapper enforces a wall-clock timeout, not Claude's --max-turns."
+    )
+    return "\n\n".join([build_frozen_context(), framing, runtime, scope_block, "---", role_prompt])
 
 
 def append_usage(usage: PhaseUsage, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {
+        "provider": usage.provider,
         "phase": usage.phase,
         "mode": usage.mode,
         "model": usage.model,
@@ -303,51 +198,80 @@ def run_real(
     max_turns: int,
     model: Optional[str],
     workflow: Optional[str],
+    provider: str = "claude",
+    timeout_seconds: int = 18000,
 ) -> PhaseUsage:
-    if shutil.which("claude") is None:
-        raise SystemExit(
-            "`claude` CLI not found in PATH. Install Claude Code first."
-        )
+    try:
+        cmd = build_command(provider, phase, model, max_turns, REPO_ROOT)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if shutil.which(provider) is None:
+        raise SystemExit(f"`{provider}` CLI not found in PATH. Install it first.")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        if provider == "codex" and os.environ.get("WORLDSMITH_CODEX_AUTH") == "chatgpt":
+            from codex_session import read_auth, require_owner
+            require_owner()
+            read_auth(Path(os.environ["CODEX_HOME"]) / "auth.json")
+        else:
+            credential = "CODEX_API_KEY" if provider == "codex" else "CLAUDE_CODE_OAUTH_TOKEN"
+            if not os.environ.get(credential):
+                raise SystemExit(f"{credential} is required for {provider} in GitHub Actions.")
 
-    prompt = build_prompt(phase, mode, scope, workflow)
+    prompt = build_prompt(phase, mode, scope, workflow, provider)
     # Save the rendered prompt as an artifact so the operator can inspect what
     # actually went to the model.
     prompt_artifact = REPO_ROOT / "artifacts" / f"prompt_{phase}.txt"
     prompt_artifact.parent.mkdir(parents=True, exist_ok=True)
     prompt_artifact.write_text(prompt, encoding="utf-8")
 
-    cmd = claude_command(phase, model, max_turns)
     print(f"+ {' '.join(cmd)} <<<(prompt fed via stdin)", file=sys.stderr)
-
-    proc = subprocess.run(
-        cmd,
-        cwd=REPO_ROOT,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if transcript:
-        transcript.parent.mkdir(parents=True, exist_ok=True)
-        transcript.write_text(proc.stdout, encoding="utf-8")
-
+    started = time.monotonic()
+    timed_out = False
+    with subprocess.Popen(
+        cmd, cwd=REPO_ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, start_new_session=(os.name == "posix"),
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate(prompt, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            if os.name == "posix":
+                os.killpg(proc.pid, signal.SIGKILL)
+            else:
+                proc.kill()
+            stdout, stderr = proc.communicate()
+    suffix = "jsonl" if provider == "codex" else "json"
+    if (provider == "codex" and os.environ.get("GITHUB_ACTIONS") == "true"
+            and os.environ.get("WORLDSMITH_CODEX_AUTH") == "chatgpt"):
+        from codex_session import read_auth, redact
+        session_dir = Path(os.environ["CODEX_HOME"])
+        sessions = [read_auth(session_dir / name) for name in ("initial-auth.json", "auth.json")]
+        stdout, stderr = redact(stdout, *sessions), redact(stderr, *sessions)
+    transcript = transcript or REPO_ROOT / "artifacts" / f"{phase}.{provider}.{suffix}"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    transcript.write_text(stdout, encoding="utf-8")
+    transcript.with_suffix(transcript.suffix + ".stderr.log").write_text(stderr, encoding="utf-8")
+    if timed_out:
+        raise SystemExit(f"{provider} phase '{phase}' exceeded {timeout_seconds}s; see {transcript}.")
     if proc.returncode != 0:
-        # Without this dump the JSON error body is invisible whenever
-        # --transcript wasn't passed, leaving the operator blind.
-        sys.stderr.write(proc.stderr)
-        sys.stderr.write("\n--- claude stdout (error body) ---\n")
-        sys.stderr.write(proc.stdout)
-        raise SystemExit(
-            f"claude CLI exited {proc.returncode} for phase '{phase}'."
-        )
-
-    return parse_usage_from_json(proc.stdout, phase, mode)
+        raise SystemExit(f"{provider} CLI exited {proc.returncode} for phase '{phase}'; see {transcript}.")
+    try:
+        usage = parse_result(provider, stdout, phase, mode, model)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise SystemExit(f"{provider} phase '{phase}' failed: {exc}; see {transcript}.") from exc
+    if provider == "codex":
+        usage.duration_ms = round((time.monotonic() - started) * 1000)
+    return usage
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", required=True, choices=PHASES)
+    parser.add_argument(
+        "--provider", choices=PROVIDERS,
+        default=os.environ.get("WORLDSMITH_AGENT_PROVIDER", "claude"),
+        help="Phase provider (default: WORLDSMITH_AGENT_PROVIDER or claude).",
+    )
     parser.add_argument("--mode", required=True, choices=["release"])
     parser.add_argument(
         "--workflow",
@@ -367,15 +291,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-turns", type=int, default=240)
     parser.add_argument("--model", default=None)
     parser.add_argument(
+        "--timeout-seconds", type=int, default=18000,
+        help="Wall-clock phase limit for either provider (default: 18000).",
+    )
+    parser.add_argument(
         "--target-modules",
-        nargs="*",
+        nargs="+",
         default=None,
         help="Restrict edits to these module files (e.g. player_state weapon_system). "
              "Snapshots generated/game/src/ before the phase and reverts any file "
              "that does not correspond to a listed module after the phase. Used by "
              "the PR workflow for partial regeneration.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.provider not in PROVIDERS:
+        parser.error("WORLDSMITH_AGENT_PROVIDER must be claude or codex")
+    if args.timeout_seconds <= 0 or args.max_turns <= 0:
+        parser.error("--timeout-seconds and --max-turns must be positive")
+    if args.model is None:
+        args.model = os.environ.get(f"WORLDSMITH_{args.provider.upper()}_MODEL") or None
+    return args
 
 
 def _snapshot_src(src_dir: Path) -> Optional[Path]:
@@ -420,8 +355,9 @@ def _revert_out_of_scope(
         dest = src_dir / rel
         src = baseline / rel
         if src.exists():
-            shutil.copy2(src, dest)
-            reverted.append(f"{rel_str} (reverted to baseline)")
+            if src.read_bytes() != dest.read_bytes():
+                shutil.copy2(src, dest)
+                reverted.append(f"{rel_str} (reverted to baseline)")
         else:
             dest.unlink()
             reverted.append(f"{rel_str} (deleted; was new and out-of-scope)")
@@ -440,22 +376,16 @@ def _revert_out_of_scope(
 
 def main() -> int:
     args = parse_args()
-
-    # CI mode signal per tooling/agents/coder.md § CI mode output:
-    # "when an `artifacts/` directory is present at the repo root before you start".
-    # Sampled BEFORE the phase runs because the phase itself (and this wrapper's
-    # prompt_artifact write) will create the directory.
-    ci_mode = (REPO_ROOT / "artifacts").exists()
+    coder_report = REPO_ROOT / "artifacts" / "coder_report.md"
+    report_before = coder_report.stat().st_mtime_ns if coder_report.exists() else None
+    blocker = REPO_ROOT / "artifacts" / "blocker.md"
+    blocker_before = blocker.stat().st_mtime_ns if blocker.exists() else None
 
     baseline: Optional[Path] = None
     if args.target_modules:
         baseline = _snapshot_src(GENERATED_SRC_DIR)
         if baseline is None:
-            print(
-                f"warning: --target-modules set but {GENERATED_SRC_DIR} does not exist; "
-                "skipping snapshot. Coder will run unguarded.",
-                file=sys.stderr,
-            )
+            raise SystemExit("--target-modules requires an existing generated source baseline.")
 
     try:
         usage = run_real(
@@ -466,9 +396,11 @@ def main() -> int:
             max_turns=args.max_turns,
             model=args.model,
             workflow=args.workflow,
+            provider=args.provider,
+            timeout_seconds=args.timeout_seconds,
         )
     finally:
-        if baseline is not None and GENERATED_SRC_DIR.exists():
+        if baseline is not None:
             reverted = _revert_out_of_scope(
                 GENERATED_SRC_DIR, baseline, args.target_modules
             )
@@ -483,17 +415,23 @@ def main() -> int:
 
     append_usage(usage, args.usage_jsonl)
     print(
-        f"phase={usage.phase} mode={usage.mode} model={usage.model} "
+        f"provider={usage.provider} phase={usage.phase} mode={usage.mode} model={usage.model} "
         f"in={usage.input_tokens} out={usage.output_tokens} "
         f"cache_r={usage.cache_read} cache_c={usage.cache_creation} "
         f"turns={usage.turns}"
     )
 
-    if ci_mode and args.phase == "coder":
-        coder_report = REPO_ROOT / "artifacts" / "coder_report.md"
-        if not coder_report.exists():
+    if blocker.exists() and blocker.stat().st_mtime_ns != blocker_before:
+        if blocker.read_text(encoding="utf-8").strip():
+            print(f"Phase reported a blocker; see {blocker}.", file=sys.stderr)
+            return 1
+
+    if args.phase == "coder":
+        if (not coder_report.exists()
+                or coder_report.stat().st_mtime_ns == report_before
+                or not coder_report.read_text(encoding="utf-8").strip()):
             print(
-                f"Coder phase exited without writing {coder_report.relative_to(REPO_ROOT)}. "
+                f"Coder phase exited without a fresh, non-empty {coder_report.relative_to(REPO_ROOT)}. "
                 "Required by tooling/agents/coder.md § CI mode output; Reconciler's "
                 "Step 0 framing-grep and Step 3 cross-walk depend on it. The PR #80 "
                 "armor regen exited cleanly after 67 turns / 26.8k output tokens with "

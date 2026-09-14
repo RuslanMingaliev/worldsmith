@@ -8,8 +8,8 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: ${{ (vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && vars.WORLDSMITH_CODEX_AUTH == 'chatgpt' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) && 'codex-managed-session' || format('pr-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: ${{ !(vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && vars.WORLDSMITH_CODEX_AUTH == 'chatgpt' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event.pull_request.user.login == github.repository_owner && github.event.pull_request.head.repo.full_name == github.repository) }}
 
 jobs:
   validate:
@@ -38,6 +38,9 @@ jobs:
 
       - name: Validate specs / IR / knowledge
         run: python tooling/validate_specs.py --verbose
+
+      - name: Test generation tooling
+        run: python -m unittest discover -s tooling/tests -v
 
       - name: Ensure generated/ has no manual edits
         run: python tooling/check_generated_clean.py
@@ -68,6 +71,7 @@ jobs:
           echo "        same_repo=$(grep same_repo $GITHUB_OUTPUT | cut -d= -f2)"
 
   regenerate-and-build:
+    environment: agent-ci
     name: regenerate-and-build
     needs: validate
     # Runs only when source-of-truth files changed AND the PR is from the
@@ -77,14 +81,18 @@ jobs:
     if: |
       needs.validate.outputs.needs_regen == 'true'
       && needs.validate.outputs.same_repo == 'true'
-    runs-on: ubuntu-latest
+      && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+      && github.event.pull_request.user.login == github.repository_owner
+    runs-on: ${{ vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 350
     permissions:
       contents: write   # to push demo gif to a per-PR pr-assets-<N> branch
       pull-requests: write
     env:
       WORLDSMITH_MAX_TOKENS_PER_RUN: ${{ vars.WORLDSMITH_MAX_TOKENS_PER_RUN }}
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      WORLDSMITH_CODEX_AUTH: ${{ vars.WORLDSMITH_CODEX_AUTH || 'api' }}
+      WORLDSMITH_AGENT_PROVIDER: ${{ vars.WORLDSMITH_AGENT_PROVIDER || 'claude' }}
+      WORLDSMITH_CODEX_MODEL: ${{ vars.WORLDSMITH_CODEX_MODEL }}
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -126,23 +134,8 @@ jobs:
             fi
           fi
 
-      - name: Install Claude CLI
-        run: |
-          set -e
-          # `claude.ai/install.sh` (native installer) regressed: it downloads
-          # the binary, runs its `install` subcommand which silently fails to
-          # place the launcher anywhere, and then `rm -f`s the download — so
-          # nothing ends up on disk. npm install lands the same CLI via the
-          # standard package mechanism, bypassing the broken native flow.
-          sudo npm install -g @anthropic-ai/claude-code
-          claude --version
-
-      - name: Assert OAUTH secret is present
-        run: |
-          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-            echo "::error::CLAUDE_CODE_OAUTH_TOKEN repo secret is empty."
-            exit 1
-          fi
+      - name: Install selected agent CLI
+        run: bash tooling/install_agent_cli.sh
 
       - name: Fetch baseline (generated-snapshot branch, fallback to last release)
         id: baseline
@@ -193,9 +186,22 @@ jobs:
             echo "targets=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Restore dedicated Codex session
+        id: codex_session
+        if: env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH == 'chatgpt'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          cp tooling/codex_session.py "$RUNNER_TEMP/worldsmith-codex-session-helper.py"
+          python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" restore
+
       - name: Run Coder / Reconciler / PostMortem on affected modules
         if: steps.scope.outputs.module_count != '0'
         env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH != 'chatgpt' && secrets.OPENAI_API_KEY || '' }}
           TARGETS: ${{ steps.scope.outputs.targets }}
         run: |
           set -e
@@ -204,6 +210,13 @@ jobs:
             --target-modules $TARGETS
           python tooling/orchestrator_run.py --mode release --workflow pr --phase reconciler
           python tooling/orchestrator_run.py --mode release --workflow pr --phase postmortem
+
+      - name: Save refreshed Codex session and remove credentials
+        id: codex_session_save
+        if: always() && steps.codex_session.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+        run: python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" save
 
       - name: Post-flight validate (catch accidental knowledge writes)
         if: steps.scope.outputs.module_count != '0'
@@ -300,7 +313,7 @@ jobs:
           fi
 
       - name: Upload reports
-        if: always()
+        if: always() && (env.WORLDSMITH_AGENT_PROVIDER != 'codex' || env.WORLDSMITH_CODEX_AUTH != 'chatgpt' || steps.codex_session_save.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: pr-${{ github.event.pull_request.number }}-reports
@@ -315,7 +328,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Post PR status comment
-        if: always()
+        if: always() && (env.WORLDSMITH_AGENT_PROVIDER != 'codex' || env.WORLDSMITH_CODEX_AUTH != 'chatgpt' || steps.codex_session_save.outcome == 'success')
         env:
           PR: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
