@@ -171,7 +171,7 @@ Source: [`knowledge/pickups.md`](../knowledge/pickups.md). Spec values that are 
 - **Transitions:**
   - On green armor pickup consumption: `armor = PICKUP_ARMOR_GREEN_TARGET_POINTS`, `armor_type = ArmorTier::Green` (overwrite, not add).
   - On blue armor pickup consumption: `armor = PICKUP_ARMOR_BLUE_TARGET_POINTS`, `armor_type = ArmorTier::Blue` (overwrite).
-  - On `take_damage(dmg)` with non-None armor: `armor -= saved` where `saved = min(armor, dmg * absorb_num / absorb_den)`. If `saved == armor` (pool exhausted by this hit), `armor_type = ArmorTier::None`. See specs/25 § Armor Damage Routing for the routing algorithm.
+  - On `take_damage(dmg)` with non-None armor and a positive pool: compute `candidate_saved = dmg * absorb_num / absorb_den`, then `saved = min(armor, candidate_saved)` and `armor -= saved`. Clear `armor_type` only when `candidate_saved` exceeds the pre-hit armor pool (the underflow clamp fires). Exact equality leaves a zero pool with its previous tier; subsequent hits absorb nothing because the pool is zero. See specs/25 § Armor Damage Routing for the routing algorithm.
   - Never goes negative — the clamp in step 3 of the routing rule prevents underflow.
 
 ## Interactions
@@ -210,7 +210,7 @@ Source: [`knowledge/pickups.md`](../knowledge/pickups.md). Spec values that are 
 - `0 <= player.ammo <= PLAYER_AMMO_MAX` — enforced by the `take_ammo_pickup` clamp and the `fire`-time ammo gate.
 - `0 <= player.health <= PLAYER_MAX_HEALTH` after a health pickup — enforced by the `take_health_pickup` clamp. (Below-zero health remains possible *before* clamp on lethal damage; the clamp at `take_damage` already snaps to zero.)
 - `0 <= player.armor <= 200` — enforced implicitly by the armor pool's target-pool overwrite values (the two `PICKUP_ARMOR_*_TARGET_POINTS` constants are 100 and 200, and pickup-side acceptance overwrites the pool rather than adding) and by the `take_damage` clamp (`saved = min(armor, ...)` prevents negative). The ceiling has no named runtime constant — see [`ir/contracts/player_state.yaml § public_constants`](../ir/contracts/player_state.yaml) for the rationale (spec/80 § API Surface forbids dead `pub` exports, and no in-crate caller needs to read the ceiling at runtime).
-- `(player.armor == 0) == (player.armor_type == ArmorTier::None)` is NOT an invariant in general: a fresh green pickup sets both `(armor=100, type=Green)` simultaneously; depleting armor via damage clears both to `(0, None)` simultaneously. But *between* those events the player can transiently carry a non-zero armor pool whose type matches the tier — that is the steady state. The implication is just that armor depletion via damage clears the type to None (specs/25 § Armor Damage Routing rule 3); the type does not silently desync from the pool.
+- `(player.armor == 0) == (player.armor_type == ArmorTier::None)` is NOT an invariant: exact depletion can leave `(0, Green)` or `(0, Blue)`. Only an underflow clamp clears the tier to None (specs/25 § Armor Damage Routing rule 3). A zero pool absorbs no damage regardless of tier (rule 1); the next accepted armor pickup overwrites both pool and tier.
 - A pickup's `active` flag is monotonic: once `false`, never `true` again within a run.
 - An out-of-ammo `fire` invocation is observationally a no-op: no field of `player`, no entry in `fx.effects`, and no enemy `health` changes.
 - The "refused at cap / refused at pool" rule means no pickup is consumed when its effect would be wasted.
@@ -258,10 +258,11 @@ The following are intentionally out of scope for the prototype:
 4. Overwrite semantics: with `(armor=50, type=Green)` and standing on the blue pickup, after one tick `armor == 200`, `armor_type == Blue` (overwrite, not add).
 
 ### Armor Damage Absorption
-1. Set `(armor=100, type=Green)`, `health = 100`. Apply `take_damage(12)`: `saved = 12 / 3 = 4`, `armor = 96`, `health = 88`, `armor_type` unchanged.
+1. Set `(armor=100, type=Green)`, `health = 100`. Apply `take_damage(12)`: `saved = 12 / 3 = 4`, `armor = 96`, `residual = 12 - 4 = 8`, `health = 92`, `armor_type` unchanged.
 2. Set `(armor=10, type=Green)`, `health = 100`. Apply `take_damage(60)`: candidate `saved = 60 / 3 = 20`; clamp to `armor (10)`; `armor = 0`, `armor_type = ArmorTier::None`, `health = 100 - 50 = 50`. Subsequent `take_damage(15)` absorbs zero (`armor_type == None`): `health = 50 - 15 = 35`, demonstrating the "mid-hit depletion clears type" rule.
 3. Set `(armor=100, type=Blue)`, `health = 100`. Apply `take_damage(20)`: `saved = 20 / 2 = 10`, `armor = 90`, `health = 90`. (Blue absorbs 1/2, not 1/3.)
-4. Comparative: two runs of the same scenario, one with `(armor=100, type=Green)` set before the trooper fires and one without armor, must show the armored run's final `player.health` strictly greater than the un-armored run's. (See `tests/combat/armor_absorbs_damage.yaml`.)
+4. Exact-depletion boundary: with `(armor=4, type=Green)`, `health = 100`, damage 12 leaves `(armor=0, type=Green)`, `health = 92`. A subsequent hit for 12 absorbs zero and leaves `health = 80`, with the tier still Green. Repeat with `(armor=6, type=Blue)`: damage 12 leaves `(0, Blue)`, `health = 94`; the next hit leaves `health = 82`.
+5. Comparative: two runs of the same scenario, one with `(armor=100, type=Green)` set before the trooper fires and one without armor, must show the armored run's final `player.health` strictly greater than the un-armored run's. (See `tests/combat/armor_absorbs_damage.yaml`.)
 
 ### Ammo-Gated Firing
 1. Set `player.ammo = 0`, hold fire input, run one tick: no muzzle flash spawned, no tracer spawned, no enemy damage, `player.time_since_fire` does NOT reset to 0.

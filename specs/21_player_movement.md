@@ -246,6 +246,7 @@ This specification defines the player movement system for the retro shooter. Mov
 ### Implementation Notes
 - Distance unit is one wall tile (`Tile::Wall` cells in `level_data`); the current level is approximately 20x20 tiles.
 - Tick rate: 60 FPS; THRUST_FACTOR and FRICTION are applied per frame (not scaled by delta-time).
+- Generation default — no knowledge backing: the current axis-aligned collision approximation rejects a blocked position update without zeroing or projecting velocity. Both components keep their post-thrust/friction/clamp values; later ticks continue to apply friction. This preserves the existing generated-snapshot behavior. Knowledge describes wall-angle projection, which remains deferred above.
 - Steady-state forward speed under continuous input is approximately 0.1 tiles/frame (~6 tiles/sec). MAX_SPEED leaves ~3x headroom above steady state.
 - Earlier extracted values (THRUST_FACTOR=2048, MAX_SPEED=30) assumed a 35 Hz tick rate and fixed-point units; they were rescaled for tile units at 60 FPS — see `work/decisions.md` § Decision 20 (private log; gitignored).
 
@@ -266,6 +267,7 @@ This specification defines the player movement system for the retro shooter. Mov
 1. Walking into a wall stops forward movement
 2. Walking into a wall at an angle causes sliding
 3. Cannot pass through walls regardless of speed
+4. With zero movement input and velocity directed into a wall, a blocked axis keeps its position and retains the velocity after friction/clamping. The unblocked axis still moves; collision itself does not zero either component.
 
 ### Ground State
 1. Thrust only applies when on ground

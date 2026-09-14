@@ -42,9 +42,10 @@ public_types:
           pub armor_type: ArmorTier,   // current armor tier; specs/25 § Armor.
                                        // ArmorTier::None means no absorption
                                        // happens in take_damage regardless of
-                                       // armor pool value (the pool is always
-                                       // zeroed alongside the tier — specs/25
-                                       // § Armor Damage Routing rule 3).
+                                       // armor pool value. Exact depletion can
+                                       // leave a zero pool with Green/Blue;
+                                       // only an underflow clamp clears the
+                                       // tier (specs/25 § Armor Damage Routing).
           pub weapon_rng: u64,         // weapon-firing RNG state (LCG seed +
                                        // accumulator). Consumed by
                                        // weapon_system::fire for triangular spread
@@ -134,6 +135,12 @@ public_methods:
            Status notes "wall collision with axis-aligned sliding").
            Collision uses PLAYER_RADIUS_TILES against level::is_wall on
            the four overlapping tile cells.
+           Reject only the blocked position update; leave both velocity
+           components at their post-friction/clamp values from steps 5-7.
+           Do not zero or project velocity on collision. This is the
+           current axis-aligned approximation's generation default
+           (specs/21 § Implementation Notes), not reference-derived
+           wall-angle projection.
         9. Increment player.time_since_fire by dt (weapon_system resets it
            when the player fires).
       Free function form (not `&mut self`) so this stays one-call from
@@ -172,8 +179,9 @@ public_methods:
         - The clamp-and-clear-type rule on saved-overflow is the
           knowledge-pinned "armor depletes mid-hit reverts to no
           armor" behavior. After this branch, `armor == 0 AND
-          armor_type == None` simultaneously (matching the steady-
-          state invariant in specs/60 § Player Armor).
+          armor_type == None` simultaneously (the underflow-clamp
+          outcome in specs/60 § Player Armor). Exact equality does not
+          enter this branch: the zero pool retains its tier.
         - damage_count accumulates `residual`, not `amount` — the
           screen tint reflects HEALTH-reaching damage. Knowledge does
           not pin pre-vs-post; this is a generation default
