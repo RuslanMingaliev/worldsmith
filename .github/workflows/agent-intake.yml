@@ -10,17 +10,19 @@ permissions:
   issues: write
 
 concurrency:
-  group: agent-intake-${{ github.event.issue.number }}
-  cancel-in-progress: true
+  group: ${{ (vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && vars.WORLDSMITH_CODEX_AUTH == 'chatgpt' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event.label.name == 'agent:run' && github.event.issue.user.login == github.repository_owner) && 'codex-managed-session' || format('agent-intake-{0}', github.event.issue.number) }}
+  cancel-in-progress: ${{ !(vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && vars.WORLDSMITH_CODEX_AUTH == 'chatgpt' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event.label.name == 'agent:run' && github.event.issue.user.login == github.repository_owner) }}
 
 jobs:
   run:
-    if: github.event.label.name == 'agent:run'
+    environment: agent-ci
+    if: github.event.label.name == 'agent:run' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.event.issue.user.login == github.repository_owner
     name: agent-intake
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.WORLDSMITH_AGENT_PROVIDER == 'codex' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 350
 
     env:
+      WORLDSMITH_CODEX_AUTH: ${{ vars.WORLDSMITH_CODEX_AUTH || 'api' }}
       WORLDSMITH_AGENT_PROVIDER: ${{ vars.WORLDSMITH_AGENT_PROVIDER || 'claude' }}
       WORLDSMITH_CODEX_MODEL: ${{ vars.WORLDSMITH_CODEX_MODEL }}
       WORLDSMITH_MAX_TOKENS_PER_RUN: ${{ vars.WORLDSMITH_MAX_TOKENS_PER_RUN }}
@@ -147,10 +149,21 @@ jobs:
       - name: Validate specs (post-extractor)
         run: python tooling/validate_specs.py --verbose
 
+      - name: Restore dedicated Codex session
+        id: codex_session
+        if: env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH == 'chatgpt'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          cp tooling/codex_session.py "$RUNNER_TEMP/worldsmith-codex-session-helper.py"
+          python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" restore
+
       - name: Architect phase
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH != 'chatgpt' && secrets.OPENAI_API_KEY || '' }}
           SCOPE: ${{ steps.scope.outputs.scope }}
         run: |
           set -euo pipefail
@@ -159,6 +172,13 @@ jobs:
             --scope "$SCOPE" \
             --usage-jsonl artifacts/usage.jsonl \
             --transcript artifacts/architect.transcript.json
+
+      - name: Save refreshed Codex session and remove credentials
+        id: codex_session_save
+        if: always() && steps.codex_session.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+        run: python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" save
 
       - name: Validate specs (post-architect)
         run: python tooling/validate_specs.py --verbose
@@ -261,7 +281,7 @@ jobs:
           gh issue edit "$ISSUE_NUMBER" --remove-label "agent:run" --add-label "agent:failed" || true
 
       - name: Upload artifacts
-        if: always()
+        if: always() && (env.WORLDSMITH_AGENT_PROVIDER != 'codex' || env.WORLDSMITH_CODEX_AUTH != 'chatgpt' || steps.codex_session_save.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: agent-intake-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}

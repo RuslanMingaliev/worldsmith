@@ -208,9 +208,14 @@ def run_real(
     if shutil.which(provider) is None:
         raise SystemExit(f"`{provider}` CLI not found in PATH. Install it first.")
     if os.environ.get("GITHUB_ACTIONS") == "true":
-        credential = "CODEX_API_KEY" if provider == "codex" else "CLAUDE_CODE_OAUTH_TOKEN"
-        if not os.environ.get(credential):
-            raise SystemExit(f"{credential} is required for {provider} in GitHub Actions.")
+        if provider == "codex" and os.environ.get("WORLDSMITH_CODEX_AUTH") == "chatgpt":
+            from codex_session import read_auth, require_owner
+            require_owner()
+            read_auth(Path(os.environ["CODEX_HOME"]) / "auth.json")
+        else:
+            credential = "CODEX_API_KEY" if provider == "codex" else "CLAUDE_CODE_OAUTH_TOKEN"
+            if not os.environ.get(credential):
+                raise SystemExit(f"{credential} is required for {provider} in GitHub Actions.")
 
     prompt = build_prompt(phase, mode, scope, workflow, provider)
     # Save the rendered prompt as an artifact so the operator can inspect what
@@ -236,6 +241,12 @@ def run_real(
                 proc.kill()
             stdout, stderr = proc.communicate()
     suffix = "jsonl" if provider == "codex" else "json"
+    if (provider == "codex" and os.environ.get("GITHUB_ACTIONS") == "true"
+            and os.environ.get("WORLDSMITH_CODEX_AUTH") == "chatgpt"):
+        from codex_session import read_auth, redact
+        session_dir = Path(os.environ["CODEX_HOME"])
+        sessions = [read_auth(session_dir / name) for name in ("initial-auth.json", "auth.json")]
+        stdout, stderr = redact(stdout, *sessions), redact(stderr, *sessions)
     transcript = transcript or REPO_ROOT / "artifacts" / f"{phase}.{provider}.{suffix}"
     transcript.parent.mkdir(parents=True, exist_ok=True)
     transcript.write_text(stdout, encoding="utf-8")

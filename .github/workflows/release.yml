@@ -18,8 +18,14 @@ on:
         required: false
         type: boolean
         default: true
+      auth_check:
+        description: "Check Codex login only; skip generation, builds and release publication"
+        required: false
+        type: boolean
+        default: false
 
 env:
+  WORLDSMITH_CODEX_AUTH: ${{ vars.WORLDSMITH_CODEX_AUTH || 'api' }}
   WORLDSMITH_AGENT_PROVIDER: ${{ (inputs.provider != 'default' && inputs.provider) || vars.WORLDSMITH_AGENT_PROVIDER || 'claude' }}
   WORLDSMITH_CODEX_MODEL: ${{ vars.WORLDSMITH_CODEX_MODEL }}
 
@@ -28,14 +34,65 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: release-${{ inputs.version }}
+  group: ${{ (((inputs.provider == 'codex') || (inputs.provider == 'default' && vars.WORLDSMITH_AGENT_PROVIDER == 'codex')) && vars.WORLDSMITH_CODEX_AUTH == 'chatgpt' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner) && 'codex-managed-session' || format('release-{0}', inputs.version) }}
   cancel-in-progress: false
 
 jobs:
+  auth-check:
+    if: inputs.auth_check && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    environment: agent-ci
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Codex
+        run: |
+          test "$WORLDSMITH_AGENT_PROVIDER" = codex
+          bash tooling/install_agent_cli.sh
+      - name: Restore dedicated Codex session
+        id: codex_session
+        if: env.WORLDSMITH_CODEX_AUTH == 'chatgpt'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          cp tooling/codex_session.py "$RUNNER_TEMP/worldsmith-codex-session-helper.py"
+          python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" restore
+      - name: Check login with a minimal prompt
+        env:
+          CODEX_API_KEY: ${{ env.WORLDSMITH_CODEX_AUTH != 'chatgpt' && secrets.OPENAI_API_KEY || '' }}
+        run: |
+          timeout --kill-after=10s 120s codex exec --json --ephemeral --sandbox read-only \
+            -c 'approval_policy="never"' 'Reply with the single word OK. Do not use tools.' \
+            > "$RUNNER_TEMP/codex-auth-check.jsonl" 2> "$RUNNER_TEMP/codex-auth-check.stderr"
+          python3 - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'tooling')
+          from agent_providers import parse_codex_result
+          output = (Path(os.environ['RUNNER_TEMP']) / 'codex-auth-check.jsonl').read_text()
+          usage = parse_codex_result(output, 'auth_check', 'release', None)
+          print(f'Codex login succeeded; completed turns: {usage.turns}')
+          PY
+      - name: Save refreshed Codex session and remove credentials
+        id: codex_session_save
+        if: always() && steps.codex_session.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+        run: python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" save
+      - name: Remove raw authentication check output
+        if: always()
+        run: rm -f "$RUNNER_TEMP/codex-auth-check.jsonl" "$RUNNER_TEMP/codex-auth-check.stderr"
+
   generate:
-    runs-on: ubuntu-latest
+    environment: agent-ci
+    runs-on: ${{ ((inputs.provider == 'codex') || (inputs.provider == 'default' && vars.WORLDSMITH_AGENT_PROVIDER == 'codex')) && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 350
-    if: ${{ github.actor == 'RuslanMingaliev' }}
+    if: ${{ !inputs.auth_check && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}
 
     outputs:
       target_ref: ${{ steps.drift.outputs.target_ref }}
@@ -136,10 +193,21 @@ jobs:
           echo "tag=$PREV" >> "$GITHUB_OUTPUT"
           echo "src_dir=artifacts/prev-release-src" >> "$GITHUB_OUTPUT"
 
+      - name: Restore dedicated Codex session
+        id: codex_session
+        if: env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH == 'chatgpt'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          cp tooling/codex_session.py "$RUNNER_TEMP/worldsmith-codex-session-helper.py"
+          python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" restore
+
       - name: Run pipeline
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH != 'chatgpt' && secrets.OPENAI_API_KEY || '' }}
           PREV_RELEASE_SRC: ${{ steps.prev_src.outputs.src_dir }}
           PREV_RELEASE_TAG: ${{ steps.prev_src.outputs.tag }}
         run: |
@@ -155,6 +223,13 @@ jobs:
             python tooling/orchestrator_run.py --mode release --workflow release --phase reconciler
           fi
           python tooling/orchestrator_run.py --mode release --workflow release --phase postmortem
+
+      - name: Save refreshed Codex session and remove credentials
+        id: codex_session_save
+        if: always() && steps.codex_session.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+        run: python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" save
 
       - name: Post-flight validate (catch accidental knowledge writes)
         run: python tooling/validate_specs.py --verbose
@@ -202,13 +277,16 @@ jobs:
           echo "target_ref=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Upload generation artifacts
-        if: always()
+        if: always() && (env.WORLDSMITH_AGENT_PROVIDER != 'codex' || env.WORLDSMITH_CODEX_AUTH != 'chatgpt' || steps.codex_session_save.outcome == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: generation-${{ inputs.version }}
           path: |
             generated/
             artifacts/
+            !generated/**/target/**
+            !artifacts/*.codex.jsonl
+            !artifacts/*.stderr.log
           retention-days: 14
 
   build:
@@ -234,7 +312,7 @@ jobs:
             ext: ".exe"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    if: ${{ github.actor == 'RuslanMingaliev' }}
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}
 
     steps:
       - name: Checkout target ref
@@ -298,10 +376,11 @@ jobs:
           retention-days: 14
 
   release:
+    environment: agent-ci
     needs: [generate, build]
-    runs-on: ubuntu-latest
+    runs-on: ${{ ((inputs.provider == 'codex') || (inputs.provider == 'default' && vars.WORLDSMITH_AGENT_PROVIDER == 'codex')) && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 60
-    if: ${{ github.actor == 'RuslanMingaliev' }}
+    if: ${{ github.actor == github.repository_owner && github.triggering_actor == github.repository_owner }}
 
     steps:
       - name: Checkout target ref (drift branch or trigger SHA)
@@ -416,10 +495,21 @@ jobs:
           echo "Previous release tag: ${PREV:-(none)}"
           echo "tag=$PREV" >> "$GITHUB_OUTPUT"
 
+      - name: Restore dedicated Codex session
+        id: codex_session
+        if: env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH == 'chatgpt'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          cp tooling/codex_session.py "$RUNNER_TEMP/worldsmith-codex-session-helper.py"
+          python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" restore
+
       - name: Author release narrative (hero pitch + what's new prose)
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'claude' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && secrets.OPENAI_API_KEY || '' }}
+          CODEX_API_KEY: ${{ env.WORLDSMITH_AGENT_PROVIDER == 'codex' && env.WORLDSMITH_CODEX_AUTH != 'chatgpt' && secrets.OPENAI_API_KEY || '' }}
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           PREV_TAG: ${{ steps.prev_tag.outputs.tag }}
@@ -436,6 +526,13 @@ jobs:
             --phase release_editor \
             --scope "previous_tag: ${PREV_TAG:-(unknown)}; current_tag: ${VERSION}" \
             || echo "::warning::release_editor phase failed; release notes will use fallback placeholders."
+
+      - name: Save refreshed Codex session and remove credentials
+        id: codex_session_save
+        if: always() && steps.codex_session.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_SESSION_WRITER_TOKEN }}
+        run: python3 "$RUNNER_TEMP/worldsmith-codex-session-helper.py" save
 
       - name: Compose release notes
         env:

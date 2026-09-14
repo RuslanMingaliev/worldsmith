@@ -188,6 +188,26 @@ class PhaseRunnerTests(unittest.TestCase):
         self.assertTrue((self.root / "artifacts/coder.codex.jsonl").exists())
         self.assertIn("Codex runtime", (self.root / "received-prompt.txt").read_text())
 
+    def test_codex_ci_uses_managed_session_without_an_api_key(self):
+        auth = json.dumps({'auth_mode': 'chatgpt', 'tokens': {
+            'access_token': 'dummy-access', 'refresh_token': 'dummy-refresh',
+            'id_token': 'dummy-id', 'account_id': 'dummy-account',
+        }})
+        home = self.root / 'session'
+        home.mkdir()
+        for name in ('auth.json', 'initial-auth.json'):
+            (home / name).write_text(auth)
+        event = self.root / 'event.json'
+        event.write_text('{}')
+        with patch.dict(os.environ, {
+            'GITHUB_ACTIONS': 'true', 'WORLDSMITH_CODEX_AUTH': 'chatgpt',
+            'CODEX_HOME': str(home), 'GITHUB_REPOSITORY': 'alice/game',
+            'GITHUB_ACTOR': 'alice', 'GITHUB_TRIGGERING_ACTOR': 'alice',
+            'GITHUB_EVENT_PATH': str(event),
+        }):
+            self.assertEqual(self.run_phase(), 0)
+        self.assert_scope_restored()
+
     def test_claude_subprocess_keeps_the_same_output_guard(self):
         self.assertEqual(self.run_phase(provider="claude"), 0)
         self.assert_scope_restored()

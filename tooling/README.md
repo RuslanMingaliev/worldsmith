@@ -82,7 +82,10 @@ elsewhere before repeating the same phase if you need to preserve its transcript
 | Repository variable `WORLDSMITH_AGENT_PROVIDER` | `claude` (default) or `codex`, used by PR, release, and issue Architect phases |
 | Release dispatch input `provider` | Override for that run: `default`, `claude`, or `codex` |
 | Repository variable `WORLDSMITH_CODEX_MODEL` | Optional explicit Codex model |
-| Repository secret `OPENAI_API_KEY` | Required for Codex; exposed as `CODEX_API_KEY` only on the selected agent steps |
+| Repository secret `OPENAI_API_KEY` | Required for Codex API auth; exposed as `CODEX_API_KEY` only on the selected agent steps |
+| Repository variable `WORLDSMITH_CODEX_AUTH` | `api` (default) or `chatgpt` for a dedicated managed CLI session |
+| Environment `agent-ci`, secret `CODEX_AUTH_JSON` | Dedicated managed ChatGPT session; never inherited by a fork |
+| Repository secret `CODEX_SESSION_WRITER_TOKEN` | Fine-grained GitHub PAT for this repository only, with **Environments: read and write**, to persist the rotated environment secret |
 | Repository secret `CLAUDE_CODE_OAUTH_TOKEN` | Required for Claude, including Extractor when the selected provider is Codex |
 
 For a first CI trial, configure `OPENAI_API_KEY`, then select `codex` in the
@@ -91,6 +94,64 @@ pipeline: it can create a drift PR and uploads artifacts even without publishing
 a release. Changing the repository variable switches subsequent PR and intake
 runs as well. No secrets, repository variables, or remote runs are configured by
 the code change itself.
+
+### Owner-operated workflows with a dedicated ChatGPT session
+
+Jobs that receive agent secrets require both the original actor and the rerun
+actor to be the personal repository owner. PR regeneration additionally requires
+a PR authored by the owner from the same repository; intake requires an issue
+authored and labeled by the owner. Fork owners may configure their own secrets
+and `agent-ci` environment. Organization-owned forks need a separately designed
+operator policy; an organization name is not a user login.
+
+To activate the session option after this change is available in the workflow:
+
+1. Create an `agent-ci` environment in repository Settings → Environments.
+2. Create a fine-grained GitHub PAT for **only this repository**, with
+   **Environments: read and write** (Metadata read is implicit), and a chosen
+   expiry. Store it using the hidden CLI prompt:
+
+   ```bash
+   gh secret set CODEX_SESSION_WRITER_TOKEN
+   ```
+
+3. Run `bash tooling/bootstrap_codex_ci.sh` from the checkout. It creates a fresh
+   ChatGPT login in temporary storage and sends `auth.json` directly to the
+   environment secret. It does not copy your ordinary local session. Do not
+   reuse that CI session elsewhere or replace it while jobs are active.
+4. Set repository variable `WORLDSMITH_CODEX_AUTH=chatgpt`. First dispatch the
+   release workflow with `provider=codex`, `auth_check=true`, `publish=false`
+   (the required version field can be `2026.09-auth`). This only checks login;
+   it does not generate the game, build it or publish a release. After it passes,
+   choose `provider=codex`, `publish=false` for generation, or configure
+   `WORLDSMITH_AGENT_PROVIDER=codex` to switch subsequent owner PR/intake jobs.
+   A release trial still generates artifacts and may create a drift PR.
+
+All session-consuming workflows share a non-cancelling concurrency group.
+`agent-ci` environment secrets are read when each job starts, so later jobs see
+the session saved by earlier jobs (repository secrets are read at queue time).
+The helper checks write permission before using a session, preserves refreshed
+auth even after phase failure, and deletes local auth before later build and
+publication steps. A failed persistence/export check stops publication. Known
+token values are masked/redacted; raw Codex transcripts and Cargo build output
+are excluded from the generation bundle. Runner loss after token rotation may
+still require a new login. GitHub concurrency may replace an older pending run;
+it is not a durable FIFO job queue.
+
+This is a trusted-code policy, not isolation from hostile code running in an
+authorized job. Dependencies, generated commands and other repository writers
+must be trusted. Standard CLI sandbox restrictions remain in force; no custom
+AppArmor or seccomp profile is installed. Codex jobs use the stock Ubuntu 22.04
+runner: CLI 0.153.4 sandbox startup and denial of out-of-workspace writes were
+verified there without credentials; the Ubuntu 24.04 runner rejected sandbox
+namespace setup. The public repository workflow does
+not depend on the earlier private-container experiment.
+
+OpenAI recommends API keys for automation and explicitly advises against the
+managed-session CI pattern for public/open-source repositories. The owner-only
+GitHub gates above do not change that guidance or establish official support for
+this deployment. See [OpenAI CI authentication](https://learn.chatgpt.com/docs/auth/ci-cd-auth)
+and [GitHub secret timing](https://docs.github.com/en/actions/reference/security/secrets).
 
 `install_agent_cli.sh` installs only the selected CLI, plus Claude for intake's
 Extractor. Codex is pinned to `0.153.4`; the setup script accepts an explicit
